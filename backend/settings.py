@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import timedelta
+
 load_dotenv()
 
 
@@ -15,9 +17,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-kqpvvj!t15!hi)flc%%m=wc--*ui@(66rpqdm%slj%2lpfk$^s'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['13.201.224.32', 'lenskart.thinkneural.ai']
+
 
 
 # Application definition
@@ -30,7 +33,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'app'
+    'ninja',
+    'app',
+    'corsheaders'
 ]
 
 JAZZMIN_SETTINGS = {
@@ -48,6 +53,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'app.middleware.PayloadLoggerMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -137,3 +143,90 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+FILE_UPLOAD_PERMISSIONS = 0o664
+DATA_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024  # 50 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024 # 20 MB (example)
+
+
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+        'payload_formatter': { # <--- NEW FORMATTER FOR PAYLOADS (can be simple or verbose)
+            'format': '{levelname} {asctime} {name} {message}', # Using {name} to show the logger name (payload_logger)
+            'style': '{',
+        },
+    },
+
+    'handlers': {
+        'file_errors': { # Renamed from 'file' for clarity
+            'level': 'ERROR',
+            'class': 'logging.FileHandler',
+            'filename': '/home/ubuntu/lenskart_backend/logs/django_errors.log',
+            'formatter': 'verbose',
+        },
+        'file_payload': { # <--- NEW HANDLER FOR PAYLOAD LOGS
+            'level': 'INFO', # Set to INFO to capture the payload logs
+            'class': 'logging.handlers.RotatingFileHandler', # Recommended for production to prevent log files from growing too large
+            'filename': '/home/ubuntu/lenskart_backend/logs/django_payload.log', # <--- NEW LOG FILE
+            'maxBytes': 1024 * 1024 * 5,  # 5 MB
+            'backupCount': 5, # Keep 5 backup files
+            'formatter': 'payload_formatter', # Use the new formatter
+        },
+	'file_app': {  # NEW: General app logs
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': '/home/ubuntu/lenskart_backend/logs/django_app.log',
+            'maxBytes': 1024 * 1024 * 5,  # 5 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+        'console': { # Adding a console handler for convenience during development/debugging
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file_errors'], # Added 'console'
+            'level': 'INFO', # Changed to INFO to see more Django internal logs if needed
+            'propagate': False, # Changed to False to prevent logs from propagating to root logger
+        },
+        'app': { # Your existing 'app' logger
+            'handlers': ['console','file_app', 'file_errors'], # Added 'console'
+            'level': 'INFO', # Changed to INFO for more detailed app logs
+            'propagate': False, # Changed to False
+        },
+        'payload_logger': { # <--- NEW LOGGER FOR PAYLOAD LOGS (matches the name in middleware.py)
+            'handlers': ['console', 'file_payload'], # Directs to the new payload log file AND console
+            'level': 'INFO', # Set to INFO to capture payload logs
+            'propagate': False, # Important: Set to False to prevent duplicate logging
+        },
+    },
+
+    'root': { # Configure root logger to catch anything not handled by specific loggers
+        'handlers': ['console', 'file_errors'], # Direct root logs to console and error file
+        'level': 'WARNING', # Set a higher level for root to avoid too much noise
+    },
+}
+
+
+
+NINJA_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    
+    # We will use Django's built-in SECRET_KEY for signing
+    'SIGNING_KEY': SECRET_KEY, 
+    
+    # Standard authorization header format: "Authorization: Bearer <token>"
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}

@@ -1,0 +1,2769 @@
+{% extends "admin/change_form.html" %}
+{% load static %}
+{% load i18n admin_urls %}
+
+
+{% block extrahead %}
+{{ block.super }}
+<!-- Add Fabric.js for image editing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+<style>
+  .image-editor-container {
+    margin: 30px 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+  }
+  .canvas-container {
+    margin: 0 auto;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    background-color: #f8f9fa;
+    max-width: 100%;
+  }
+  .editor-toolbar {
+    display: flex;
+    padding: 12px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .toolbar-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding-right: 16px;
+    margin-right: 16px;
+    border-right: 1px solid #eaeaea;
+  }
+  .toolbar-group:last-child {
+    border-right: none;
+    margin-right: 0;
+  }
+  .toolbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
+    background-color: #f8f9fa;
+    color: #495057;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+  }
+  .toolbar-btn:hover {
+    background-color: #e9ecef;
+  }
+  .toolbar-btn.active {
+    background-color: #e7f5ff;
+    color: #228be6;
+    border-color: #74c0fc;
+  }
+  .toolbar-btn.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .toolbar-btn svg {
+    margin-right: 6px;
+    width: 16px;
+    height: 16px;
+  }
+  .color-picker-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .color-preview {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid #e9ecef;
+    margin-right: 8px;
+    cursor: pointer;
+    position: relative;
+  }
+  #color-picker {
+    opacity: 0;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+  }
+  #text-input {
+    padding: 8px 12px;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    width: 200px;
+    font-size: 14px;
+    transition: border-color 0.2s ease;
+  }
+  #text-input:focus {
+    border-color: #74c0fc;
+    outline: none;
+  }
+  .dimensions-display {
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.8);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #495057;
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .save-btn {
+    padding: 8px 16px;
+    background-color: #228be6;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+  }
+  .save-btn:hover {
+    background-color: #1c7ed6;
+  }
+  #save-status {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    display: none;
+  }
+  #save-status.success {
+    display: block;
+    background-color: #d3f9d8;
+    color: #2b8a3e;
+    border: 1px solid #8ce99a;
+  }
+  #save-status.error {
+    display: block;
+    background-color: #ffe3e3;
+    color: #c92a2a;
+    border: 1px solid #ffa8a8;
+  }
+  .modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-content {
+    background-color: white;
+    padding: 24px;
+    border-radius: 8px;
+    width: 400px;
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .close-modal {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    color: #495057;
+  }
+  .modal-body {
+    margin-bottom: 24px;
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+  .canvas-wrapper {
+    position: relative;
+    margin-bottom: 15px;
+    width: 100%;
+    overflow: auto;
+  }
+  .zoom-controls {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    display: flex;
+    gap: 8px;
+    background-color: white;
+    padding: 6px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+  .zoom-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    background: none;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    color: #495057;
+  }
+  .zoom-btn:hover {
+    background-color: #f8f9fa;
+  }
+  #zoom-level {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 60px;
+    padding: 0 8px;
+    font-size: 14px;
+  }
+  .scale-settings {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    padding: 12px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+  .scale-input-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .scale-input-group input {
+    width: 80px;
+    padding: 8px;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  .scale-input-group input:focus {
+    border-color: #74c0fc;
+    outline: none;
+  }
+  .scale-input-group span {
+    font-size: 14px;
+    color: #495057;
+  }
+  .history-controls {
+    display: flex;
+    gap: 8px;
+  }
+
+  .process-floorplan-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 6px 12px !important;
+    background: linear-gradient(135deg, #3f87a6, #2c5e7d) !important;
+    color: white !important;
+    border-radius: 4px !important;
+    text-decoration: none !important;
+    font-weight: 500 !important;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.15) !important;
+  transition: all 0.2s ease !important;
+}
+
+.process-floorplan-btn:hover {
+  background: linear-gradient(135deg, #4a98b9, #336b8d) !important;
+  box-shadow: 0 3px 6px rgba(0,0,0,0.2) !important;
+  transform: translateY(-1px) !important;
+}
+
+.process-floorplan-btn:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
+}
+
+/* Style for the buttons in object-tools section */
+.processbtn, .downloadbtn, .editbtn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 8px 14px !important;
+  background: linear-gradient(135deg, #3f87a6, #2c5e7d) !important;
+  color: white !important;
+  border-radius: 4px !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.15) !important;
+  transition: all 0.2s ease !important;
+  border: none !important;
+}
+
+.processbtn:before, .downloadbtn:before, .editbtn:before {
+  content: "" !important;
+  display: inline-block !important;
+  width: 16px !important;
+  height: 16px !important;
+  margin-right: 6px !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: contain !important;
+}
+
+.processbtn:before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 11.08V12a10 10 0 1 1-5.93-9.14'%3E%3C/path%3E%3Cpolyline points='22 4 12 14.01 9 11.01'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+.downloadbtn:before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'%3E%3C/path%3E%3Cpolyline points='7 10 12 15 17 10'%3E%3C/polyline%3E%3Cline x1='12' y1='15' x2='12' y2='3'%3E%3C/line%3E%3C/svg%3E");
+}
+
+.editbtn:before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7'%3E%3C/path%3E%3Cpath d='M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z'%3E%3C/path%3E%3C/svg%3E");
+}
+
+.processbtn:hover, .downloadbtn:hover, .editbtn:hover {
+  background: linear-gradient(135deg, #4a98b9, #336b8d) !important;
+  box-shadow: 0 3px 6px rgba(0,0,0,0.2) !important;
+  transform: translateY(-1px) !important;
+}
+
+.processbtn:active, .downloadbtn:active, .editbtn:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
+}
+
+
+
+#loader-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.92);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column; /* Stack items vertically */
+    backdrop-filter: blur(2px); /* Modern glass effect */
+  }
+
+  .loader-container {
+    text-align: center;
+  }
+
+
+  .loader {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: inline-block;
+    position: relative;
+    border: 3px solid;
+    border-color: #3f87a6 #3f87a6 transparent transparent;
+    box-sizing: border-box;
+    animation: rotation 1s linear infinite;
+    margin-bottom: 15px;
+  }
+
+  .loader-text {
+    color: #2c5e7d;
+    font-size: 1.2em;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    text-transform: uppercase;
+    font-size: 14px;
+    letter-spacing: 1.5px;
+  }
+
+
+  .loader::after,
+  .loader::before {
+    content: '';  
+    box-sizing: border-box;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    margin: auto;
+    border: 3px solid;
+    border-color: transparent transparent #FF3D00 #FF3D00;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    animation: rotationBack 0.5s linear infinite;
+    transform-origin: center center;
+  }
+
+  .loader::before {
+    width: 32px;
+    height: 32px;
+    border-color: #FFF #FFF transparent transparent;
+    animation: rotation 1.5s linear infinite;
+  }
+
+  @keyframes rotation {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes rotationBack {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(-360deg);
+    }
+  }
+
+  .approvebtn {
+    background: linear-gradient(135deg, #08b87a 0%, #06451c 100%);
+    color: white;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: -0.025em;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(26, 212, 91, 0.3);
+  }
+
+  .approvebtn:hover {
+    background: linear-gradient(135deg, #74e0b8 0%, #032e08 100%);
+    color: white;
+    text-decoration: none;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(13, 182, 47, 0.4);
+}
+
+.approvebtn::before {
+    content: "✔";
+}
+
+  .fixtures-modal {
+    display: none;
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.7);
+    backdrop-filter: blur(8px);
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideIn {
+    from { 
+        opacity: 0;
+        transform: translateY(-30px) scale(0.95);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.fixtures-modal-content {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    margin: 3% auto;
+    padding: 0;
+    border: none;
+    width: 90%;
+    max-width: 900px;
+    border-radius: 16px;
+    max-height: 85vh;
+    overflow: hidden;
+    box-shadow: 
+        0 25px 50px -12px rgba(0, 0, 0, 0.25),
+        0 10px 20px -8px rgba(0, 0, 0, 0.1);
+    animation: slideIn 0.3s ease-out;
+}
+
+/* Modal Header */
+.fixtures-modal-header {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    padding: 24px 32px;
+    position: relative;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.fixtures-modal-header h2 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+}
+
+.fixtures-close {
+    color: rgba(255, 255, 255, 0.8);
+    position: absolute;
+    right: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 24px;
+    font-weight: 300;
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.fixtures-close:hover,
+.fixtures-close:focus {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    transform: translateY(-50%) scale(1.1);
+}
+
+/* Modal Body */
+.fixtures-modal-body {
+    padding: 32px;
+    max-height: calc(85vh - 160px);
+    overflow-y: auto;
+}
+
+/* Custom Scrollbar */
+.fixtures-modal-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.fixtures-modal-body::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 3px;
+}
+
+.fixtures-modal-body::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.fixtures-modal-body::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Plan Selector */
+.plan-selector {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border: 1px solid #f59e0b;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.plan-selector label {
+    font-weight: 600;
+    color: #92400e;
+    margin: 0;
+    white-space: nowrap;
+}
+
+.plan-selector select {
+    flex-grow: 1;
+    padding: 12px 16px;
+    border: 2px solid #f59e0b;
+    border-radius: 8px;
+    background: white;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.plan-selector select:focus {
+    outline: none;
+    border-color: #d97706;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+}
+
+.plan-selector select:hover {
+    border-color: #d97706;
+}
+.project-info {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #0ea5e9;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 32px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.project-info::before {
+    content: "🏗️";
+    font-size: 20px;
+}
+
+.project-info p {
+    margin: 0;
+    font-weight: 600;
+    color: #0c4a6e;
+}
+
+/* Fixtures Section */
+.fixtures-section {
+    margin-bottom: 32px;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 0;
+    overflow: hidden;
+    background: white;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.fixtures-section:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px -5px rgba(0, 0, 0, 0.15);
+}
+
+.fixtures-section h3 {
+    margin: 0;
+    color: white;
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+    padding: 20px 24px;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+}
+
+/* Fixture Category */
+.fixture-category {
+    padding: 24px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.fixture-category:last-child {
+    border-bottom: none;
+}
+
+.fixture-category h4 {
+    color: #374151;
+    margin: 0 0 16px 0;
+    font-size: 16px;
+    font-weight: 600;
+    text-transform: capitalize;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.fixture-category h4::before {
+    content: "📦";
+    font-size: 16px;
+}
+
+/* Fixture Item */
+.fixture-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 16px 20px;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    transition: all 0.2s ease;
+}
+
+.fixture-item:hover {
+    background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
+    border-color: #0ea5e9;
+    transform: translateX(4px);
+}
+
+.fixture-item:last-child {
+    margin-bottom: 0;
+}
+
+.fixture-item label {
+    font-weight: 500;
+    color: #374151;
+    flex-grow: 1;
+    text-transform: capitalize;
+    letter-spacing: -0.025em;
+}
+
+.fixture-item input {
+    width: 80px;
+    padding: 10px 12px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    transition: all 0.2s ease;
+    background: white;
+}
+
+.fixture-item input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    transform: scale(1.05);
+}
+
+.fixture-item input:hover {
+    border-color: #94a3b8;
+}
+
+/* Modal Footer */
+.fixtures-buttons {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    padding: 24px 32px;
+    text-align: right;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.fixtures-buttons button {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: -0.025em;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 120px;
+    justify-content: center;
+}
+
+.save-fixtures-btn {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.save-fixtures-btn:hover {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);
+}
+
+.save-fixtures-btn::before {
+    content: "💾";
+}
+
+.cancel-fixtures-btn {
+    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
+}
+
+.cancel-fixtures-btn:hover {
+    background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(107, 114, 128, 0.4);
+}
+
+.cancel-fixtures-btn::before {
+    content: "❌";
+}
+
+/* Configure Button */
+.configure-fixtures-btn {
+    background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+    color: white;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: -0.025em;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3);
+}
+
+.configure-fixtures-btn::before {
+    content: "⚙️";
+}
+
+.configure-fixtures-btn:hover {
+    background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+    color: white;
+    text-decoration: none;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(6, 182, 212, 0.4);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .fixtures-modal-content {
+        width: 95%;
+        margin: 5% auto;
+        border-radius: 12px;
+    }
+    
+    .fixtures-modal-header,
+    .fixtures-modal-body,
+    .fixtures-buttons {
+        padding: 20px;
+    }
+    
+    .fixture-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .fixture-item input {
+        width: 100%;
+        max-width: 120px;
+    }
+    
+    .fixtures-buttons {
+        flex-direction: column-reverse;
+    }
+    
+    .fixtures-buttons button {
+        width: 100%;
+    }
+}
+
+.rotation-input-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+}
+
+.rotation-input-group input {
+  width: 60px;
+  padding: 4px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.rotation-input-group span {
+  color: #666;
+  font-size: 12px;
+}
+
+.toolbar-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.toolbar-group {
+  margin-right: 15px;
+  padding-right: 15px;
+  border-right: 1px solid #e0e0e0;
+}
+
+.toolbar-group:last-child {
+  border-right: none;
+}
+
+
+
+
+</style>
+{% endblock %}
+
+{% block object-tools-items %}
+{{ block.super }}
+
+<div id="loader-overlay">
+  <div class="loader-container">
+    <div class="loader"></div>
+    <div class="loader-text">Processing Floorplan</div>
+  </div>
+</div>
+
+{% if original and original.file %}
+    {% if original.project.status == 'approved' %}
+        {# Section for Image Processing (PNG/JPG/JPEG) #}
+        {% if original.file_type == 'png' or original.file_type == 'jpg' or original.file_type == 'jpeg' %}
+        <br>
+        <li>
+            <a href="{% url 'admin:process_floorplan' original.id %}" class="processbtn">
+                {% trans "Process Floorplan" %}
+            </a>
+        </li>
+        {% endif %}
+
+        {% if original.file_type == 'dxf' or original.file_type == 'fcstd' %}
+        <br>
+        <li>
+            <a href="{% url 'admin:download_processed_file' original.id %}" class="downloadbtn">
+                {% if original.file_type == 'dxf' %}
+                    {% trans "Download Processed DXF" %}
+                {% else %}
+                    {% trans "Download Original FCStd" %}
+                {% endif %}
+            </a>
+        </li>
+        {% endif %}
+
+        {# Your existing 'Download Processed File' for FCStd might still be relevant if FCStd itself is considered a 'processed file' for direct download #}
+        {# Otherwise, you can remove or modify this block if the ZIP is the primary output for all processed files. #}
+        {% if original.file_type == 'fcstd' %}
+        <br>
+        <li>
+            <a href="{% url 'admin:download_processed_file' original.id %}" class="downloadbtn">
+                {% trans "Download Original FCStd" %} {# Changed text for clarity #}
+            </a>
+        </li>
+        {% endif %}
+
+        {# PDF Download Option - Available for all file types #}
+        <br>
+        <li>
+            <a href="{% url 'admin:download_project_pdf' original.id %}" class="downloadbtn" style="background-color: #e74c3c; color: white;">
+                {% trans "Download Project PDF Report" %}
+            </a>
+        </li>
+
+    {% else %}
+        {# Section for Pending Projects #}
+        <br>
+        <li>
+            <span style="color: #dc3545; font-weight: bold;">Project needs approval before processing files</span>
+        </li>
+        
+        {% if show_approve_button %}
+        <br>
+        <li>
+            <a href="#" class="configure-fixtures-btn" style="color: white;" onclick="openFixturesModal('{{ file_id }}')">
+                {% trans "Configure Fixtures" %}
+            </a>
+        </li>
+        <br>
+        <li>
+            {% if fixtures_configured %}
+                {# Approve button enabled when fixtures are configured #}
+                <a href="{% url 'admin:approve_project_from_file' file_id %}" class="approvebtn" style="background-color: #28a745; color: white;">
+                    {% trans "Approve" %}
+                </a>
+            {% else %}
+                {# Approve button disabled when fixtures are not configured #}
+                <span class="approvebtn-disabled" style="background-color: #6c757d; color: white; padding: 8px 16px; border-radius: 4px; text-decoration: none; cursor: not-allowed; opacity: 0.6;">
+                    {% trans "Approve" %}
+                </span>
+                <br>
+                <small style="color: #dc3545; font-style: italic;">
+                    {% trans "Please configure fixtures before approving" %}
+                </small>
+            {% endif %}
+        </li>
+        {% endif %}
+
+        {# PDF Download Option - Available even for pending projects #}
+        <br>
+        <li>
+            <a href="{% url 'admin:download_project_pdf' original.id %}" class="downloadbtn" style="background-color: #e74c3c; color: white;">
+                {% trans "Download Project PDF Report" %}
+            </a>
+        </li>
+    {% endif %}
+{% endif %}
+<!-- Fixtures Configuration Modal -->
+<div id="fixturesModal" class="fixtures-modal">
+    <div class="fixtures-modal-content">
+        <div class="fixtures-modal-header">
+            <h2>Configure Fixtures for Project</h2>
+            <span class="fixtures-close">&times;</span>
+        </div>
+        <div class="fixtures-modal-body">
+            <div id="fixturesContent">
+                <!-- Dynamic content will be loaded here -->
+            </div>
+        </div>
+        <div class="fixtures-buttons">
+            <button type="button" class="cancel-fixtures-btn" onclick="closeFixturesModal()">Cancel</button>
+            <button type="button" class="save-fixtures-btn" onclick="saveFixturesConfig()">Save Configuration</button>
+        </div>
+    </div>
+</div>
+<script>
+    // Fixtures Modal Functions
+    let currentFileId = null;
+    let fixturesData = {};
+    
+    function openFixturesModal(fileId) {
+        currentFileId = fileId;
+        const modal = document.getElementById('fixturesModal');
+        
+        // Load fixtures configuration
+        fetch(`{% url 'admin:get_fixtures_config' '00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', fileId))
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    fixturesData = data.fixtures;
+                    renderFixturesForm(data.fixtures, data.project_name);
+                    modal.style.display = 'block';
+                } else {
+                    alert('Error loading fixtures configuration: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error loading fixtures configuration');
+            });
+    }
+    
+    function closeFixturesModal() {
+        document.getElementById('fixturesModal').style.display = 'none';
+        currentFileId = null;
+        fixturesData = {};
+    }
+    
+    function renderFixturesForm(fixtures, projectName) {
+    const content = document.getElementById('fixturesContent');
+    
+    // Create plan type selector
+    const planTypes = Object.keys(fixtures);
+    const defaultPlanType = planTypes[0]; // Select first plan type by default
+    
+    let html = `
+        <div class="project-info">
+            <p><strong>Project:</strong> ${projectName}</p>
+        </div>
+        <div class="plan-selector">
+            <label for="planTypeSelect"><strong>Proton Value:</strong></label>
+            <select id="planTypeSelect" onchange="updateFixturesDisplay()">
+    `;
+    
+    planTypes.forEach(planType => {
+        html += `<option value="${planType}" ${planType === defaultPlanType ? 'selected' : ''}>${planType}</option>`;
+    });
+    
+    html += `
+            </select>
+        </div>
+        <div id="selectedPlanFixtures">
+            <!-- Selected plan fixtures will be displayed here -->
+        </div>
+    `;
+    
+    content.innerHTML = html;
+    
+    // Display fixtures for the default selected plan type
+    updateFixturesDisplay();
+}
+
+function updateFixturesDisplay() {
+    const selectedPlanType = document.getElementById('planTypeSelect').value;
+    const selectedPlanFixtures = document.getElementById('selectedPlanFixtures');
+    const categories = fixturesData[selectedPlanType];
+    
+    let html = `
+        <div class="fixtures-section">
+            <h3>Fixtures for Plan Type: ${selectedPlanType}</h3>
+    `;
+    
+    for (const [categoryName, items] of Object.entries(categories)) {
+        html += `
+            <div class="fixture-category">
+                <h4>${categoryName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</h4>
+        `;
+        
+        for (const [itemName, quantity] of Object.entries(items)) {
+            const inputId = `${selectedPlanType}_${categoryName}_${itemName}`;
+            html += `
+                <div class="fixture-item">
+                    <label for="${inputId}">${itemName.replace('_', ' ')}</label>
+                    <input type="number" 
+                           id="${inputId}" 
+                           value="${quantity}" 
+                           min="0" 
+                           data-plan="${selectedPlanType}" 
+                           data-category="${categoryName}" 
+                           data-item="${itemName}">
+                </div>
+            `;
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    selectedPlanFixtures.innerHTML = html;
+}
+
+    
+function saveFixturesConfig() {
+    const selectedPlanType = document.getElementById('planTypeSelect').value;
+    const inputs = document.querySelectorAll('#selectedPlanFixtures input[type="number"]');
+    
+    // Build data structure for the selected plan only
+    const selectedPlanData = {};
+    
+    inputs.forEach(input => {
+        const category = input.dataset.category;
+        const item = input.dataset.item;
+        const value = parseInt(input.value) || 0;
+        
+        if (!selectedPlanData[category]) {
+            selectedPlanData[category] = {};
+        }
+        selectedPlanData[category][item] = value;
+    });
+    
+    // Create payload with only the selected plan's data
+    const payload = {
+        [selectedPlanType]: selectedPlanData
+    };
+    
+    // Prepare form data
+    const formData = new FormData();
+    formData.append('file_id', currentFileId);
+    formData.append('fixtures_data', JSON.stringify(payload));
+    formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+    
+    // Send request
+    fetch('{% url "admin:save_fixtures_config" %}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Fixtures configuration saved successfully!');
+            closeFixturesModal();
+
+            window.location.reload();
+            
+        } else {
+            alert('Error saving configuration: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error saving fixtures configuration');
+    });
+}
+
+    
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('fixturesModal');
+        if (event.target == modal) {
+            closeFixturesModal();
+        }
+    }
+    
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeFixturesModal();
+        }
+    });
+    </script>
+    
+
+
+{% if original and original.is_image %}
+
+{% endif %}
+
+
+
+{% endblock %}
+
+{% block content %}
+{{ block.super }}
+
+{% if original and original.is_image %}
+<div class="image-editor-container">
+  <div class="editor-header">
+    <h2>Image Editor</h2>
+      <button id="save-image" class="save-btn">
+        <span id="save-icon">💾</span> Save Changes
+      </button>
+  </div>
+
+  <div class="scale-settings">
+    <div class="scale-input-group">
+      <span>Scale:</span>
+      <input type="number" id="pixels-value" value="100" min="1" step="1">
+      <span>pixels =</span>
+      <input type="number" id="meters-value" value="1" min="0.01" step="0.01">
+      <span>meters</span>
+    </div>
+  </div>
+
+  <div class="editor-toolbar">
+    <div class="toolbar-group">
+      <button id="select-mode" class="toolbar-btn active" title="Select and move objects">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M5 5l7 7m0 0v-5m0 5h-5"></path>
+        </svg>
+        Select
+      </button>
+      <button id="draw-mode" class="toolbar-btn" title="Free drawing">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 4l-4.5 16.5m9-16l-5.5 16.5"></path>
+        </svg>
+        Draw
+      </button>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="add-rectangle" class="toolbar-btn" title="Add rectangle">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+        </svg>
+        Rectangle
+      </button>
+      <button id="add-circle" class="toolbar-btn" title="Add circle">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+        </svg>
+        Circle
+      </button>
+      <button id="add-text" class="toolbar-btn" title="Add text">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 7V4h16v3M9 20h6M12 4v16"></path>
+        </svg>
+        Text
+      </button>
+    </div>
+
+    <div class="toolbar-group">
+      <div class="color-picker-wrapper">
+        <div id="color-preview" class="color-preview" style="background-color: #ff0000;"></div>
+        <span>Color</span>
+        <input type="color" id="color-picker" value="#ff0000">
+      </div>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="delete-selected" class="toolbar-btn" title="Delete selected object">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
+        </svg>
+        Delete
+      </button>
+      <button id="clear-canvas" class="toolbar-btn" title="Clear all objects">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3l18 18M3 21L21 3"></path>
+        </svg>
+        Clear All
+      </button>
+      <button id="undo-btn" class="toolbar-btn disabled" style="color: #eb0909;" title="Undo (Ctrl+Z)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M3 10h10a5 5 0 0 1 5 5v2M3 10l6-6M3 10l6 6"/>
+        </svg>
+      </button>
+      <button id="redo-btn" class="toolbar-btn disabled" style="color: #228be6;" title="Redo (Ctrl+Y)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M21 10H11a5 5 0 0 0-5 5v2M21 10l-6-6M21 10l-6 6"/>
+        </svg>
+      </button>
+      <button id="erase-mode" class="toolbar-btn" title="Erase">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3l18 18M3 21L21 3"></path>
+        </svg>
+        Erase
+      </button>
+    </div>
+
+
+
+    <div class="toolbar-group">
+      <button id="rotate-left" class="toolbar-btn" title="Rotate 90° Left">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+        </svg>
+        90° Left
+      </button>
+      <button id="rotate-right" class="toolbar-btn" title="Rotate 90° Right">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+          <path d="M21 3v5h-5"/>
+        </svg>
+        90° Right
+      </button>
+      <button id="rotate-180" class="toolbar-btn" title="Rotate 180°">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+          <path d="M21 3v5h-5"/>
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+        </svg>
+        180°
+      </button>
+    </div>
+    
+    <div class="toolbar-group">
+      <div class="rotation-input-group">
+        <span>Custom Angle:</span>
+        <input type="number" id="rotation-angle" value="0" min="-360" max="360" step="1">
+        <span>°</span>
+        <button id="apply-rotation" class="toolbar-btn" title="Apply custom rotation">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+            <path d="M21 3v5h-5"/>
+          </svg>
+          Apply
+        </button>
+      </div>
+    </div>
+    
+    <div class="toolbar-group">
+      <button id="flip-horizontal" class="toolbar-btn" title="Flip Horizontally">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h3m8 0h3a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-3m0 0L12 12l4 9"/>
+        </svg>
+        Flip H
+      </button>
+      <button id="flip-vertical" class="toolbar-btn" title="Flip Vertically">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3m18 8v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3m0 0L12 12l-9 4"/>
+        </svg>
+        Flip V
+      </button>
+      <button id="reset-rotation" class="toolbar-btn" title="Reset to Original">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+          <path d="M21 3v5h-5"/>
+          <path d="M12 3v9l4-4"/>
+        </svg>
+        Reset
+      </button>
+
+      
+      <!-- <button id="remove-background" class="toolbar-btn" title="Remove Background">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3l18 18m-18 0L21 3"/>
+          <circle cx="12" cy="12" r="9"/>
+        </svg>
+        Remove BG
+      </button> -->
+
+      
+    </div>
+
+
+  </div>
+
+  <div class="canvas-wrapper">
+    <canvas id="image-editor" width="800" height="600"></canvas>
+    <div id="dimensions-display" class="dimensions-display"></div>
+    <div class="zoom-controls">
+      <button id="zoom-out" class="zoom-btn">-</button>
+      <div id="zoom-level">100%</div>
+      <button id="zoom-in" class="zoom-btn">+</button>
+    </div>
+  </div>
+
+  <div id="save-status"></div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirm-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Confirmation</h3>
+        <button class="close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-message">Are you sure you want to clear all objects?</p>
+      </div>
+      <div class="modal-footer">
+        <button id="modal-cancel" class="toolbar-btn">Cancel</button>
+        <button id="modal-confirm" class="save-btn">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Helper function to convert data URL to Blob
+      function dataURLtoBlob(dataURL) {
+        var parts = dataURL.split(';base64,');
+        var contentType = parts[0].split(':')[1];
+        var raw = window.atob(parts[1]);
+        var rawLength = raw.length;
+        var uInt8Array = new Uint8Array(rawLength);
+
+        for (var i = 0; i < rawLength; ++i) {
+          uInt8Array[i] = raw.charCodeAt(i);
+        }
+
+        return new Blob([uInt8Array], { type: contentType });
+      }
+
+      // Initialize Fabric canvas
+      var canvas = new fabric.Canvas('image-editor');
+      var currentRotation = 0;
+      var isHorizontallyFlipped = false;
+      var isVerticallyFlipped = false;
+      var originalImageData = null;
+
+      var rotationAngleInput = document.getElementById('rotation-angle');
+
+      // Store original image data when image is loaded
+      var originalImageFromURL = fabric.Image.fromURL;
+      fabric.Image.fromURL = function(url, callback, imgOptions) {
+        originalImageFromURL.call(this, url, function(img) {
+          if (!originalImageData) {
+            originalImageData = {
+              src: img.getSrc(),
+              width: img.width,
+              height: img.height,
+              scaleX: img.scaleX,
+              scaleY: img.scaleY
+            };
+          }
+          callback(img);
+        }, imgOptions);
+      };
+
+
+      var fileUrl = '{{ original.file.url }}';
+      var csrfToken = '{{ csrf_token }}';
+      var currentColor = '#ff0000';
+      var zoomLevel = 1;
+      var isPanning = false;
+      var lastPosX;
+      var lastPosY;
+      var canvasViewportTransform = [1, 0, 0, 1, 0, 0];
+
+      var eraseModeBtn = document.getElementById('erase-mode'); // Ensure this button exists in the toolbar
+      var eraserWidthInput;
+
+      if (fabric.EraserBrush) {
+    eraseModeBtn.addEventListener('click', function() {
+      canvas.isDrawingMode = true;
+      canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
+      canvas.freeDrawingBrush.width = eraserWidthInput ? parseInt(eraserWidthInput.value, 10) : 10;
+      setActiveButton('erase-mode');
+    });
+
+    // Add eraser width input dynamically
+    var eraserWidthInput = document.createElement('input');
+    eraserWidthInput.type = 'number';
+    eraserWidthInput.value = 10;
+    eraserWidthInput.min = 1;
+    eraserWidthInput.step = 1;
+    eraserWidthInput.style.marginLeft = '10px';
+    eraserWidthInput.title = 'Eraser Width';
+    eraseModeBtn.parentElement.appendChild(eraserWidthInput);
+
+    eraserWidthInput.addEventListener('input', function() {
+      if (canvas.freeDrawingBrush instanceof fabric.EraserBrush) {
+        canvas.freeDrawingBrush.width = parseInt(eraserWidthInput.value, 10) || 10;
+      }
+    });
+
+    if (!eraserWidthInput) {
+      eraserWidthInput = document.createElement('input');
+      eraserWidthInput.type = 'number';
+      eraserWidthInput.value = 10;
+      eraserWidthInput.min = 1;
+      eraserWidthInput.max = 50;
+      eraserWidthInput.step = 1;
+      eraserWidthInput.style.marginLeft = '10px';
+      eraserWidthInput.style.width = '60px';
+      eraserWidthInput.title = 'Eraser Width';
+      eraserWidthInput.placeholder = 'Width';
+      
+      // Insert after the erase button
+      eraseModeBtn.parentNode.insertBefore(eraserWidthInput, eraseModeBtn.nextSibling);
+    }
+
+    eraserWidthInput.addEventListener('input', function() {
+      var width = parseInt(this.value, 10) || 10;
+      if (canvas.freeDrawingBrush && canvas.freeDrawingBrush instanceof fabric.EraserBrush) {
+        canvas.freeDrawingBrush.width = width;
+      }
+    });
+} else {
+    // Fallback implementation for older Fabric.js versions or if EraserBrush is not available
+    console.warn('EraserBrush is not available. Using fallback eraser implementation.');
+    
+    eraseModeBtn.addEventListener('click', function() {
+      canvas.isDrawingMode = true;
+      
+      // Create a custom brush that draws with the background color or transparent
+      canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+      canvas.freeDrawingBrush.width = 10;
+      canvas.freeDrawingBrush.color = 'rgba(255,255,255,1)'; // White color for erasing
+      canvas.freeDrawingBrush.globalCompositeOperation = 'destination-out'; // This creates the erasing effect
+      
+      setActiveButton('erase-mode');
+    });
+
+    // Create eraser width input for fallback mode
+    if (!eraserWidthInput) {
+      eraserWidthInput = document.createElement('input');
+      eraserWidthInput.type = 'number';
+      eraserWidthInput.value = 10;
+      eraserWidthInput.min = 1;
+      eraserWidthInput.max = 50;
+      eraserWidthInput.step = 1;
+      eraserWidthInput.style.marginLeft = '10px';
+      eraserWidthInput.style.width = '60px';
+      eraserWidthInput.title = 'Eraser Width';
+      eraserWidthInput.placeholder = 'Width';
+      
+      eraseModeBtn.parentNode.insertBefore(eraserWidthInput, eraseModeBtn.nextSibling);
+    }
+
+    eraserWidthInput.addEventListener('input', function() {
+      var width = parseInt(this.value, 10) || 10;
+      if (canvas.freeDrawingBrush) {
+        canvas.freeDrawingBrush.width = width;
+      }
+    });
+  }
+
+  
+
+
+  // Make sure to reset globalCompositeOperation when switching modes
+  document.getElementById('draw-mode').addEventListener('click', function() {
+    canvas.isDrawingMode = true;
+    canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+    canvas.freeDrawingBrush.width = 3;
+    canvas.freeDrawingBrush.color = currentColor;
+    canvas.freeDrawingBrush.globalCompositeOperation = 'source-over'; // Reset to normal drawing
+    setActiveButton('draw-mode');
+  });
+
+  document.getElementById('select-mode').addEventListener('click', function() {
+    canvas.isDrawingMode = false;
+    setActiveButton('select-mode');
+  });
+
+  // Save canvas state after any drawing operation (including erasing)
+  canvas.on('path:created', function(e) {
+    // Reset composite operation after erasing is done
+    if (canvas.freeDrawingBrush && canvas.freeDrawingBrush.globalCompositeOperation === 'destination-out') {
+      canvas.freeDrawingBrush.globalCompositeOperation = 'source-over';
+    }
+    saveCanvasState();
+  });
+
+
+      // Scale conversion variables
+      var pixelsValue = 100;
+      var metersValue = 1;
+      var pixelsToMeters = metersValue / pixelsValue;
+
+      // History management
+      var canvasHistory = [];
+      var canvasHistoryIndex = -1;
+      var maxHistorySize = 30;
+      var isUndoRedoAction = false;
+
+      // UI Elements
+      var colorPreview = document.getElementById('color-preview');
+      var colorPicker = document.getElementById('color-picker');
+      var saveStatus = document.getElementById('save-status');
+      var confirmModal = document.getElementById('confirm-modal');
+      var modalConfirmBtn = document.getElementById('modal-confirm');
+      var modalCancelBtn = document.getElementById('modal-cancel');
+      var closeModalBtn = document.querySelector('.close-modal');
+      var zoomLevelDisplay = document.getElementById('zoom-level');
+      var dimensionsDisplay = document.getElementById('dimensions-display');
+      var undoBtn = document.getElementById('undo-btn');
+      var redoBtn = document.getElementById('redo-btn');
+      var pixelsInput = document.getElementById('pixels-value');
+      var metersInput = document.getElementById('meters-value');
+      var canvasWrapper = document.querySelector('.canvas-wrapper');
+      var editorToolbar = document.querySelector('.editor-toolbar');
+      var eraseModeBtn = document.getElementById('erase-mode');
+
+      // Set active class for toolbar buttons
+      function setActiveButton(buttonId) {
+        document.querySelectorAll('.toolbar-btn').forEach(btn => {
+          btn.classList.remove('active');
+        });
+        document.getElementById(buttonId).classList.add('active');
+      }
+
+      // Show confirmation modal
+      function showConfirmModal(message, confirmCallback) {
+        document.getElementById('modal-message').textContent = message;
+        confirmModal.style.display = 'flex';
+
+        // Set confirm action
+        modalConfirmBtn.onclick = function() {
+          confirmCallback();
+          confirmModal.style.display = 'none';
+        };
+      }
+
+      // Close modal events
+      modalCancelBtn.onclick = closeModalBtn.onclick = function() {
+        confirmModal.style.display = 'none';
+      };
+
+      // Scale functions
+      pixelsInput.addEventListener('input', updateScale);
+      metersInput.addEventListener('input', updateScale);
+
+      function updateScale() {
+        pixelsValue = parseFloat(pixelsInput.value) || 100;
+        metersValue = parseFloat(metersInput.value) || 1;
+        pixelsToMeters = metersValue / pixelsValue;
+
+        // Update dimensions of selected object with new scale
+        var activeObj = canvas.getActiveObject();
+        if (activeObj) {
+          updateDimensions(activeObj);
+        }
+      }
+
+      function pixelsToMetersValue(pixels) {
+        return (pixels * pixelsToMeters).toFixed(2);
+      }
+
+      // History management functions
+      function saveCanvasState() {
+        if (isUndoRedoAction) {
+          isUndoRedoAction = false;
+          return;
+        }
+
+        // Save current state
+        var json = JSON.stringify(canvas.toJSON(['id']));
+
+        // If we're not at the end of the history, remove future states
+        if (canvasHistoryIndex < canvasHistory.length - 1) {
+          canvasHistory = canvasHistory.slice(0, canvasHistoryIndex + 1);
+        }
+
+        // Add new state to history
+        canvasHistory.push(json);
+        canvasHistoryIndex++;
+
+        // Limit history size
+        if (canvasHistory.length > maxHistorySize) {
+          canvasHistory.shift();
+          canvasHistoryIndex--;
+        }
+
+        updateUndoRedoButtons();
+      }
+
+      function restoreCanvasState(index) {
+        if (index < 0 || index >= canvasHistory.length) return;
+
+        isUndoRedoAction = true;
+        canvasHistoryIndex = index;
+
+        canvas.loadFromJSON(canvasHistory[index], function() {
+          canvas.renderAll();
+          updateUndoRedoButtons();
+        });
+      }
+
+      function undo() {
+        if (canvasHistoryIndex > 0) {
+          restoreCanvasState(canvasHistoryIndex - 1);
+        }
+      }
+
+      function redo() {
+        if (canvasHistoryIndex < canvasHistory.length - 1) {
+          restoreCanvasState(canvasHistoryIndex + 1);
+        }
+      }
+
+      function updateUndoRedoButtons() {
+        undoBtn.classList.toggle('disabled', canvasHistoryIndex <= 0);
+        redoBtn.classList.toggle('disabled', canvasHistoryIndex >= canvasHistory.length - 1);
+      }
+
+      // Undo/Redo button events
+      undoBtn.addEventListener('click', function() {
+        if (!this.classList.contains('disabled')) {
+          undo();
+        }
+      });
+
+      redoBtn.addEventListener('click', function() {
+        if (!this.classList.contains('disabled')) {
+          redo();
+        }
+      });
+
+      // Load the image onto the canvas
+      fabric.Image.fromURL(fileUrl, function(img) {
+        // Store original image data
+        originalImageData = {
+          src: fileUrl,
+          width: img.width,
+          height: img.height,
+          scaleX: img.scaleX,
+          scaleY: img.scaleY
+        };
+
+        // Calculate scaling to fit the canvas while maintaining aspect ratio
+        var canvasWidth = 800;
+        var canvasHeight = 600;
+        var scale = Math.min(canvasWidth / img.width, canvasHeight / img.height);
+
+        // Resize the image
+        img.scale(scale);
+
+        // Center the image
+        canvas.setWidth(img.getScaledWidth());
+        canvas.setHeight(img.getScaledHeight());
+        canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
+          originX: 'center',
+          originY: 'center',
+          left: canvas.width / 2,
+          top: canvas.height / 2
+        });
+
+        // Initialize history after loading
+        saveCanvasState();
+      });
+
+
+      // Color picker
+      colorPicker.addEventListener('input', function() {
+        currentColor = this.value;
+        colorPreview.style.backgroundColor = currentColor;
+
+        if (canvas.isDrawingMode) {
+          canvas.freeDrawingBrush.color = currentColor;
+        }
+
+        // Update selected object color if there is one
+        var activeObj = canvas.getActiveObject();
+        if (activeObj) {
+          if (activeObj.type === 'textbox') {
+            activeObj.set('fill', currentColor);
+          } else {
+            activeObj.set('stroke', currentColor);
+          }
+          canvas.renderAll();
+        }
+      });
+
+      // Toggle drawing mode
+      document.getElementById('draw-mode').addEventListener('click', function() {
+        canvas.isDrawingMode = true;
+        canvas.freeDrawingBrush.width = 3;
+        canvas.freeDrawingBrush.color = currentColor;
+        setActiveButton('draw-mode');
+      });
+
+      // Selection mode
+      document.getElementById('select-mode').addEventListener('click', function() {
+        canvas.isDrawingMode = false;
+        setActiveButton('select-mode');
+      });
+
+
+      
+
+
+      // Add rectangle
+      document.getElementById('add-rectangle').addEventListener('click', function() {
+        var rect = new fabric.Rect({
+          left: canvas.width / 2 - 50,
+          top: canvas.height / 2 - 25,
+          width: 100,
+          height: 50,
+          fill: 'transparent',
+          stroke: currentColor,
+          strokeWidth: 2,
+          cornerColor: '#228be6',
+          transparentCorners: false
+        });
+        canvas.add(rect);
+        canvas.setActiveObject(rect);
+        setActiveButton('select-mode');
+        canvas.isDrawingMode = false;
+        updateDimensions(rect);
+        saveCanvasState();
+      });
+
+      // Add circle
+      document.getElementById('add-circle').addEventListener('click', function() {
+        var circle = new fabric.Circle({
+          left: canvas.width / 2 - 50,
+          top: canvas.height / 2 - 50,
+          radius: 50,
+          fill: 'transparent',
+          stroke: currentColor,
+          strokeWidth: 2,
+          cornerColor: '#228be6',
+          transparentCorners: false
+        });
+        canvas.add(circle);
+        canvas.setActiveObject(circle);
+        setActiveButton('select-mode');
+        canvas.isDrawingMode = false;
+        updateDimensions(circle);
+        saveCanvasState();
+      });
+
+      // Add text
+      document.getElementById('add-text').addEventListener('click', function() {
+        // Add text directly to canvas
+        var textbox = new fabric.Textbox('Double-click to edit', {
+          left: canvas.width / 2 - 75,
+          top: canvas.height / 2 - 25,
+          fontSize: 20,
+          fill: currentColor,
+          width: 150,
+          fontFamily: 'Arial',
+          cornerColor: '#228be6',
+          transparentCorners: false,
+          editingBorderColor: '#228be6'
+        });
+        canvas.add(textbox);
+        canvas.setActiveObject(textbox);
+        setActiveButton('select-mode');
+        canvas.isDrawingMode = false;
+        saveCanvasState();
+      });
+
+      // Text editing handler - make double click edit the text
+      canvas.on('mouse:dblclick', function(options) {
+        if (options.target && options.target.type === 'textbox') {
+          canvas.setActiveObject(options.target);
+          options.target.enterEditing();
+          options.target.selectAll();
+        }
+      });
+
+      // Delete selected object
+      document.getElementById('delete-selected').addEventListener('click', function() {
+        var activeObj = canvas.getActiveObject();
+        if (activeObj) {
+          canvas.remove(activeObj);
+          saveCanvasState();
+        }
+      });
+
+      // Clear canvas
+      document.getElementById('clear-canvas').addEventListener('click', function() {
+        showConfirmModal('Are you sure you want to clear all objects?', function() {
+          // Remove all objects except background image
+          canvas.getObjects().forEach(function(obj) {
+            canvas.remove(obj);
+          });
+          canvas.renderAll();
+          saveCanvasState();
+        });
+      });
+
+      // Zoom controls
+      document.getElementById('zoom-in').addEventListener('click', function() {
+        if (zoomLevel < 3) {
+          zoomLevel += 0.1;
+          updateZoom();
+        }
+      });
+
+      document.getElementById('zoom-out').addEventListener('click', function() {
+        if (zoomLevel > 0.5) {
+          zoomLevel -= 0.1;
+          updateZoom();
+        }
+      });
+
+      function updateZoom() {
+            // Calculate new dimensions based on zoom
+            var originalWidth = canvas.getWidth() / canvas.getZoom();
+            var originalHeight = canvas.getHeight() / canvas.getZoom();
+
+            // Get toolbar width to determine max canvas width
+            var toolbarWidth = editorToolbar.offsetWidth;
+            var canvasWrapperWidth = canvasWrapper.clientWidth;
+            var maxWidth = Math.min(toolbarWidth, canvasWrapperWidth);
+
+            // Set canvas dimensions keeping it within visible area
+            canvas.setZoom(zoomLevel);
+
+            // Determine appropriate dimensions to prevent over-expansion
+            var newWidth = Math.min(originalWidth * zoomLevel, maxWidth);
+            var newHeight = originalHeight * zoomLevel;
+
+            canvas.setDimensions({
+                width: newWidth,
+                height: newHeight
+            });
+
+            // Update zoom display
+            zoomLevelDisplay.textContent = Math.round(zoomLevel * 100) + '%';
+
+            // Ensure zoom controls stay at the bottom right
+            var zoomControls = document.querySelector('.zoom-controls');
+            zoomControls.style.position = 'fixed';
+            zoomControls.style.bottom = '20px';
+            zoomControls.style.right = '20px';
+
+            canvas.renderAll();
+        }
+
+        // Save image changes
+        document.getElementById('save-image').addEventListener('click', function() {
+          var saveBtn = this;
+          var originalText = saveBtn.innerHTML;
+          saveBtn.innerHTML = '<span>⏳</span> Saving...';
+          saveBtn.disabled = true;
+
+          // Clear previous status
+          saveStatus.className = '';
+          saveStatus.style.display = 'none';
+
+          // Store current background image state
+          var currentBgImage = canvas.backgroundImage;
+          var currentBgState = null;
+          
+          // Get the current rotation angle from Fabric.js
+          var rotation = 0;
+          if (currentBgImage && typeof currentBgImage.angle === 'number') {
+              rotation = currentBgImage.angle;
+          }
+          
+          if (currentBgImage) {
+              currentBgState = {
+                  angle: currentBgImage.angle,
+                  scaleX: currentBgImage.scaleX,
+                  scaleY: currentBgImage.scaleY,
+                  left: currentBgImage.left,
+                  top: currentBgImage.top,
+                  originX: currentBgImage.originX,
+                  originY: currentBgImage.originY,
+                  width: currentBgImage.width,
+                  height: currentBgImage.height
+              };
+          }
+
+          // Use high-quality save method
+          var dataURL = saveImageHighQuality();
+          
+          // Convert data URL to Blob
+          var blob = dataURLtoBlob(dataURL);
+
+          // Create form data to send to server
+          var formData = new FormData();
+          var format = '{{ original.file_type }}';
+          formData.append('image', blob, 'edited_image.' + format);
+          formData.append('file_id', '{{ original.id }}');
+          formData.append('rotation', rotation); // Add rotation parameter
+
+          // Send the edited image to the server
+          fetch('{% url "admin:save_edited_image" %}', {
+              method: 'POST',
+              headers: {
+                  'X-CSRFToken': csrfToken
+              },
+              body: formData
+          })
+          .then(response => response.json())
+          .then(data => {
+              if (data.success) {
+                  saveStatus.textContent = '✅ Image saved successfully!';
+                  saveStatus.className = 'success';
+                  saveStatus.style.display = 'block';
+
+                  // Update the background image with the saved version while preserving transformations
+                  var timestamp = new Date().getTime();
+                  fabric.Image.fromURL(`${fileUrl}?t=${timestamp}`, function(img) {
+                      if (currentBgState) {
+                          // Apply the stored transformations to the new image
+                          img.set({
+                              angle: currentBgState.angle,
+                              scaleX: currentBgState.scaleX,
+                              scaleY: currentBgState.scaleY,
+                              left: currentBgState.left,
+                              top: currentBgState.top,
+                              originX: currentBgState.originX,
+                              originY: currentBgState.originY
+                          });
+                      } else {
+                          // Default centering if no previous state
+                          var scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+                          img.scale(scale);
+                          img.set({
+                              left: canvas.width / 2,
+                              top: canvas.height / 2,
+                              originX: 'center',
+                              originY: 'center'
+                          });
+                      }
+                      
+                      canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
+                  });
+              } else {
+                  saveStatus.textContent = '❌ Error: ' + data.error;
+                  saveStatus.className = 'error';
+                  saveStatus.style.display = 'block';
+              }
+          })
+          .catch(error => {
+              saveStatus.textContent = '❌ Error: ' + error;
+              saveStatus.className = 'error';
+              saveStatus.style.display = 'block';
+          })
+          .finally(() => {
+              saveBtn.innerHTML = originalText;
+              saveBtn.disabled = false;
+
+              // Hide status message after 5 seconds
+              setTimeout(function() {
+                  saveStatus.style.display = 'none';
+              }, 5000);
+          });
+      });
+
+
+        function saveImageHighQuality() {
+  if (!canvas.backgroundImage) {
+    // Fallback to regular canvas export if no background image
+    var format = '{{ original.file_type }}';
+    var mimeType = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    return canvas.toDataURL(mimeType, 1.0);
+  }
+  
+  var bgImage = canvas.backgroundImage;
+  
+  // Get the original image element and its natural dimensions
+  var originalImg = bgImage._element;
+  var naturalWidth = originalImg.naturalWidth || originalImg.width;
+  var naturalHeight = originalImg.naturalHeight || originalImg.height;
+  
+  // Create a new canvas with the original image's natural dimensions
+  var tempCanvas = document.createElement('canvas');
+  var tempCtx = tempCanvas.getContext('2d');
+  
+  // Handle rotation
+  var radians = (bgImage.angle || 0) * Math.PI / 180;
+  var rotatedWidth, rotatedHeight;
+  
+  if (radians !== 0) {
+    // Calculate rotated dimensions
+    rotatedWidth = Math.abs(naturalWidth * Math.cos(radians)) + 
+                  Math.abs(naturalHeight * Math.sin(radians));
+    rotatedHeight = Math.abs(naturalWidth * Math.sin(radians)) + 
+                    Math.abs(naturalHeight * Math.cos(radians));
+  } else {
+    // No rotation - use natural dimensions
+    rotatedWidth = naturalWidth;
+    rotatedHeight = naturalHeight;
+  }
+  
+  // Account for flipping
+  var flipX = bgImage.scaleX < 0 ? -1 : 1;
+  var flipY = bgImage.scaleY < 0 ? -1 : 1;
+  
+  tempCanvas.width = rotatedWidth;
+  tempCanvas.height = rotatedHeight;
+  
+  // Enable high-quality rendering
+  tempCtx.imageSmoothingEnabled = true;
+  tempCtx.imageSmoothingQuality = 'high';
+  
+  // Draw the background image with transformations applied
+  tempCtx.save();
+  tempCtx.translate(rotatedWidth / 2, rotatedHeight / 2);
+  
+  if (radians !== 0) {
+    tempCtx.rotate(radians);
+  }
+  
+  tempCtx.scale(flipX, flipY);
+  tempCtx.drawImage(originalImg, -naturalWidth / 2, -naturalHeight / 2, naturalWidth, naturalHeight);
+  tempCtx.restore();
+  
+  // Now we need to add all other canvas objects (text, shapes, drawings, etc.)
+  // Calculate the scale factor between the original canvas and the high-res canvas
+  var scaleFactorX = rotatedWidth / canvas.width;
+  var scaleFactorY = rotatedHeight / canvas.height;
+  
+  // Get all objects except the background image
+  var objects = canvas.getObjects();
+  
+  // Draw each object on the high-resolution canvas
+  objects.forEach(function(obj) {
+    if (obj === bgImage) return; // Skip background image as it's already drawn
+    
+    tempCtx.save();
+    
+    // Calculate the scaled position for the object
+    var scaledX = obj.left * scaleFactorX;
+    var scaledY = obj.top * scaleFactorY;
+    
+    // Get the object's center point (already scaled)
+    var centerX = scaledX;
+    var centerY = scaledY;
+    
+    // Apply transformations
+    tempCtx.translate(centerX, centerY);
+    
+    if (obj.angle) {
+      tempCtx.rotate(obj.angle * Math.PI / 180);
+    }
+    
+    // Scale the object itself (combine original scale with resolution scale)
+    tempCtx.scale((obj.scaleX || 1) * scaleFactorX, (obj.scaleY || 1) * scaleFactorY);
+    
+    // Draw the object based on its type
+    if (obj.type === 'rect') {
+      tempCtx.strokeStyle = obj.stroke || '#000';
+      tempCtx.lineWidth = (obj.strokeWidth || 1);
+      tempCtx.fillStyle = obj.fill || 'transparent';
+      
+      if (obj.fill && obj.fill !== 'transparent') {
+        tempCtx.fillRect(-obj.width/2, -obj.height/2, obj.width, obj.height);
+      }
+      if (obj.stroke) {
+        tempCtx.strokeRect(-obj.width/2, -obj.height/2, obj.width, obj.height);
+      }
+    } 
+    else if (obj.type === 'circle') {
+      tempCtx.strokeStyle = obj.stroke || '#000';
+      tempCtx.lineWidth = (obj.strokeWidth || 1);
+      tempCtx.fillStyle = obj.fill || 'transparent';
+      
+      tempCtx.beginPath();
+      tempCtx.arc(0, 0, obj.radius, 0, 2 * Math.PI);
+      
+      if (obj.fill && obj.fill !== 'transparent') {
+        tempCtx.fill();
+      }
+      if (obj.stroke) {
+        tempCtx.stroke();
+      }
+    }
+    else if (obj.type === 'textbox' || obj.type === 'text') {
+      tempCtx.fillStyle = obj.fill || '#000';
+      tempCtx.font = (obj.fontSize || 20) + 'px ' + (obj.fontFamily || 'Arial');
+      tempCtx.textAlign = 'center';
+      tempCtx.textBaseline = 'middle';
+      
+      // Handle multi-line text
+      var lines = obj.text.split('\n');
+      var lineHeight = obj.fontSize || 20;
+      var startY = -(lines.length - 1) * lineHeight / 2;
+      
+      lines.forEach(function(line, index) {
+        tempCtx.fillText(line, 0, startY + index * lineHeight);
+      });
+    }
+    else if (obj.type === 'path') {
+      // Handle free drawing paths
+      tempCtx.strokeStyle = obj.stroke || '#000';
+      tempCtx.lineWidth = (obj.strokeWidth || 1);
+      tempCtx.lineCap = 'round';
+      tempCtx.lineJoin = 'round';
+      
+      // Parse the path data
+      var pathData = obj.path;
+      if (pathData && pathData.length > 0) {
+        tempCtx.beginPath();
+        
+        for (var i = 0; i < pathData.length; i++) {
+          var point = pathData[i];
+          var x = point[1] - obj.width/2;
+          var y = point[2] - obj.height/2;
+          
+          if (point[0] === 'M') {
+            tempCtx.moveTo(x, y);
+          } else if (point[0] === 'L') {
+            tempCtx.lineTo(x, y);
+          } else if (point[0] === 'Q') {
+            tempCtx.quadraticCurveTo(x, y, point[3] - obj.width/2, point[4] - obj.height/2);
+          }
+        }
+        
+        tempCtx.stroke();
+      }
+    }
+    
+    tempCtx.restore();
+  });
+  
+  // Get high-quality data URL
+  var format = '{{ original.file_type }}';
+  var mimeType = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
+  var dataURL = tempCanvas.toDataURL(mimeType, 1.0);
+  
+  // Clean up
+  tempCanvas = null;
+  
+  return dataURL;
+}
+
+
+
+
+      // Update dimensions display for selected object
+      function updateDimensions(obj) {
+        if (!obj) return;
+
+        var width, height, displayText;
+
+        // Get dimensions based on object type
+        if (obj.type === 'rect') {
+          width = obj.width * obj.scaleX;
+          height = obj.height * obj.scaleY;
+          displayText = `Width: ${width.toFixed(0)}px (${pixelsToMetersValue(width)}m) × Height: ${height.toFixed(0)}px (${pixelsToMetersValue(height)}m)`;
+        } else if (obj.type === 'circle') {
+          width = obj.radius * 2 * obj.scaleX;
+          height = obj.radius * 2 * obj.scaleY;
+          displayText = `Diameter: ${width.toFixed(0)}px (${pixelsToMetersValue(width)}m)`;
+        } else if (obj.type === 'path') {
+          var boundingRect = obj.getBoundingRect();
+          width = boundingRect.width;
+          height = boundingRect.height;
+          displayText = `Width: ${width.toFixed(0)}px (${pixelsToMetersValue(width)}m) × Height: ${height.toFixed(0)}px (${pixelsToMetersValue(height)}m)`;
+        } else if (obj.type === 'textbox') {
+          width = obj.width * obj.scaleX;
+          height = obj.height * obj.scaleY;
+          displayText = `Width: ${width.toFixed(0)}px (${pixelsToMetersValue(width)}m) × Height: ${height.toFixed(0)}px (${pixelsToMetersValue(height)}m)`;
+        } else {
+          return;
+        }
+
+        // Position dimensions display near the object
+        var objCenter = obj.getCenterPoint();
+        dimensionsDisplay.style.left = (objCenter.x * zoomLevel) + 'px';
+        dimensionsDisplay.style.top = (objCenter.y * zoomLevel - 30) + 'px';
+        dimensionsDisplay.textContent = displayText;
+        dimensionsDisplay.style.display = 'block';
+      }
+
+      // Hide dimensions display when no object is selected
+      function hideDimensionsDisplay() {
+        dimensionsDisplay.style.display = 'none';
+      }
+
+      // Panning functionality
+      canvas.on('mouse:down', function(opt) {
+        var evt = opt.e;
+        if (evt.altKey === true) {
+          isPanning = true;
+          lastPosX = evt.clientX;
+          lastPosY = evt.clientY;
+          canvas.selection = false;
+        }
+      });
+
+      canvas.on('mouse:move', function(opt) {
+        if (isPanning) {
+          var e = opt.e;
+          var vpt = canvas.viewportTransform;
+          vpt[4] += e.clientX - lastPosX;
+          vpt[5] += e.clientY - lastPosY;
+          canvas.requestRenderAll();
+          lastPosX = e.clientX;
+          lastPosY = e.clientY;
+        }
+      });
+
+      canvas.on('mouse:up', function() {
+        isPanning = false;
+        canvas.selection = true;
+      });
+
+      // Object selection and modification events
+      canvas.on('selection:created', function(options) {
+        updateDimensions(options.selected[0]);
+      });
+
+      canvas.on('selection:updated', function(options) {
+        updateDimensions(options.selected[0]);
+      });
+
+      canvas.on('selection:cleared', function() {
+        hideDimensionsDisplay();
+      });
+
+      canvas.on('object:modified', function(options) {
+        updateDimensions(options.target);
+        saveCanvasState();
+      });
+
+      canvas.on('object:scaling', function(options) {
+        updateDimensions(options.target);
+      });
+
+      canvas.on('object:moving', function(options) {
+        updateDimensions(options.target);
+      });
+
+      canvas.on('object:rotating', function(options) {
+        updateDimensions(options.target);
+      });
+
+      // Add objects with dimensions
+      canvas.on('object:added', function(options) {
+        // Don't update dimensions for background image
+        if (options.target === canvas.backgroundImage) return;
+
+        updateDimensions(options.target);
+      });
+
+      // Save canvas state after adding objects
+      canvas.on('path:created', function() {
+        saveCanvasState();
+      });
+
+      // Add keyboard shortcuts
+      document.addEventListener('keydown', function(e) {
+        // Check if not focused on input fields
+        if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+          // Delete selected object with Delete or Backspace
+          if ((e.key === 'Delete' || e.key === 'Backspace') && canvas.getActiveObject()) {
+            canvas.remove(canvas.getActiveObject());
+            canvas.renderAll();
+            saveCanvasState();
+          }
+
+          // Undo with Ctrl+Z
+          if (e.ctrlKey && e.key === 'z') {
+            e.preventDefault();
+            undo();
+          }
+
+          // Redo with Ctrl+Y or Ctrl+Shift+Z
+          if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+            e.preventDefault();
+            redo();
+          }
+
+          // Rotate left with Ctrl+Left or Ctrl+,
+          if ((e.ctrlKey && e.key === 'ArrowLeft') || (e.ctrlKey && e.key === ',')) {
+            e.preventDefault();
+            rotateBackgroundImage(-90);
+          }
+          
+          // Rotate right with Ctrl+Right or Ctrl+.
+          if ((e.ctrlKey && e.key === 'ArrowRight') || (e.ctrlKey && e.key === '.')) {
+            e.preventDefault();
+            rotateBackgroundImage(90);
+          }
+          
+          // Flip horizontal with Ctrl+H
+          if (e.ctrlKey && e.key === 'h') {
+            e.preventDefault();
+            flipBackgroundImage('horizontal');
+          }
+          
+          // Flip vertical with Ctrl+V (if not used for paste)
+          if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+            e.preventDefault();
+            flipBackgroundImage('vertical');
+          }
+          
+          // Reset with Ctrl+R
+          if (e.ctrlKey && e.key === 'r') {
+            e.preventDefault();
+            resetImageTransform();
+          }
+        }
+      });
+
+
+      // Handle canvas resize when window resizes
+      window.addEventListener('resize', function() {
+        // Get toolbar width to determine max canvas width
+        var toolbarWidth = editorToolbar.offsetWidth;
+
+        // Calculate new dimensions based on zoom
+        var newWidth = canvas.getWidth() / zoomLevel * zoomLevel;
+        var newHeight = canvas.getHeight() / zoomLevel * zoomLevel;
+
+        // Set canvas dimensions
+        canvas.setDimensions({
+          width: Math.max(newWidth, toolbarWidth),
+          height: newHeight
+        });
+
+        canvas.renderAll();
+      });
+
+
+      // Function to rotate the background image
+      function rotateBackgroundImage(angle) {
+          if (!canvas.backgroundImage) return;
+          
+          var bgImage = canvas.backgroundImage;
+          currentRotation = (currentRotation + angle) % 360;
+          
+          // Store original dimensions before rotation
+          var originalWidth = bgImage.width * Math.abs(bgImage.scaleX);
+          var originalHeight = bgImage.height * Math.abs(bgImage.scaleY);
+          
+          // Apply rotation
+          bgImage.set({
+            angle: currentRotation
+          });
+          
+          // Calculate new canvas dimensions more accurately
+          var radians = currentRotation * Math.PI / 180;
+          var rotatedWidth = Math.abs(originalWidth * Math.cos(radians)) + 
+                            Math.abs(originalHeight * Math.sin(radians));
+          var rotatedHeight = Math.abs(originalWidth * Math.sin(radians)) + 
+                              Math.abs(originalHeight * Math.cos(radians));
+          
+          canvas.setDimensions({
+            width: rotatedWidth,
+            height: rotatedHeight
+          });
+          
+          // Center the rotated image
+          bgImage.set({
+            left: rotatedWidth / 2,
+            top: rotatedHeight / 2,
+            originX: 'center',
+            originY: 'center'
+          });
+          
+          canvas.renderAll();
+          updateRotationDisplay();
+          saveCanvasState();
+        }
+
+
+
+      // Function to flip the background image
+      function flipBackgroundImage(direction) {
+        if (!canvas.backgroundImage) return;
+        
+        var bgImage = canvas.backgroundImage;
+        
+        if (direction === 'horizontal') {
+          isHorizontallyFlipped = !isHorizontallyFlipped;
+          bgImage.set({
+            scaleX: bgImage.scaleX * -1
+          });
+        } else if (direction === 'vertical') {
+          isVerticallyFlipped = !isVerticallyFlipped;
+          bgImage.set({
+            scaleY: bgImage.scaleY * -1
+          });
+        }
+        
+        canvas.renderAll();
+        saveCanvasState();
+      }
+
+      // Function to reset image to original state
+      function resetImageTransform() {
+        if (!canvas.backgroundImage || !originalImageData) return;
+        
+        var bgImage = canvas.backgroundImage;
+        currentRotation = 0;
+        isHorizontallyFlipped = false;
+        isVerticallyFlipped = false;
+        
+        // Reset all transformations
+        bgImage.set({
+          angle: 0,
+          scaleX: Math.abs(bgImage.scaleX),
+          scaleY: Math.abs(bgImage.scaleY),
+          left: canvas.width / 2,
+          top: canvas.height / 2,
+          originX: 'center',
+          originY: 'center'
+        });
+        
+        // Reset canvas dimensions
+        canvas.setDimensions({
+          width: originalImageData.width * Math.abs(bgImage.scaleX),
+          height: originalImageData.height * Math.abs(bgImage.scaleY)
+        });
+        
+        canvas.renderAll();
+        updateRotationDisplay();
+        saveCanvasState();
+      }
+
+      // Function to update rotation display
+      function updateRotationDisplay() {
+        rotationAngleInput.value = currentRotation;
+      }
+
+      // Function to apply custom rotation
+      function applyCustomRotation() {
+          var angle = parseInt(rotationAngleInput.value, 10) || 0;
+          
+          if (!canvas.backgroundImage) return;
+          
+          var bgImage = canvas.backgroundImage;
+          currentRotation = angle % 360;
+          
+          // Store original dimensions
+          var originalWidth = bgImage.width * Math.abs(bgImage.scaleX);
+          var originalHeight = bgImage.height * Math.abs(bgImage.scaleY);
+          
+          // Apply rotation
+          bgImage.set({
+            angle: currentRotation
+          });
+          
+          // Calculate new canvas dimensions
+          var radians = currentRotation * Math.PI / 180;
+          var rotatedWidth = Math.abs(originalWidth * Math.cos(radians)) + 
+                            Math.abs(originalHeight * Math.sin(radians));
+          var rotatedHeight = Math.abs(originalWidth * Math.sin(radians)) + 
+                              Math.abs(originalHeight * Math.cos(radians));
+          
+          canvas.setDimensions({
+            width: rotatedWidth,
+            height: rotatedHeight
+          });
+          
+          // Center the rotated image
+          bgImage.set({
+            left: rotatedWidth / 2,
+            top: rotatedHeight / 2,
+            originX: 'center',
+            originY: 'center'
+          });
+          
+          canvas.renderAll();
+          saveCanvasState();
+        }
+
+
+
+      function removeBackgroundFromImage() {
+  console.log('Remove background function called');
+  
+  if (!canvas.backgroundImage) {
+    console.log('No background image found');
+    alert('No background image found to process.');
+    return;
+  }
+
+  console.log('Background image found:', canvas.backgroundImage);
+  var bgImage = canvas.backgroundImage;
+  
+  // Create a temporary canvas to process the image
+  var tempCanvas = document.createElement('canvas');
+  var tempCtx = tempCanvas.getContext('2d');
+  
+  // Set canvas size to match the background image
+  tempCanvas.width = bgImage.width;
+  tempCanvas.height = bgImage.height;
+  
+  console.log('Temp canvas created with dimensions:', tempCanvas.width, 'x', tempCanvas.height);
+  
+  try {
+    // Try different methods to get the image element
+    var imageElement = bgImage.getElement ? bgImage.getElement() : bgImage._element;
+    console.log('Image element:', imageElement);
+    
+    if (!imageElement) {
+      console.log('No image element found, trying alternative method');
+      // Alternative method - create new image from src
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function() {
+        console.log('Image loaded successfully');
+        processImageData(img, tempCanvas, tempCtx, bgImage);
+      };
+      img.onerror = function() {
+        console.log('Error loading image');
+      };
+      img.src = bgImage.getSrc();
+      return;
+    }
+    
+    processImageData(imageElement, tempCanvas, tempCtx, bgImage);
+    
+  } catch (error) {
+    console.error('Error in removeBackgroundFromImage:', error);
+  }
+}
+
+// Separate function to process the image data
+function processImageData(imageElement, tempCanvas, tempCtx, bgImage) {
+  console.log('Processing image data');
+  
+  try {
+    // Draw the background image onto the temporary canvas
+    tempCtx.drawImage(imageElement, 0, 0);
+    console.log('Image drawn to temp canvas');
+    
+    // Extract image data
+    var imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+    var data = imgData.data;
+    console.log('Image data extracted, pixels:', data.length / 4);
+    
+    var transparentPixels = 0;
+    
+    // Background color removal (removes near-white backgrounds)
+    for (var i = 0; i < data.length; i += 4) {
+      var r = data[i];     // Red
+      var g = data[i + 1]; // Green
+      var b = data[i + 2]; // Blue
+      
+      // Adjust thresholds to remove similar background colors
+      if (Math.abs(r - g) < 15 && Math.abs(r - b) < 15 && Math.abs(g - b) < 15 && r > 200) {
+        data[i + 3] = 0; // Set alpha to 0 (transparent)
+        transparentPixels++;
+      }
+    }
+    
+    console.log('Transparent pixels created:', transparentPixels);
+    
+    // Update the canvas with modified image data
+    tempCtx.putImageData(imgData, 0, 0);
+    console.log('Image data updated');
+    
+    // Convert the processed canvas back to a Data URL
+    var processedDataURL = tempCanvas.toDataURL();
+    console.log('Data URL created');
+    
+    // Replace the background image with the processed one
+    fabric.Image.fromURL(processedDataURL, function(processedImg) {
+      console.log('New fabric image created');
+      
+      // Preserve the original transformations
+      processedImg.set({
+        angle: bgImage.angle || 0,
+        scaleX: bgImage.scaleX || 1,
+        scaleY: bgImage.scaleY || 1,
+        left: bgImage.left || canvas.width / 2,
+        top: bgImage.top || canvas.height / 2,
+        originX: bgImage.originX || 'center',
+        originY: bgImage.originY || 'center'
+      });
+      
+      console.log('Setting new background image');
+      
+      // Set as new background image
+      canvas.setBackgroundImage(processedImg, function() {
+        console.log('Background image set successfully');
+        canvas.renderAll();
+        saveCanvasState();
+      });
+    });
+    
+  } catch (error) {
+    console.error('Error in processImageData:', error);
+  }
+}
+
+
+
+      document.getElementById('rotate-left').addEventListener('click', function() {
+  rotateBackgroundImage(-90);
+});
+
+document.getElementById('rotate-right').addEventListener('click', function() {
+  rotateBackgroundImage(90);
+});
+
+document.getElementById('rotate-180').addEventListener('click', function() {
+  rotateBackgroundImage(180);
+});
+
+document.getElementById('apply-rotation').addEventListener('click', function() {
+  applyCustomRotation();
+});
+
+document.getElementById('flip-horizontal').addEventListener('click', function() {
+  flipBackgroundImage('horizontal');
+});
+
+document.getElementById('flip-vertical').addEventListener('click', function() {
+  flipBackgroundImage('vertical');
+});
+
+document.getElementById('reset-rotation').addEventListener('click', function() {
+  resetImageTransform();
+});
+
+document.getElementById('remove-background').addEventListener('click', function() {
+  removeBackgroundFromImage();
+});
+
+
+// Allow Enter key to apply custom rotation
+rotationAngleInput.addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') {
+    applyCustomRotation();
+  }
+});
+
+
+
+    });
+
+    
+
+  </script>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block admin_change_form_document_ready %} 
+{{ block.super }} 
+
+<script>
+  (function($) {
+      // Show loader when Process Floorplan button is clicked
+      $(document).ready(function() {
+          $('.processbtn').on('click', function() {
+              $('#loader-overlay').css('display', 'flex');
+          });
+      });
+  })(django.jQuery);
+</script>
+{% endblock %}
+

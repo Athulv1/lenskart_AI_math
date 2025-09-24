@@ -35,3 +35,33 @@ Thumbs.db
 # Uncomment if needed
 */migrations/
 !*/migrations/__init__.py
+
+# Backups and temporary files
+*.dump
+*.bak
+*~
+
+# Project-specific output files from the old process
+final_labeled.jpg
+output.jpg
+app/test.json
+
+# Project-specific output directories (wildcard is best)
+*_floorplan_output/
+*_output/
+
+# Old/Backup folders and files
+app/bkup_new/
+app/bkup_prem/
+app/old/
+app/test/
+app/my-venv/
+assets/
+bkupfolder/
+app/CV_Controller_old.py
+app/DXF_Controller_old.py
+app/api_old.py
+app/app.py
+app/get_points.py
+app/layout.py
+app/middleware.py

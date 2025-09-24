@@ -1,0 +1,29 @@
+{% extends "admin/change_form.html" %}
+{% load i18n admin_urls %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+  .approvebtn {
+    background-color: #28a745 !important;
+    color: white !important;
+    padding: 5px 10px;
+    border-radius: 4px;
+    text-decoration: none;
+    margin-bottom: 5px;
+    display: inline-block;
+  }
+</style>
+{% endblock %}
+
+{% block object-tools-items %}
+{{ block.super }}
+{% if show_approve_button %}
+<br>
+<li>
+    <a href="{% url 'admin:approve_project' project_id %}" class="approvebtn">
+        {% trans "Approve Project" %}
+    </a>
+</li>
+{% endif %}
+{% endblock %}
