@@ -148,6 +148,8 @@ FILE_UPLOAD_PERMISSIONS = 0o664
 DATA_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024  # 50 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024 # 20 MB (example)
 
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 
 LOGGING = {
@@ -169,13 +171,13 @@ LOGGING = {
         'file_errors': { # Renamed from 'file' for clarity
             'level': 'ERROR',
             'class': 'logging.FileHandler',
-            'filename': '/home/ubuntu/lenskart_backend/logs/django_errors.log',
+            'filename': os.path.join(LOGS_DIR, 'django_errors.log'),
             'formatter': 'verbose',
         },
         'file_payload': { # <--- NEW HANDLER FOR PAYLOAD LOGS
             'level': 'INFO', # Set to INFO to capture the payload logs
             'class': 'logging.handlers.RotatingFileHandler', # Recommended for production to prevent log files from growing too large
-            'filename': '/home/ubuntu/lenskart_backend/logs/django_payload.log', # <--- NEW LOG FILE
+            'filename': os.path.join(LOGS_DIR, 'django_payload.log'), # <--- NEW LOG FILE
             'maxBytes': 1024 * 1024 * 5,  # 5 MB
             'backupCount': 5, # Keep 5 backup files
             'formatter': 'payload_formatter', # Use the new formatter
@@ -183,7 +185,7 @@ LOGGING = {
 	'file_app': {  # NEW: General app logs
             'level': 'INFO',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': '/home/ubuntu/lenskart_backend/logs/django_app.log',
+            'filename': os.path.join(LOGS_DIR, 'django_app.log'),
             'maxBytes': 1024 * 1024 * 5,  # 5 MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -230,3 +232,9 @@ NINJA_JWT = {
     # Standard authorization header format: "Authorization: Bearer <token>"
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
+
+try:
+    from .local_settings import *
+except ImportError:
+    pass

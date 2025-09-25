@@ -64,3 +64,5 @@ app/api_old.py
 app/app.py
 app/get_points.py
 app/layout.py
+
+local_settings.py
