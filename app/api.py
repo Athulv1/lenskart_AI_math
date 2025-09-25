@@ -243,35 +243,111 @@ def get_project_details(request, project_id: uuid.UUID):
     project = get_object_or_404(Project, id=project_id)
     return project
 
-@api.put("/projects/{project_id}/", response={200: ProjectDetailSchema, 404: ErrorSchema}, auth=JWTAuth())
-def update_project(request, project_id: uuid.UUID, data: ProjectUpdateSchema):
-    
+@csrf_exempt
+@api.post("/projects/{project_id}/add_data/", response={200: ProjectDetailSchema, 400: ErrorSchema, 404: ErrorSchema}, auth=JWTAuth())
+def add_project_data(
+    request,
+    project_id: uuid.UUID,
+    # We accept all possible fields as optional Form fields using the exact
+    # keywords from the original /upload/ endpoint.
+    name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
+    locationReference: Optional[str] = Form(None),
+    carpetArea: Optional[float] = Form(None),
+    floorLevel: Optional[str] = Form(None),
+    electricityLoad: Optional[float] = Form(None),
+    electricityMeterLocation: Optional[str] = Form(None),
+    hvacType: Optional[str] = Form(None),
+    acOutdoorLocation: Optional[str] = Form(None),
+    hasDrainage: Optional[bool] = Form(None),
+    hasWaterConnection: Optional[bool] = Form(None),
+    entranceDirection: Optional[str] = Form(None),
+    nearestAirport: Optional[str] = Form(None),
+    airportDistance: Optional[float] = Form(None),
+    nearestStation: Optional[str] = Form(None),
+    stationDistance: Optional[float] = Form(None),
+    washroom: Optional[str] = Form(None),
+    remarks: Optional[str] = Form(None),
+    roomMeasurements: Optional[str] = Form(None),
+    # And the original file keywords
+    files: List[UploadedFile] = File([]),
+    siteImages: List[UploadedFile] = File([])
+):
+    """
+    Adds or updates data for an existing project.
+    This endpoint is for the mobile app to fill in missing details and add files.
+    It only updates fields that are provided in the request (it's additive).
+    """
     project = get_object_or_404(Project, id=project_id)
 
-    with transaction.atomic():
-        # 1. Update the simple text/numeric/JSON fields
-        update_data = data.dict(exclude={'files', 'site_media'})
-        for attr, value in update_data.items():
-            setattr(project, attr, value)
+    # --- Update Text Fields ---
+    # Create a dictionary of all possible text fields from the request
+    update_data_map = {
+        'name': name, 'description': description, 'address': address, 
+        'location_reference': locationReference, 'total_carpet_area': carpetArea, 
+        'floor_level': floorLevel, 'electricity_load': electricityLoad, 
+        'electricity_meter_location': electricityMeterLocation, 'hvac_system_type': hvacType,
+        'ac_outdoor_units_location': acOutdoorLocation, 'drainage_facility': hasDrainage, 
+        'water_connection': hasWaterConnection, 'main_entrance_direction': entranceDirection,
+        'nearest_airport': nearestAirport, 'airport_distance': airportDistance, 
+        'nearest_railway_station': nearestStation, 'railway_station_distance': stationDistance,
+        'washroom': washroom, 'remarks': remarks
+    }
 
-        project.updated_by = request.auth
-        
-        # 2. Sync the Project Files
-        client_file_ids = {f.id for f in data.files}
-        files_to_delete = project.files.exclude(id__in=client_file_ids)
-        for f in files_to_delete:
-            f.delete()
+    # Loop through the map and update the project object ONLY if a value was sent
+    for field_name, value in update_data_map.items():
+        if value is not None:
+            setattr(project, field_name, value)
+    
+    # Record the user who made the update
+    project.updated_by = request.auth
+
+    # --- Handle roomMeasurements separately as it needs JSON parsing ---
+    if roomMeasurements:
+        try:
+            parsed_measurements = json.loads(roomMeasurements)
+            project.room_measurements = parsed_measurements
             
-        # 3. Sync the Site Media
-        client_media_ids = {m.id for m in data.site_media}
-        media_to_delete = project.site_media.exclude(id__in=client_media_ids)
-        for m in media_to_delete:
-            m.delete()
+            # Also regenerate the standalone JSON file
+            room_measurements_dir = os.path.join(settings.MEDIA_ROOT, 'room_measurements')
+            os.makedirs(room_measurements_dir, exist_ok=True)
+            safe_project_name = "".join(c for c in project.name if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')
+            filename = f"{safe_project_name}_{project.id}_room_measurements.json"
+            file_path = os.path.join(room_measurements_dir, filename)
+            with open(file_path, 'w', encoding='utf-8') as json_file:
+                json.dump({
+                    'project_id': str(project.id), 'project_name': project.name,
+                    'created_at': project.created_at.isoformat(),
+                    'room_measurements': parsed_measurements
+                }, json_file, indent=2, ensure_ascii=False)
+            logger.info(f"Room measurements JSON file updated for project {project.id}")
 
-        # 4. Save the main project object
-        project.save()
+        except json.JSONDecodeError:
+            return 400, {"message": "Invalid JSON format for roomMeasurements"}
+        except Exception as e:
+            logger.error(f"Error saving room measurements file for project {project.id}: {str(e)}")
 
-    return project
+    # --- Add New Files (Additive Only) using the original, working logic ---
+    # 1. Process files from the 'files' field
+    for file in files:
+        _, ext = os.path.splitext(file.name)
+        ext = ext.lower().lstrip('.')
+        # Your original logic: videos go to SiteMedia, others to ProjectFile
+        if ext == 'mp4':
+            SiteMedia.objects.create(project=project, file=file)
+        else:
+            ProjectFile.objects.create(project=project, file=file)
+
+    # 2. Process files from the 'siteImages' field
+    for media_file in siteImages:
+        SiteMedia.objects.create(project=project, file=media_file)
+
+    # Save all the changes to the database
+    project.save()
+
+    # Return the full, updated project object
+    return 200, project
 
 
 
