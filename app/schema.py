@@ -39,7 +39,7 @@ class ProjectDetailSchema(Schema):
     electricity_meter_location: Optional[str] = None
 
     # Section 3: HVAC and Utilities
-    hvac_system_type: Optional[str] = None
+    hvac_system_type: Optional[float] = None
     ac_outdoor_units_location: Optional[str] = None
     drainage_facility: Optional[bool] = None
     water_connection: Optional[bool] = None
@@ -92,7 +92,7 @@ class ProjectUpdateSchema(Schema):
     floor_level: Optional[str] = None
     electricity_load: Optional[float] = None
     electricity_meter_location: Optional[str] = None
-    hvac_system_type: Optional[str] = None
+    hvac_system_type: Optional[float] = None
     ac_outdoor_units_location: Optional[str] = None
     drainage_facility: Optional[bool] = None
     water_connection: Optional[bool] = None

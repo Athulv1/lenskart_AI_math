@@ -250,7 +250,7 @@ def add_project_data(
     project_id: uuid.UUID,
     # We accept all possible fields as optional Form fields using the exact
     # keywords from the original /upload/ endpoint.
-    name: Optional[str] = Form(None),
+    project_name: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     locationReference: Optional[str] = Form(None),
@@ -258,7 +258,7 @@ def add_project_data(
     floorLevel: Optional[str] = Form(None),
     electricityLoad: Optional[float] = Form(None),
     electricityMeterLocation: Optional[str] = Form(None),
-    hvacType: Optional[str] = Form(None),
+    hvacType: Optional[float] = Form(None),
     acOutdoorLocation: Optional[str] = Form(None),
     hasDrainage: Optional[bool] = Form(None),
     hasWaterConnection: Optional[bool] = Form(None),
@@ -284,7 +284,7 @@ def add_project_data(
     # --- Update Text Fields ---
     # Create a dictionary of all possible text fields from the request
     update_data_map = {
-        'name': name, 'description': description, 'address': address, 
+        'name': project_name, 'description': description, 'address': address, 
         'location_reference': locationReference, 'total_carpet_area': carpetArea, 
         'floor_level': floorLevel, 'electricity_load': electricityLoad, 
         'electricity_meter_location': electricityMeterLocation, 'hvac_system_type': hvacType,
