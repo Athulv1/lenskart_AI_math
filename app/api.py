@@ -258,7 +258,7 @@ def add_project_data(
     floorLevel: Optional[str] = Form(None),
     electricityLoad: Optional[float] = Form(None),
     electricityMeterLocation: Optional[str] = Form(None),
-    hvacType: Optional[float] = Form(None),
+    hvacType: Optional[str] = Form(None),
     acOutdoorLocation: Optional[str] = Form(None),
     hasDrainage: Optional[bool] = Form(None),
     hasWaterConnection: Optional[bool] = Form(None),
