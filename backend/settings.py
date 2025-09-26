@@ -223,15 +223,18 @@ LOGGING = {
 
 
 NINJA_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    # The single access token will be valid for 90 days.
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=90),
     
-    # We will use Django's built-in SECRET_KEY for signing
+    # We are disabling the refresh token functionality.
+    'REFRESH_TOKEN_LIFETIME': timedelta(seconds=1), # Make refresh token expire almost instantly
+    'ROTATE_REFRESH_TOKENS': False,
+    'BLACKLIST_AFTER_ROTATION': False,
+    
     'SIGNING_KEY': SECRET_KEY, 
-    
-    # Standard authorization header format: "Authorization: Bearer <token>"
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
 
 
 try:
