@@ -1035,18 +1035,16 @@
 <script>
     // Fixtures Modal Functions
     let currentFileId = null;
-    let fixturesData = {};
+    
     
     function openFixturesModal(fileId) {
         currentFileId = fileId;
         const modal = document.getElementById('fixturesModal');
         
-        // Load fixtures configuration
         fetch(`{% url 'admin:get_fixtures_config' '00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', fileId))
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    fixturesData = data.fixtures;
                     renderFixturesForm(data.fixtures, data.project_name);
                     modal.style.display = 'block';
                 } else {
@@ -1055,144 +1053,111 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error loading fixtures configuration');
+                alert('An error occurred while loading fixtures configuration.');
             });
     }
     
     function closeFixturesModal() {
         document.getElementById('fixturesModal').style.display = 'none';
         currentFileId = null;
-        fixturesData = {};
     }
-    
+
     function renderFixturesForm(fixtures, projectName) {
-    const content = document.getElementById('fixturesContent');
-    
-    // Create plan type selector
-    const planTypes = Object.keys(fixtures);
-    const defaultPlanType = planTypes[0]; // Select first plan type by default
-    
-    let html = `
-        <div class="project-info">
-            <p><strong>Project:</strong> ${projectName}</p>
-        </div>
-        <div class="plan-selector">
-            <label for="planTypeSelect"><strong>Proton Value:</strong></label>
-            <select id="planTypeSelect" onchange="updateFixturesDisplay()">
-    `;
-    
-    planTypes.forEach(planType => {
-        html += `<option value="${planType}" ${planType === defaultPlanType ? 'selected' : ''}>${planType}</option>`;
-    });
-    
-    html += `
-            </select>
-        </div>
-        <div id="selectedPlanFixtures">
-            <!-- Selected plan fixtures will be displayed here -->
-        </div>
-    `;
-    
-    content.innerHTML = html;
-    
-    // Display fixtures for the default selected plan type
-    updateFixturesDisplay();
-}
-
-function updateFixturesDisplay() {
-    const selectedPlanType = document.getElementById('planTypeSelect').value;
-    const selectedPlanFixtures = document.getElementById('selectedPlanFixtures');
-    const categories = fixturesData[selectedPlanType];
-    
-    let html = `
-        <div class="fixtures-section">
-            <h3>Fixtures for Plan Type: ${selectedPlanType}</h3>
-    `;
-    
-    for (const [categoryName, items] of Object.entries(categories)) {
-        html += `
-            <div class="fixture-category">
-                <h4>${categoryName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</h4>
+        const content = document.getElementById('fixturesContent');
+        let html = `
+            <div class="project-info">
+                <p><strong>Project:</strong> ${projectName}</p>
+            </div>
         `;
-        
-        for (const [itemName, quantity] of Object.entries(items)) {
-            const inputId = `${selectedPlanType}_${categoryName}_${itemName}`;
-            html += `
-                <div class="fixture-item">
-                    <label for="${inputId}">${itemName.replace('_', ' ')}</label>
-                    <input type="number" 
-                           id="${inputId}" 
-                           value="${quantity}" 
-                           min="0" 
-                           data-plan="${selectedPlanType}" 
-                           data-category="${categoryName}" 
-                           data-item="${itemName}">
-                </div>
-            `;
-        }
-        
-        html += '</div>';
+
+        // Hardcode the order and labels for consistency
+        const fieldOrder = [
+            'proto', 'primary_side', 'branded_eye', 'branded_sun', 'jj_eye', 'jj_sun',
+            'vc_eye', 'vc_sun', 'lk_air', 'vc_kids', 'reading_glasses', 'cl', 'od',
+            'lpl', 'tentpole', 'hustlr', 'total'
+        ];
+
+        fieldOrder.forEach(key => {
+            if (fixtures.hasOwnProperty(key)) {
+                const value = fixtures[key];
+                const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+                if (key === 'primary_side') {
+                    const leftChecked = value === 'Left' ? 'checked' : '';
+                    const rightChecked = value === 'Right' ? 'checked' : '';
+                    html += `
+                        <div class="fixture-item">
+                            <label>${label}</label>
+                            <div class="radio-group">
+                                <label><input type="radio" name="primary_side" value="Left" ${leftChecked}> Left</label>
+                                <label><input type="radio" name="primary_side" value="Right" ${rightChecked}> Right</label>
+                            </div>
+                        </div>`;
+                } else if (key === 'proto') {
+                    html += `
+                        <div class="fixture-item">
+                            <label for="fixture_${key}">${label}</label>
+                            <input type="text" id="fixture_${key}" value="${value}" disabled>
+                        </div>`;
+                } else {
+                    html += `
+                        <div class="fixture-item">
+                            <label for="fixture_${key}">${label}</label>
+                            <input type="number" step="0.1" id="fixture_${key}" value="${value}">
+                        </div>`;
+                }
+            }
+        });
+
+        content.innerHTML = html;
     }
     
-    html += '</div>';
-    selectedPlanFixtures.innerHTML = html;
-}
-
-    
-function saveFixturesConfig() {
-    const selectedPlanType = document.getElementById('planTypeSelect').value;
-    const inputs = document.querySelectorAll('#selectedPlanFixtures input[type="number"]');
-    
-    // Build data structure for the selected plan only
-    const selectedPlanData = {};
-    
-    inputs.forEach(input => {
-        const category = input.dataset.category;
-        const item = input.dataset.item;
-        const value = parseInt(input.value) || 0;
+    function saveFixturesConfig() {
+        const payload = {};
         
-        if (!selectedPlanData[category]) {
-            selectedPlanData[category] = {};
+        // Handle radio button for primary_side
+        const checkedRadio = document.querySelector('input[name="primary_side"]:checked');
+        if (checkedRadio) {
+            payload.primary_side = checkedRadio.value;
         }
-        selectedPlanData[category][item] = value;
-    });
-    
-    // Create payload with only the selected plan's data
-    const payload = {
-        [selectedPlanType]: selectedPlanData
-    };
-    
-    // Prepare form data
-    const formData = new FormData();
-    formData.append('file_id', currentFileId);
-    formData.append('fixtures_data', JSON.stringify(payload));
-    formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
-    
-    // Send request
-    fetch('{% url "admin:save_fixtures_config" %}', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert('Fixtures configuration saved successfully!');
-            closeFixturesModal();
 
-            window.location.reload();
-            
-        } else {
-            alert('Error saving configuration: ' + data.error);
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error saving fixtures configuration');
-    });
-}
+        // Handle all other input fields by their ID
+        const inputs = document.querySelectorAll('#fixturesContent input[id^="fixture_"]');
+        inputs.forEach(input => {
+            const key = input.id.replace('fixture_', '');
+            if (input.type === 'number') {
+                payload[key] = parseFloat(input.value) || 0;
+            } else {
+                // This will catch the disabled 'proto' input
+                payload[key] = input.value;
+            }
+        });
 
+        const formData = new FormData();
+        formData.append('file_id', currentFileId);
+        formData.append('fixtures_data', JSON.stringify(payload));
+        formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+        
+        fetch('{% url "admin:save_fixtures_config" %}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Fixtures configuration saved successfully!');
+                closeFixturesModal();
+                window.location.reload();
+            } else {
+                alert('Error saving configuration: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving the configuration.');
+        });
+    }
     
-    // Close modal when clicking outside
     window.onclick = function(event) {
         const modal = document.getElementById('fixturesModal');
         if (event.target == modal) {
@@ -1200,12 +1165,12 @@ function saveFixturesConfig() {
         }
     }
     
-    // Close modal with Escape key
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') {
             closeFixturesModal();
         }
     });
+
     </script>
     
 

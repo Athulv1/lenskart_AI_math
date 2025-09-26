@@ -398,206 +398,37 @@ class ProjectFileAdmin(admin.ModelAdmin):
             
             # Default fixtures configuration
             default_fixtures = {
-                "0-5": {
-                    "wall_fixtures": {
-                        "jj_super_hybrid_small": 7,
-                        "jj_super_hybrid_medium": 5,
-                        "jj_super_hybrid_large": 0,
-                        "jj_fixture_large": 0,
-                        "jj_fixture_medium": 5, 
-                        "jj_fixture_different_large": 0,
-                        "jj_fixture_different_medium": 5,
-                        "vc_fixture_large": 0,
-                        "vc_fixture_medium": 5,
-                        "window_1_section": 0,
-                        "window_3_section": 0,
-                        "with_screen": 2
-                    },
-                    "mirror_selection": { # its act like boolean 1 and 0  for unique selection 
-                        "mirror_different" : 1,
-                        "mirror": 0
-                    },
-                    "Bench_fixtures":{
-                        "Lensometer_medium": 1,
-                        "Lensometer_small": 0,
-                        "Lensometer_large": 0,
-                        "large_bench" : 1,
-                        "medium_bench" : 3
-                    },
-                    "floor_fixtures": {
-                        "Euro_centre": 4,
-                        "Discussion_table_large_left": 0,
-                        "Discussion_table_large_right": 0,
-                        "Discussion_table_medium_left": 4,
-                        "Discussion_table_medium_right": 4,
-                        "Discussion_table_small_left": 0,
-                        "Discussion_table_small_right": 0  
-                },
-                    "boh_fixtures": {  # Single combined boh_fixtures entry
-                        "ups_rack": 1,  
-                        "Dining_Table_medium": 1,
-                        "Dining_Table_large": 1,
-                        "water_dispenser": 1,
-                        "storage_rack": 1,
-                        "staff_rack": 1,
-                        "pickup_storage_900": 1,
-                        "pickup_storage_1200": 1,
-                        "QC_table_large": 1,
-                        "QC_table_medium": 1,
-                        "Repair_Table_large": 1,
-                        "Repair_Table_medium": 1,
-                        "pickup_table": 1
-                    },
-                    "clinic_fixtures": {
-                        "Clinic_regular": 1,
-                        "Clinic_with_sink": 1,
-                        "ROC_clinic": 0,      
-                    },
-                    "Eye_massage_area": {
-                        "Eye_massage_area": 1
-                    },
-                    "Corian_table_set":{
-                        "Corian_table" : 2,
-                    "Lounge_seat" : 4 #this value do not matter as it is not used in the code because a corian table set contains 4 lounge seats
-                    },
-                    "loose_furniture": {
-                        "sofa": 0,
-                    "Sofa_large": 0,
-                    "Sofa_medium": 1,
-                    },
-                    "toilet_fixtures": {
-                        "toilet": 0
-                    },
-                    "screen_fixtures": {
-                        "screen_43": 1,
-                        "screen_49": 0,
-                        "screen_55": 1,
-                        "screen_65": 1
-                    },
-                    "POS": { # its act like boolean 1 and 0  for unique selection 
-                        "pos_with_screen_large": 0,
-                        "pos_with_screen_medium": 1,
-                        "pos_with_screen_small": 0,
-                        "pos_without_screen": 0
-                    },
-                    "discussion_table_attached":{
-                        "Blue_zero" : 2
-                    },
-                    "table_fixtures": {
-                        "QMS_desk" : 3,
-                        "Standing_table" : 4,
-                        "pick_up_counter" : 2,
-                    },
-                    "lensbar_and_dropbox": {
-                        "Lensbar": 2,
-                        "drop_box": 2
-                    }
-                },
-                "5-7": {
-                    "wall_fixtures": {
-                        "jj_super_hybrid_small": 7,
-                        "jj_super_hybrid_medium": 5,
-                        "jj_super_hybrid_large": 0,
-                        "jj_fixture_large": 0,
-                        "jj_fixture_medium": 5, 
-                        "jj_fixture_different_large": 0,
-                        "jj_fixture_different_medium": 5,
-                        "vc_fixture_large": 0,
-                        "vc_fixture_medium": 5,
-                        "window_1_section": 0,
-                        "window_3_section": 0,
-                        "with_screen": 2
-                    },
-                    "mirror_selection": { # its act like boolean 1 and 0  for unique selection 
-                        "mirror_different" : 1,
-                        "mirror": 0
-                    },
-                    "Bench_fixtures":{
-                        "Lensometer_medium": 1,
-                        "Lensometer_small": 0,
-                        "Lensometer_large": 0,
-                        "large_bench" : 1,
-                        "medium_bench" : 3
-                    },
-                    "floor_fixtures": {
-                        "Euro_centre": 4,
-                        "Discussion_table_large_left": 0,
-                        "Discussion_table_large_right": 0,
-                        "Discussion_table_medium_left": 4,
-                        "Discussion_table_medium_right": 4,
-                        "Discussion_table_small_left": 0,
-                        "Discussion_table_small_right": 0  
-                },
-                    "boh_fixtures": {  # Single combined boh_fixtures entry
-                        "ups_rack": 1,  
-                        "Dining_Table_medium": 1,
-                        "Dining_Table_large": 1,
-                        "water_dispenser": 1,
-                        "storage_rack": 1,
-                        "staff_rack": 1,
-                        "pickup_storage_900": 1,
-                        "pickup_storage_1200": 1,
-                        "QC_table_large": 1,
-                        "QC_table_medium": 1,
-                        "Repair_Table_large": 1,
-                        "Repair_Table_medium": 1,
-                        "pickup_table": 1
-                    },
-                    "clinic_fixtures": {
-                        "Clinic_regular": 1,
-                        "Clinic_with_sink": 1,
-                        "ROC_clinic": 0,      
-                    },
-                    "Eye_massage_area": {
-                        "Eye_massage_area": 1
-                    },
-                    "Corian_table_set":{
-                        "Corian_table" : 2,
-                    "Lounge_seat" : 4 #this value do not matter as it is not used in the code because a corian table set contains 4 lounge seats
-                    },
-                    "loose_furniture": {
-                        "sofa": 0,
-                    "Sofa_large": 0,
-                    "Sofa_medium": 1,
-                    },
-                    "toilet_fixtures": {
-                        "toilet": 0
-                    },
-                    "screen_fixtures": {
-                        "screen_43": 1,
-                        "screen_49": 0,
-                        "screen_55": 1,
-                        "screen_65": 1
-                    },
-                    "POS": { # its act like boolean 1 and 0  for unique selection 
-                        "pos_with_screen_large": 0,
-                        "pos_with_screen_medium": 1,
-                        "pos_with_screen_small": 0,
-                        "pos_without_screen": 0
-                    },
-                    "discussion_table_attached":{
-                        "Blue_zero" : 2
-                    },
-                    "table_fixtures": {
-                        "QMS_desk" : 3,
-                        "Standing_table" : 4,
-                        "pick_up_counter" : 2,
-                    },
-                    "lensbar_and_dropbox": {
-                        "Lensbar": 2,
-                        "drop_box": 2
-                    }
-                }
+                "proto": "15L",
+                "primary_side": "Left",  # Default value for the radio button
+                "branded_eye": 0.0,
+                "branded_sun": 0.0,
+                "jj_eye": 4.0,
+                "jj_sun": 1.0,
+                "vc_eye": 4.1,
+                "vc_sun": 2.2,
+                "lk_air": 4.7,
+                "vc_kids": 2.0,
+                "reading_glasses": 0.0,
+                "cl": 0.0,
+                "od": 0.0,
+                "lpl": 0.0,
+                "tentpole": 5.0,
+                "hustlr": 5.0,
+                "total": 20.0, # This can be made auto-calculating in the frontend if needed
             }
+
             
             # Use saved fixtures or default
-            fixtures_config = project.fixtures if project.fixtures else default_fixtures
+            fixtures_config = project.fixtures
+            if not fixtures_config or "proto" not in fixtures_config:
+                fixtures_config = default_fixtures
             
             return JsonResponse({
                 'success': True,
                 'fixtures': fixtures_config,
                 'project_name': project.name
             })
+
             
         except Exception as e:
             logger.exception(f"Error getting fixtures config: {str(e)}")
