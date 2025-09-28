@@ -24,9 +24,9 @@ from .schema import ProjectDetailSchema, ErrorSchema, ProjectFileSchema, Project
 from django.db import transaction
 
 from django.contrib.auth import authenticate
-from ninja_jwt.tokens import RefreshToken
+from ninja_jwt.tokens import RefreshToken # type: ignore
 from .schema import ErrorSchema # Make sure you have this ErrorSchema defined
-from ninja_jwt.authentication import JWTAuth # Import the authentication handler
+from ninja_jwt.authentication import JWTAuth # type: ignore # Import the authentication handler
 from django.db.models import Q
 
 
@@ -236,6 +236,15 @@ def login(request, data: LoginSchema):
 def list_all_project_details(request):
     projects = Project.objects.filter(status='pending').prefetch_related('files', 'site_media').all().order_by("-created_at")
     return projects
+
+
+@api.get("/projects/updated-by-user/", response=List[ProjectDetailSchema], auth=JWTAuth())
+def list_user_updated_projects(request):
+    logged_in_user = request.auth
+    projects = Project.objects.filter(updated_by=logged_in_user).prefetch_related('files', 'site_media').order_by('-updated_at')
+
+    return projects
+
 
 
 @api.get("/projects/{project_id}/", response=ProjectDetailSchema, auth=JWTAuth())
