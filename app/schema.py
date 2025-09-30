@@ -3,12 +3,22 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 import uuid
 from uuid import UUID
+from .models import Project, ProjectFile, SiteMedia
+
 
 class ProjectFileSchema(Schema):
     id: UUID
     file_type: str
     filename: str
     created_at: datetime
+    file_url: Optional[str] = None # Add the new URL field
+
+    @staticmethod
+    def resolve_file_url(obj: ProjectFile):
+        if obj.file:
+            return obj.file.url
+        return None
+
 
 
 class SiteMediaSchema(Schema):
@@ -17,6 +27,14 @@ class SiteMediaSchema(Schema):
     file_type: str
     media_type: str
     created_at: datetime
+    file_url: Optional[str] = None # Add the new URL field
+
+    @staticmethod
+    def resolve_file_url(obj: SiteMedia):
+        if obj.file:
+            return obj.file.url
+        return None
+
 
 class ProjectDetailSchema(Schema):
     id: uuid.UUID
