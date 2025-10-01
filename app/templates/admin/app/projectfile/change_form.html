@@ -1041,10 +1041,12 @@
         currentFileId = fileId;
         const modal = document.getElementById('fixturesModal');
         
+        // The get_fixtures_config URL remains the same
         fetch(`{% url 'admin:get_fixtures_config' '00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', fileId))
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    // Call the new, simpler rendering function
                     renderFixturesForm(data.fixtures, data.project_name);
                     modal.style.display = 'block';
                 } else {
@@ -1064,74 +1066,42 @@
 
     function renderFixturesForm(fixtures, projectName) {
         const content = document.getElementById('fixturesContent');
+        
+        // Get the current value of primary_side, defaulting to 'Left' if not set
+        const primarySideValue = fixtures.primary_side || 'Left';
+        const leftChecked = primarySideValue === 'Left' ? 'checked' : '';
+        const rightChecked = primarySideValue === 'Right' ? 'checked' : '';
+
+        // The HTML is now much simpler and only shows the Primary Side option
         let html = `
             <div class="project-info">
                 <p><strong>Project:</strong> ${projectName}</p>
             </div>
+            <div class="fixture-item">
+                <label>Primary Side</label>
+                <div class="radio-group">
+                    <label><input type="radio" name="primary_side" value="Left" ${leftChecked}> Left</label>
+                    <label><input type="radio" name="primary_side" value="Right" ${rightChecked}> Right</label>
+                </div>
+            </div>
         `;
-
-        // Hardcode the order and labels for consistency
-        const fieldOrder = [
-            'proto', 'primary_side', 'branded_eye', 'branded_sun', 'jj_eye', 'jj_sun',
-            'vc_eye', 'vc_sun', 'lk_air', 'vc_kids', 'reading_glasses', 'cl', 'od',
-            'lpl', 'tentpole', 'hustlr', 'total'
-        ];
-
-        fieldOrder.forEach(key => {
-            if (fixtures.hasOwnProperty(key)) {
-                const value = fixtures[key];
-                const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-
-                if (key === 'primary_side') {
-                    const leftChecked = value === 'Left' ? 'checked' : '';
-                    const rightChecked = value === 'Right' ? 'checked' : '';
-                    html += `
-                        <div class="fixture-item">
-                            <label>${label}</label>
-                            <div class="radio-group">
-                                <label><input type="radio" name="primary_side" value="Left" ${leftChecked}> Left</label>
-                                <label><input type="radio" name="primary_side" value="Right" ${rightChecked}> Right</label>
-                            </div>
-                        </div>`;
-                } else if (key === 'proto') {
-                    html += `
-                        <div class="fixture-item">
-                            <label for="fixture_${key}">${label}</label>
-                            <input type="text" id="fixture_${key}" value="${value}" disabled>
-                        </div>`;
-                } else {
-                    html += `
-                        <div class="fixture-item">
-                            <label for="fixture_${key}">${label}</label>
-                            <input type="number" step="0.1" id="fixture_${key}" value="${value}">
-                        </div>`;
-                }
-            }
-        });
 
         content.innerHTML = html;
     }
     
     function saveFixturesConfig() {
-        const payload = {};
-        
-        // Handle radio button for primary_side
         const checkedRadio = document.querySelector('input[name="primary_side"]:checked');
-        if (checkedRadio) {
-            payload.primary_side = checkedRadio.value;
+        if (!checkedRadio) {
+            alert('Please select a Primary Side.');
+            return;
         }
-
-        // Handle all other input fields by their ID
-        const inputs = document.querySelectorAll('#fixturesContent input[id^="fixture_"]');
-        inputs.forEach(input => {
-            const key = input.id.replace('fixture_', '');
-            if (input.type === 'number') {
-                payload[key] = parseFloat(input.value) || 0;
-            } else {
-                // This will catch the disabled 'proto' input
-                payload[key] = input.value;
-            }
-        });
+        
+        const selectedValue = checkedRadio.value;
+        
+        // The payload is now a very simple object with just one key
+        const payload = { 
+            primary_side: selectedValue 
+        };
 
         const formData = new FormData();
         formData.append('file_id', currentFileId);
@@ -1145,7 +1115,7 @@
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert('Fixtures configuration saved successfully!');
+                alert('Primary Side saved successfully!');
                 closeFixturesModal();
                 window.location.reload();
             } else {
@@ -1158,6 +1128,7 @@
         });
     }
     
+    // These helper functions remain the same
     window.onclick = function(event) {
         const modal = document.getElementById('fixturesModal');
         if (event.target == modal) {
@@ -1170,6 +1141,7 @@
             closeFixturesModal();
         }
     });
+
 
     </script>
     

@@ -387,7 +387,6 @@ class ProjectFileAdmin(admin.ModelAdmin):
     
 
     def save_fixtures_config(self, request):
-        """Save fixtures configuration to project"""
         if request.method == 'POST':
             try:
                 import json
@@ -398,15 +397,21 @@ class ProjectFileAdmin(admin.ModelAdmin):
                 if not file_id or not fixtures_data:
                     return JsonResponse({'success': False, 'error': 'Missing required data'})
                 
-                # Get the project file and project
                 project_file = get_object_or_404(ProjectFile, id=file_id)
                 project = project_file.project
                 
-                # Parse the new fixtures data
-                new_fixtures_json = json.loads(fixtures_data)
+                new_data = json.loads(fixtures_data)
+
+                # Get the existing fixtures data from the database.
+                # If it's null or empty, start with an empty dictionary.
+                existing_fixtures = project.fixtures or {}
+
+                # Update the existing data with the new values.
+                # The .update() method merges the dictionaries, overwriting only the keys that match.
+                existing_fixtures.update(new_data)
                 
-                # COMPLETELY OVERWRITE the fixtures field - don't merge or append
-                project.fixtures = new_fixtures_json
+                
+                project.fixtures = existing_fixtures
                 project.save()
                 
                 return JsonResponse({'success': True, 'message': 'Fixtures configuration saved successfully'})
@@ -418,6 +423,7 @@ class ProjectFileAdmin(admin.ModelAdmin):
                 return JsonResponse({'success': False, 'error': str(e)})
         
         return JsonResponse({'success': False, 'error': 'Invalid request method'})
+
     
 
     def get_fixtures_config(self, request, file_id):
