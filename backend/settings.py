@@ -44,6 +44,7 @@ JAZZMIN_SETTINGS = {
     "site_brand": "Lenskart",
     "welcome_sign": "Welcome to the Lenskart Admin",
     "copyright": "Lenskart",
+    "use_select2": True,
 }
 
 

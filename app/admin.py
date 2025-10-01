@@ -77,6 +77,21 @@ class ProjectStatusFilter(SimpleListFilter):
         if self.value():
             return queryset.filter(project__status=self.value())
         return queryset
+    
+
+class ProjectNameFilter(SimpleListFilter):
+    title = 'project'  # This is the title that will appear in the admin
+    parameter_name = 'project' # This is the URL parameter
+
+    def lookups(self, request, model_admin):
+        projects = Project.objects.all().order_by('name')
+        return [(p.id, p.name) for p in projects]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(project__id=self.value())
+        return queryset
+
 
 class ProjectFileInline(admin.TabularInline):
     model = ProjectFile
@@ -128,9 +143,11 @@ class ProjectAdmin(admin.ModelAdmin):
 
 class ProjectFileAdmin(admin.ModelAdmin):
     list_display = ['get_project_name', 'filename', 'file_type', 'created_at']
-    list_filter = [FileTypeFilter, ProjectStatusFilter, 'created_at', 'project']
+    list_filter = [FileTypeFilter, ProjectStatusFilter, 'created_at', ProjectNameFilter]
     search_fields = ['project__name', 'file']
     readonly_fields = ['created_at', 'file_type', 'filename']
+    raw_id_fields = ('project',)
+
 
     actions = None
     
