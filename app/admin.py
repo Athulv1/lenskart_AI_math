@@ -86,10 +86,13 @@ class ProjectFileInline(admin.TabularInline):
 
 class ProjectAdmin(admin.ModelAdmin):
     inlines = [ProjectFileInline]
-    list_display = ['name', 'status', 'created_at', 'updated_at']
+    list_display = ['name', 'created_at', 'updated_at']
     list_filter = ['status', 'created_at']
     search_fields = ['name', 'description']
     readonly_fields = ['created_at', 'updated_at']
+
+    actions = None
+
     
     # Specify the template to use for the change form
     change_form_template = 'admin/app/project/change_form.html'
