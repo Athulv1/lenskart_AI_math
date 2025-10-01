@@ -127,13 +127,23 @@ class ProjectAdmin(admin.ModelAdmin):
         return super().change_view(request, object_id, form_url, extra_context=extra_context)
 
 class ProjectFileAdmin(admin.ModelAdmin):
-    list_display = ['id', 'project', 'project_status', 'filename', 'file_type', 'created_at']
+    list_display = ['get_project_name', 'filename', 'file_type', 'created_at']
     list_filter = [FileTypeFilter, ProjectStatusFilter, 'created_at', 'project']
     search_fields = ['project__name', 'file']
     readonly_fields = ['created_at', 'file_type', 'filename']
+
+    actions = None
     
     # Specify the template to use for the change form
     change_form_template = 'admin/app/projectfile/change_form.html'
+
+    def get_project_name(self, obj):
+        return obj.project.name
+    
+    get_project_name.short_description = 'Project Name'
+    # This tells Django how to sort this column.
+    get_project_name.admin_order_field = 'project__name'
+
     
     def project_status(self, obj):
         if obj.project.status == 'approved':
