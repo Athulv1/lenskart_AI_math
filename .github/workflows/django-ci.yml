@@ -44,12 +44,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # --- THIS IS THE CORRECTED STEP ---
+    # --- THIS IS THE FINAL, CORRECTED STEP ---
     - name: Disable FreeCAD Initialization for Test
-      # This command finds the line containing 'initialize_freecad()'
-      # and replaces the ENTIRE line with a commented-out version.
+      # This command is now much more specific.
+      # ^ matches the beginning of the line.
+      # $ matches the end of the line.
+      # This ensures it ONLY matches the line that is exactly "initialize_freecad()".
       run: |
-        sed -i 's/.*initialize_freecad().*/# initialize_freecad()/' app/api.py
+        sed -i 's/^initialize_freecad()$/# initialize_freecad()/' app/api.py
 
     - name: Run Django Migrations and Tests
       env:
