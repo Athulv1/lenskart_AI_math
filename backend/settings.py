@@ -93,13 +93,14 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD'),
         'HOST': os.getenv('DB_HOST'),
         'PORT': os.getenv('DB_PORT'),
-    }
+    },
+    'TEST': {
+            
+            'NAME': os.getenv('DB_NAME'),
+        },
 }
 
-if os.getenv('CI'):
-    DATABASES['default']['TEST'] = {
-        'NAME': os.getenv('DB_NAME'),
-    }
+
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
