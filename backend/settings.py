@@ -96,6 +96,11 @@ DATABASES = {
     }
 }
 
+if os.getenv('CI'):
+    DATABASES['default']['TEST'] = {
+        'NAME': os.getenv('DB_NAME'),
+    }
+
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
