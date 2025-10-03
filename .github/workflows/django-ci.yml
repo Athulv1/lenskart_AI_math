@@ -55,7 +55,7 @@ jobs:
         DB_NAME: "test_db"
         DB_USER: "test_user"
         DB_PASSWORD: "test_password"
-        DB_HOST: localhost
+        DB_HOST: postgres
         DB_PORT: ${{ job.services.postgres.ports['5432'] }}
       run: |
         python manage.py test app
