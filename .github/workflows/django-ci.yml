@@ -14,12 +14,13 @@ jobs:
 
     services:
       postgres:
-        image: postgres:13 # Use a specific version of PostgreSQL
+        image: postgres:13
         env:
           POSTGRES_DB: test_db
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
-        # This is needed to make sure the database is ready before tests start
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -40,7 +41,6 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     
-    # We need to install the PostgreSQL client library on the runner
     - name: Install PostgreSQL client
       run: sudo apt-get update && sudo apt-get install -y libpq-dev
 
@@ -55,7 +55,8 @@ jobs:
         DB_NAME: "test_db"
         DB_USER: "test_user"
         DB_PASSWORD: "test_password"
-        DB_HOST: postgres
-        DB_PORT: ${{ job.services.postgres.ports['5432'] }}
+        DB_HOST: 127.0.0.1
+        DB_PORT: 5432
+
       run: |
         python manage.py test app
