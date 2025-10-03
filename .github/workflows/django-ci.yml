@@ -57,7 +57,7 @@ jobs:
         DB_PASSWORD: "test_password"
         DB_HOST: 127.0.0.1
         DB_PORT: 5432
-
+        DJANGO_SETTINGS_MODULE: backend.settings
       run: |
         python manage.py migrate
         python manage.py test app --keepdb
