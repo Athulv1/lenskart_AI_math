@@ -1,6 +1,6 @@
 # .github/workflows/django-ci.yml
 
-name: Django CI Tests
+name: Django CI Tests (Diagnostic)
 
 on:
   push:
@@ -27,37 +27,64 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    strategy:
-      max-parallel: 4
-      matrix:
-        python-version: ["3.11"]
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "3.11"
     
     - name: Install PostgreSQL client
-      run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      run: sudo apt-get update && sudo apt-get install -y libpq-dev postgresql-client
 
     - name: Install Python Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Run Django App Tests
+    - name: 1. Show Migration Status BEFORE migrate
       env:
-        SECRET_KEY: "dummy-secret-key-for-testing"
+        # Set all environment variables needed for settings.py
+        SECRET_KEY: "dummy"
         DB_NAME: "test_db"
         DB_USER: "test_user"
         DB_PASSWORD: "test_password"
         DB_HOST: 127.0.0.1
         DB_PORT: 5432
-        DJANGO_SETTINGS_MODULE: backend.settings
       run: |
-        python manage.py migrate
+        echo "--- Running python manage.py showmigrations ---"
+        python manage.py showmigrations
+        
+    - name: 2. Run Migrations with High Verbosity
+      env:
+        SECRET_KEY: "dummy"
+        DB_NAME: "test_db"
+        DB_USER: "test_user"
+        DB_PASSWORD: "test_password"
+        DB_HOST: 127.0.0.1
+        DB_PORT: 5432
+      run: |
+        echo "--- Running python manage.py migrate ---"
+        python manage.py migrate -v 3
+
+    - name: 3. Verify Database Tables EXIST
+      env:
+        # PGPASSWORD is the standard way to provide a password to psql
+        PGPASSWORD: test_password
+      run: |
+        echo "--- Checking for tables in test_db ---"
+        psql -h 127.0.0.1 -U test_user -d test_db -c "\dt"
+
+    - name: 4. Run Django App Tests
+      env:
+        SECRET_KEY: "dummy"
+        DB_NAME: "test_db"
+        DB_USER: "test_user"
+        DB_PASSWORD: "test_password"
+        DB_HOST: 127.0.0.1
+        DB_PORT: 5432
+      run: |
+        echo "--- Running python manage.py test app --keepdb ---"
         python manage.py test app --keepdb
