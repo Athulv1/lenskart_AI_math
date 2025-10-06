@@ -1,0 +1,12 @@
+{
+  "generation_metadata": {
+    "generated_on": "2025-10-01T12:03:29.658699",
+    "input_floor_plan": "test_complex_building_shape/run_20251001_120256/vtn_output/floorplan_whitefield_layout.png",
+    "ultra_strict_prompt": "/home/athul/json/prompt.txt",
+    "gemini_model": "gemini-2.5-flash-image-preview",
+    "generation_type": "FLOOR_PLAN_TO_IMPROVED_LAYOUT",
+    "output_image": "/home/athul/json/gemini_25_optimized/gemini_25_improved_layout_20251001_120329.png",
+    "image_size": "960x1088",
+    "prompt_size_chars": 43741
+  }
+}
