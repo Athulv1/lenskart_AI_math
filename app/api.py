@@ -39,46 +39,22 @@ logger = logging.getLogger("app")
 freecad_paths.setup_freecad_environment()
 
 # Global references to modules
-FREECAD_INITIALIZED = False
-fcc = None
 cvc = None
 Fixture = None
-FreeCAD = None
-Vector = None
-Rotation = None
 
-def initialize_freecad():
+def initialize_modules():
     """Initialize FreeCAD and related modules"""
-    global FREECAD_INITIALIZED, fcc, cvc, Fixture, FreeCAD, Vector, Rotation
+    global cvc, Fixture
     
     try:
         # Detailed logging for debugging
-        print("Attempting to initialize FreeCAD modules...")
-        
-        # Import FreeCAD modules first
-        import FreeCAD as FC # type: ignore
-        import Part # type: ignore
-        from FreeCAD import Vector as Vec, Rotation as Rot # type: ignore
-        
-        # Store references
-        FreeCAD = FC
-        Vector = Vec
-        Rotation = Rot
-        
-        print("FreeCAD core modules imported successfully")
+        print("Attempting to initialize modules...")
         
         # Now import project modules
-        from . import FC_Controller as fc_module
         from . import CV_Controller as cv_module
         from . import Fixture as fixture_module
         
-        # Initialize FC_Controller's FreeCAD references
-        if hasattr(fc_module, 'initialize_freecad'):
-            print("Initializing FreeCAD in FC_Controller")
-            fc_module.initialize_freecad()
-        
         # Store references
-        fcc = fc_module
         cvc = cv_module
         Fixture = fixture_module
         
@@ -95,7 +71,7 @@ def initialize_freecad():
         return False
 
 # Try to initialize FreeCAD at module load time
-initialize_freecad()
+initialize_modules()
 
 
 api = NinjaAPI(version='3.0.0', urls_namespace='floorplan_api_unique')
@@ -257,8 +233,6 @@ def get_project_details(request, project_id: uuid.UUID):
 def add_project_data(
     request,
     project_id: uuid.UUID,
-    # We accept all possible fields as optional Form fields using the exact
-    # keywords from the original /upload/ endpoint.
     project_name: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
@@ -582,14 +556,6 @@ def process_floorplan(request, file_id: uuid.UUID):
     # Use consistent project naming that matches the export method
     consistent_project_name = f"{file_id}_floorplan"
     try:
-        # Check if FreeCAD modules are properly initialized
-        global FREECAD_INITIALIZED
-        if not FREECAD_INITIALIZED:
-            # Try to initialize FreeCAD modules again
-            success = initialize_freecad()
-            if not success:
-                return 400, {"message": "FreeCAD modules could not be initialized. Please check server logs for details."}
-        
         # Get the project file
         project_file = get_object_or_404(ProjectFile, id=file_id)
         
@@ -649,129 +615,10 @@ def process_floorplan(request, file_id: uuid.UUID):
             overlay_output = os.path.join(settings.MEDIA_ROOT, "overlay_output.png")
             scale = 30  # mm per pixel
             
-            # ===================== FCSTD Creation (replace with your controller logic) ============================
-            # # Process the floorplan using FreeCAD with dynamic fixtures
-            print(f"Creating FC_Controller with input: {input_path}, output: {output_fcstd_path}")
-            fc_cont = fcc.FC_Controller(input_path, output_fcstd_path, overlay_output, scale, fixtures_config)
-            print("FC_Controller created successfully")
             
-            fc_cont.create_floorplan()
-            print("Floorplan created successfully")
-            
-            fc_cont.cvc.get_metadata()
-            fc_cont.cvc.reorder_bot_left()
-            
-            # # Place all the  fixtures
-            fc_cont.place_toilet()
-            fc_cont.place_boh_after_toilet()
-            fc_cont.place_clinic()
-            fc_cont.center_floor_fixtures("Euro_centre", fixtures_config["floor_fixtures"]["Euro_centre"])
-            fc_cont.place_screens_and_ar()
-            fc_cont.place_wall_fixtures_auto_split()
-            fc_cont.place_right_wall_sofa()
-            fc_cont.place_screen()
-            fc_cont.close_plan()
-
-            print("All fixtures placed successfully")
-
-            if os.path.exists('/Applications/FreeCAD.app'):
-                # MacOS path - use the correct executable (NOT the Resources/bin path)
-                FREECAD_INSTALLATION_PATH = "/Applications/FreeCAD.app/Contents/MacOS/FreeCAD"
-                logger.info(f"[DEBUG] Using macOS FreeCAD path: {FREECAD_INSTALLATION_PATH}")
-            else:
-                # Linux path - check common locations
-                linux_freecad_paths = [
-                    "/usr/bin/freecad",
-                    "/usr/local/bin/freecad",
-                    "/opt/freecad/bin/freecad"
-                ]
-                FREECAD_INSTALLATION_PATH = None
-                for path in linux_freecad_paths:
-                    if os.path.exists(path):
-                        FREECAD_INSTALLATION_PATH = path
-                        break
-                if not FREECAD_INSTALLATION_PATH:
-                    logger.error("FreeCAD executable not found in common locations")
-                    return False
-                
-            script_parent_dir = os.path.dirname(os.path.abspath(__file__))
-            fcstd_to_dxf_script_path = os.path.join(script_parent_dir, "fcstd_to_dxf.py")
-            print(f"[OK] Using DXF export script: {fcstd_to_dxf_script_path}")
+            # ==================== DXF PROCESSING STARTS HERE ============================
 
 
-            # Construct FreeCAD command
-            freecad_command = [
-                FREECAD_INSTALLATION_PATH, # or FreeCADCmd if available
-                '-c',
-                fcstd_to_dxf_script_path,
-                output_fcstd_path,
-                consistent_project_name
-            ]
-
-
-
-            print(f"Running FreeCAD with command: {' '.join(freecad_command)}")
-
-
-
-            # Execute FreeCAD process
-            process = subprocess.Popen(
-                freecad_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
-            stdout, _ = process.communicate()
-            print(f"FreeCAD output:\n{stdout}")
-
-            if process.returncode != 0:
-                logger.error(f"FreeCAD failed with code {process.returncode}")
-                raise Exception("FreeCAD DXF export failed")
-
-
-
-            # Verify DXF file was created
-            master_dxf_path = os.path.join(output_dir, "master.dxf")
-            if not os.path.exists(master_dxf_path):
-                raise Exception(f"Expected DXF file was not created: {master_dxf_path}")
-                
-            print(f"DXF file successfully created: {master_dxf_path}")
-
-            # ==================== DXF Export ENDS HERE ============================
-
-            # ==================== RUN DXF PROCESSING SCRIPTS ============================
-            python_executable_path = sys.executable # Ensure you're using the correct venv python
-
-            # # Run add_blocks.py
-            add_blocks_script_path = os.path.join(settings.BASE_DIR, 'app', 'add_blocks.py')
-            add_blocks_input_dxf = os.path.join(output_dir, "master.dxf")  # Input for add_blocks.py
-            add_blocks_output_dxf = os.path.join(output_dir, "output_with_blocks_aligned.dxf")
-
-            print(f"Running add_blocks.py: {add_blocks_script_path} {add_blocks_input_dxf} {add_blocks_output_dxf}")
-            add_blocks_process = subprocess.Popen([python_executable_path, add_blocks_script_path, add_blocks_input_dxf, add_blocks_output_dxf],
-                                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            add_blocks_stdout, add_blocks_stderr = add_blocks_process.communicate()
-            print(f"add_blocks.py stdout:\n{add_blocks_stdout.decode()}")
-            if add_blocks_stderr:
-                logger.error(f"add_blocks.py stderr:\n{add_blocks_stderr.decode()}")
-            if add_blocks_process.returncode != 0:
-                 raise Exception(f"add_blocks.py failed with code {add_blocks_process.returncode}: {add_blocks_stderr.decode()}")
-
-            # Run blocks_dxf.py
-            blocks_dxf_script_path = os.path.join(settings.BASE_DIR, 'app', 'blocks_dxf.py')
-            blocks_dxf_input_dxf = os.path.join(output_dir, "output_with_blocks_aligned.dxf") # Input for blocks_dxf.py
-            blocks_dxf_output_dxf = os.path.join(output_dir, "output.dxf")
-
-            print(f"Running blocks_dxf.py: {blocks_dxf_script_path} {consistent_project_name}")
-            blocks_dxf_process = subprocess.Popen([python_executable_path, blocks_dxf_script_path, blocks_dxf_input_dxf, blocks_dxf_output_dxf],
-                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=output_dir)
-            blocks_dxf_stdout, blocks_dxf_stderr = blocks_dxf_process.communicate()
-            print(f"blocks_dxf.py stdout:\n{blocks_dxf_stdout.decode()}")
-            if blocks_dxf_stderr:
-                logger.error(f"blocks_dxf.py stderr:\n{blocks_dxf_stderr.decode()}")
-
-            if blocks_dxf_process.returncode != 0:
-                 raise Exception(f"blocks_dxf.py failed with code {blocks_dxf_process.returncode}: {blocks_dxf_stderr.decode()}")
             # ==================== DXF PROCESSING ENDS HERE ============================
 
             # Create a new ProjectFile for the processed DXF file
