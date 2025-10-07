@@ -41,6 +41,7 @@ The project uses a .env file to manage secret keys and database settings.
 Create a new file named .env in the root of the project directory.
 Copy the following content into it and update the values to match your local database setup.
 
+5. Create the `.env` file:** Copy the example file `env.example` (if you have one) or create `.env` from scratch. Fill in your local PostgreSQL details.
 Dotenv
 # .env file
 
@@ -51,17 +52,31 @@ DB_PASSWORD=your_local_postgres_password
 DB_HOST=localhost
 DB_PORT=5432
 
-5. Run Database Migrations
+6. The project uses a `.env` file for settings and a `local_settings.py` for development-specific overrides.
+
+**Create the `local_settings.py` file:** In the `backend/` directory, create a file named `local_settings.py` with the following content. This file is ignored by Git and is for your machine only.
+    ```python
+    # backend/local_settings.py
+    DEBUG = True
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+    ```
+
+7.  **Set up PostgreSQL:** Run the automated setup script. This will read your `.env` file and create the database and user for you. You will be prompted for your system's `sudo` password.
+    ```bash
+    ./setup_postgres.sh
+    ```
+
+8. Run Database Migrations
 This command will create the necessary tables in your local database.
 code
 python manage.py migrate
 
-6. Create a Superuser
+9. Create a Superuser
 You will need a superuser account to access the Django Admin panel.
 python manage.py createsuperuser
 Follow the prompts to create a username, email, and password.
 
-7. Run the Development Server
+10. Run the Development Server
 You are now ready to run the project.
 code
 Bash
