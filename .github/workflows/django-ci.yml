@@ -62,6 +62,4 @@ jobs:
         DB_HOST: 127.0.0.1
         DB_PORT: 5432
       run: |
-        sleep 5
-        python manage.py migrate --noinput
         python manage.py test --keepdb
