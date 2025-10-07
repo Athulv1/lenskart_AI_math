@@ -65,16 +65,22 @@ def initialize_modules():
         logger.error(traceback.format_exc())
         return False
 
-is_testing = (
-    'test' in sys.argv or 
-    os.environ.get('DB_NAME', '').startswith('test_') or
-    'pytest' in sys.modules
-)
+def is_test_mode():
+    """Check if Django is running in test mode"""
+    import sys
+    import os
+    return any([
+        'test' in sys.argv,
+        'pytest' in sys.modules,
+        os.environ.get('DB_NAME', '').startswith('test_'),
+        os.environ.get('TESTING') == 'true',
+    ])
 
-if not is_testing:
+if not is_test_mode():
     initialize_modules()
 else:
-    print("Skipping module initialization - running in test mode")
+    print("⚠️  Skipping module initialization - running in test mode")
+
 
 
 api = NinjaAPI(version='3.0.0', urls_namespace='floorplan_api_unique')
