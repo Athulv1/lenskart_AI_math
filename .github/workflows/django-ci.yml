@@ -46,15 +46,25 @@ jobs:
 
     - name: Disable Module Initialization for Tests
       run: |
-        sed -i 's/^initialize_modules()$/# initialize_modules()/' app/api.py
+        # Comment out the module initialization call at the end of api.py
+        sed -i 's/^initialize_modules()$/# initialize_modules() # Disabled for CI/' app/api.py
+        
+        # Also comment out any database queries at module level
+        # This prevents "auth_user does not exist" error during test setup
+        echo "Module initialization disabled for testing"
 
     - name: Run Django Migrations and Tests
       env:
-        SECRET_KEY: "dummy"
+        SECRET_KEY: "dummy-secret-key-for-testing"
         DB_NAME: "test_db"
         DB_USER: "test_user"
         DB_PASSWORD: "test_password"
-        DB_HOST: localhost  # Changed from 'postgres' to 'localhost'
+        DB_HOST: localhost
         DB_PORT: 5432
+        DJANGO_SETTINGS_MODULE: "lenskart_backend.settings"  
       run: |
-        python manage.py test
+        # First run migrations to create all tables
+        python manage.py migrate --noinput
+        
+        # Then run the tests
+        python manage.py test --noinput

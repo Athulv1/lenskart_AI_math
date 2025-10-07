@@ -66,7 +66,8 @@ def initialize_modules():
         return False
 
 # Try to initialize at module load time
-initialize_modules()
+if 'test' not in sys.argv:
+    initialize_modules()
 
 
 api = NinjaAPI(version='3.0.0', urls_namespace='floorplan_api_unique')
