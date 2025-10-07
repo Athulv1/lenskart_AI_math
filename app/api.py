@@ -29,22 +29,16 @@ from .schema import ErrorSchema # Make sure you have this ErrorSchema defined
 from ninja_jwt.authentication import JWTAuth # type: ignore # Import the authentication handler
 from django.db.models import Q
 
-
-# Import the new FreeCAD path setup module
-from . import freecad_paths
-
 logger = logging.getLogger("app")
-
-# Setup FreeCAD environment first before any imports
-freecad_paths.setup_freecad_environment()
 
 # Global references to modules
 cvc = None
+dxf_c = None
 Fixture = None
 
 def initialize_modules():
-    """Initialize FreeCAD and related modules"""
-    global cvc, Fixture
+    """Initialize modules"""
+    global cvc, dxf_c, Fixture
     
     try:
         # Detailed logging for debugging
@@ -52,25 +46,26 @@ def initialize_modules():
         
         # Now import project modules
         from . import CV_Controller as cv_module
+        from . import DXF_Controller as dxf_module
         from . import Fixture as fixture_module
         
         # Store references
         cvc = cv_module
+        dxf_c = dxf_module
         Fixture = fixture_module
         
         print("All modules initialized successfully")
-        FREECAD_INITIALIZED = True
         return True
     except ImportError as e:
-        logger.error(f"Failed to import FreeCAD modules: {e}")
+        logger.error(f"Failed to import modules: {e}")
         logger.error(traceback.format_exc())
         return False
     except Exception as e:
-        logger.error(f"Unexpected error during FreeCAD initialization: {e}")
+        logger.error(f"Unexpected error during initialization: {e}")
         logger.error(traceback.format_exc())
         return False
 
-# Try to initialize FreeCAD at module load time
+# Try to initialize at module load time
 initialize_modules()
 
 
@@ -551,7 +546,7 @@ class ProcessedFloorplanResponse(Schema):
 
 @api.post("/process-floorplan/{file_id}/", response={200: ProcessedFloorplanResponse, 400: ErrorSchema, 404: ErrorSchema})
 def process_floorplan(request, file_id: uuid.UUID):
-    """Process an image into a FreeCAD floorplan"""
+    """Process an image into a DXF floorplan"""
     
     # Use consistent project naming that matches the export method
     consistent_project_name = f"{file_id}_floorplan"
@@ -565,9 +560,16 @@ def process_floorplan(request, file_id: uuid.UUID):
             return 400, {"message": "Only image files (PNG, JPG, JPEG) can be processed"}
         
         # Get the project and its fixtures configuration
+        merch_mix_file = "app/merch_mix.json"
         project = project_file.project
         project_id = project.id
+        project_name = project.name
         room_measurements_dir = os.path.join(settings.MEDIA_ROOT, 'room_measurements')
+
+        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_project_name = safe_project_name.replace(' ', '_')
+        filename = f"{safe_project_name}_{project.id}_room_measurements.json"
+        measurment_file_path = os.path.join(room_measurements_dir, filename)
         
         # Check if project has fixtures configuration
         if not project.fixtures:
@@ -603,17 +605,103 @@ def process_floorplan(request, file_id: uuid.UUID):
         output_dir = os.path.join(settings.BASE_DIR, f"{consistent_project_name}_output")
         os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
 
-        master_dxf_path = os.path.join(output_dir, "master.dxf")
         final_export_dxf_path = os.path.join(output_dir, "output.dxf")
-        image_metadata_path = os.path.join(output_dir, "image_metadata.json")
-        lisp_path = os.path.join(output_dir, "attach_and_group.lsp")
-        zip_file_path = os.path.join(output_dir, "package.zip")
-        output_fcstd_path = os.path.join(output_dir, f"{consistent_project_name}.FCStd")
 
         try:
             # Setup processing parameters
             overlay_output = os.path.join(settings.MEDIA_ROOT, "overlay_output.png")
-            scale = 30  # mm per pixel
+            
+            try:
+                # 1. Find the project by its exact name.
+                # Use .first() in case there are multiple projects with the same name.
+                # This will get the first one it finds.
+                project = Project.objects.filter(name=project_name).first()
+                
+                if project:
+                    merch_mix_data = project.__dict__['merch_mix_max']
+                    
+                    if merch_mix_data is None:
+                        logger.info(f"Project '{project.name}' found, but 'merch_mix_max' is not set.")
+                        # return {}
+                    
+                    logger.info(f"Successfully retrieved merch_mix_max for project: {project.name}")
+                    logger.info(f"Data: {merch_mix_data}")
+                else:
+                    logger.error(f"Error: No project found with the name '{project_name}'.")
+                    return {}
+                
+            except Exception as e:
+                logger.error(f"An unexpected error occurred retrieving the merch mix: {e}")
+
+                try:
+                    with open(merch_mix_file, 'r') as f:
+                        merch_json_data = json.load(f)
+                    # Extract the 'merch_mix_max' object, which contains the final counts
+                    merch_mix_data = merch_json_data['merch_mix_max']
+                    if merch_mix_data is None:
+                        logger.info(f"File found, but 'merch_mix_max' is not set.")
+                        return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+
+                    logger.info("--- ✅ Successfully loaded backup merch mix data. ---")
+                except (FileNotFoundError, KeyError) as e:
+                    logger.error(f"--- 🚨 ERROR: Could not load or parse {merch_mix_file}. Error: {e} ---")
+                    return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+                
+            # rotation = 42  # REPLACE WITH VALUE FROM DB
+            # json_path = f"/home/ubuntu/lenskart-backend/media/room_measurements/{project.name}_{project.id}_room_measurements.json"
+            #json_path = f"/home/ubuntu/lenskart_backend/app/test.json"
+
+            static_fixtures = {
+                "mirror_selection": { "mirror_different" : 1, "mirror": 0 },
+            
+                "Bench_fixtures":{ "large_bench" : 0, "AR": 1 ,"medium_bench" : 1 },
+                
+                "lensometer_fixtures":{ "Lensometer_medium": 0, "Lensometer_small": 0, "Lensometer_large": 0 },
+                
+                "boh_fixtures": {
+                    "water_dispenser": 1, "ups_rack": 1, "staff_rack": 1, "pickup_storage_900": 0,
+                    "storage_rack": 1, "pickup_storage_1200": 0, "Dining_Table_large": 0,
+                    "QC_table_large": 0, "Dining_Table_medium": 1, "QC_table_medium": 0,
+                    "Repair_Table_large": 0, "Repair_Table_medium": 0, 
+                    "drop_box": 0, "pick_up_counter": 0
+                },
+
+                # "clinic_fixtures": { "ROC_clinic": 3,"Clinic_regular": 1, "Clinic_with_sink": 1,  "Eye_massage_area": 0 },
+
+                "boh_presets": { "medium_basic_boh": 1, "basic_boh_preset_1": 0 ,"small_basic_boh": 0,"boh_vertical_horizontal_preset_basic": 0 },
+
+                "pickup_window": { "Pick_up_window": 1 , "pickup_table": 1},
+
+                "Eye_massage_area": { "Eye_massage_area": 0 },
+                
+                "Corian_table_set":{ "Corian_table" : 0, "Lounge_seat" : 0 },
+                
+                "loose_furniture": { "sofa": 0, "Sofa_large": 0, "Sofa_medium": 0 },
+                
+                "toilet_fixtures": { "toilet": 0 },
+                
+                "screen_fixtures": { "screen_43": 0, "screen_49": 0, "screen_55": 0, "screen_65": 0 },
+                
+                "POS": { "pos_with_screen_large": 0, "pos_with_screen_medium": 0, "pos_with_screen_small": 0, "pos_without_screen": 0 },
+                
+                "discussion_table_attached":{ "Blue_zero" : 1 },
+                
+                "table_fixtures": { "QMS_desk" : 1, 
+                                #    "Standing_table" : 3
+                                    },
+                
+                "lensbar_and_dropbox": { "Lensbar": 0 },
+                
+                "floor_fixtures_table": { "Discussion_table_small": 0, "Discussion_table_medium": 0, "Discussion_table_large": 0 }
+            }
+            
+            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, measurment_file_path, {})
+            dxfc.create_floorplan()
+            dxfc.cvc.get_metadata()
+            dxfc.cvc.reorder_bot_left()
+            DRAW_SEPARATOR_LINE = True 
+
+            dxfc.close_plan()
             
             
             # ==================== DXF PROCESSING STARTS HERE ============================

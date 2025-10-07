@@ -4,8 +4,8 @@ import os
 import logging
 import traceback
 from typing import List, Dict, Any, Optional, Tuple
-import Fixture
-import CV_Controller as cvCon
+from . import Fixture
+from . import CV_Controller as cvCon
 from typing import List, Tuple
 import uuid 
 import ezdxf # type: ignore
