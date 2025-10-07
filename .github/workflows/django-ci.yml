@@ -44,14 +44,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # --- THIS IS THE FINAL, CORRECTED STEP ---
-    - name: Disable FreeCAD Initialization for Test
-      # This command is now much more specific.
-      # ^ matches the beginning of the line.
-      # $ matches the end of the line.
-      # This ensures it ONLY matches the line that is exactly "initialize_freecad()".
+    - name: Disable Module Initialization for Tests
       run: |
-        sed -i 's/^initialize_freecad()$/# initialize_freecad()/' app/api.py
+        sed -i 's/^initialize_modules()$/# initialize_modules()/' app/api.py
 
     - name: Run Django Migrations and Tests
       env:
@@ -59,7 +54,7 @@ jobs:
         DB_NAME: "test_db"
         DB_USER: "test_user"
         DB_PASSWORD: "test_password"
-        DB_HOST: postgres
+        DB_HOST: localhost  # Changed from 'postgres' to 'localhost'
         DB_PORT: 5432
       run: |
         python manage.py test
