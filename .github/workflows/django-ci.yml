@@ -23,9 +23,9 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
     steps:
     - name: Checkout repository
@@ -53,16 +53,6 @@ jobs:
       run: |
         sed -i 's/^initialize_freecad()$/# initialize_freecad()/' app/api.py
 
-    - name: Debug Network Connectivity
-      run: |
-        ping -c 5 postgres
-    - name: Wait for PostgreSQL
-      run: |
-        for i in $(seq 1 10); do
-          pg_isready -h postgres -p 5432 -U test_user && break
-          echo "Waiting for PostgreSQL... ($i/10)"
-          sleep 1
-        done
     - name: Run Django Migrations and Tests
       env:
         SECRET_KEY: "dummy"
