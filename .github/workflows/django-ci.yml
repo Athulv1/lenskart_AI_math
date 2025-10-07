@@ -53,6 +53,9 @@ jobs:
       run: |
         sed -i 's/^initialize_freecad()$/# initialize_freecad()/' app/api.py
 
+    - name: Debug Network Connectivity
+      run: |
+        ping -c 5 postgres
     - name: Wait for PostgreSQL
       run: |
         for i in $(seq 1 10); do
