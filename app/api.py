@@ -37,7 +37,7 @@ dxf_c = None
 Fixture = None
 
 def initialize_modules():
-    """Initialize modules"""
+    """Initialize FreeCAD and related modules"""
     global cvc, dxf_c, Fixture
     
     try:
@@ -57,15 +57,15 @@ def initialize_modules():
         print("All modules initialized successfully")
         return True
     except ImportError as e:
-        logger.error(f"Failed to import modules: {e}")
+        logger.error(f"Failed to import FreeCAD modules: {e}")
         logger.error(traceback.format_exc())
         return False
     except Exception as e:
-        logger.error(f"Unexpected error during initialization: {e}")
+        logger.error(f"Unexpected error during FreeCAD initialization: {e}")
         logger.error(traceback.format_exc())
         return False
 
-# Try to initialize at module load time
+# Try to initialize FreeCAD at module load time
 initialize_modules()
 
 
@@ -546,7 +546,7 @@ class ProcessedFloorplanResponse(Schema):
 
 @api.post("/process-floorplan/{file_id}/", response={200: ProcessedFloorplanResponse, 400: ErrorSchema, 404: ErrorSchema})
 def process_floorplan(request, file_id: uuid.UUID):
-    """Process an image into a DXF floorplan"""
+    """Process an image into a FreeCAD floorplan"""
     
     # Use consistent project naming that matches the export method
     consistent_project_name = f"{file_id}_floorplan"
@@ -700,6 +700,159 @@ def process_floorplan(request, file_id: uuid.UUID):
             dxfc.cvc.get_metadata()
             dxfc.cvc.reorder_bot_left()
             DRAW_SEPARATOR_LINE = True 
+
+            # 4. NEW: Call the single setup and calculation function
+            dxfc.merch_mix_cal(merch_mix_data, static_fixtures) # type: ignore
+
+            # --- PLACEMENT PHASE ---
+            all_placed_bboxes = dxfc.get_existing_nonwall_bboxes()
+            floor_area = dxfc.calculate_area_sqft()
+            orientation = dxfc.cvc.orientation
+            Primary = "right"
+            print("Primary side for the floorplan is ", Primary)
+
+
+            if orientation == 'landscape':
+                print("--- Applying LANDSCAPE placement strategy---")
+                dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
+                dxfc.place_boh_intelligently(all_placed_bboxes)
+                dxfc.place_boh_preset(all_placed_bboxes)
+                dxfc.place_clinics_with_best_fit_and_fallback(all_placed_bboxes)
+                dxfc.place_boh_fixtures_in_room(all_placed_bboxes) 
+                dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
+                dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
+                dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
+                remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
+                if remaining_tables:
+                    dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
+                dxfc.place_corian_table_set_landscape(all_placed_bboxes)
+                dxfc.place_standing_tables_landscape(all_placed_bboxes)
+                dxfc.place_blue_zero_landscape(all_placed_bboxes)
+                dxfc.place_pos_ar_landscape(all_placed_bboxes)
+                dxfc.place_qms_at_entrance(all_placed_bboxes)
+                dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
+
+            else: # Default to portrait
+                print("---Applying PORTRAIT placement strategy---")
+                # ***** ADD THE NEW FUNCTION CALL HERE *****
+                
+                dxfc.place_clinics_master_strategy(all_placed_bboxes) 
+                
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                dxfc.place_pickup_area_fixture(all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_boh_fixtures_in_room(all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_benches_under_separation_line(all_placed_bboxes) 
+                dxfc.place_ar_under_separation_line(all_placed_bboxes)
+                dxfc.place_qms_at_entrance_center(all_placed_bboxes)
+                dxfc.place_standing_tables_beside_euros(all_placed_bboxes)
+                # ------------------------------------
+                # ------------------------------------
+                left_wall_data = dxfc.get_retail_wall_data(side='left')
+                right_wall_data = dxfc.get_retail_wall_data(side='right')
+                left_wall_length = left_wall_data["total_length"]
+                right_wall_length = right_wall_data["total_length"]
+                total_retail_wall_length = left_wall_length + right_wall_length
+                print(f"Left wall length: {left_wall_length} mm, Right wall length: {right_wall_length} mm, Total: {total_retail_wall_length} mm")
+                print("\n--- Left Wall Segments ---")
+                print(json.dumps(left_wall_data["segments"], indent=4))
+                print("\n--- Right Wall Segments ---")
+                print(json.dumps(right_wall_data["segments"], indent=4))
+                # ------------------------------------
+                # ------------------------------------
+
+                if Primary == "right":
+                    all_wall_segments = {
+                        "right_segments": right_wall_data["segments"],
+                        "left_segments": left_wall_data["segments"]
+                    }
+                else: # When Primary == 'left'
+                    all_wall_segments = {
+                        "left_segments": left_wall_data["segments"],   # Corrected
+                        "right_segments": right_wall_data["segments"]  # Corrected
+                    }
+                display_calcs = dxfc.display_count_calc(floor_area=19819000, wall_length=total_retail_wall_length,display_count=0) 
+                # display_calcs = dxfc.display_count_calc(floor_area=41977000, wall_length=17050,display_count=20) 
+                placement_dict, remaining_fixtures = dxfc.generate_wall_fixture_plan(
+                wall_segments_data=all_wall_segments,
+                display_calculations=display_calcs,
+                primary_side=Primary
+                )
+                
+                # --- NEW: Execute the Placement from the Blueprint ---
+                dxfc.place_fixtures_from_plan(placement_dict, all_placed_bboxes)
+
+
+                dxfc.orchestrate_wall_and_overflow_placement(
+                    total_retail_wall_length=total_retail_wall_length,
+                    floor_area=floor_area,
+                    primary_side=Primary
+                )
+                
+                
+
+                # ==========================================================================
+                # ***** ✅ ADD THE NEW TEST CALL HERE *****
+                # ==========================================================================
+                print("\n--- RUNNING RELOCATION ANALYSIS ---")
+                gap_grid, score_grid = dxfc.analyze_relocation_opportunities()
+
+                # Optional: Print the score grid to the console to see the results
+                # if score_grid:
+                #     print("--- Relocation Suitability Score Grid ---")
+                #     # Print the grid row by row
+                #     for row in score_grid:
+                #         # Join the numbers in the row with spaces for readability
+                #         print(" ".join(map(str, row)))
+                # if gap_grid:
+                #     print("--- Relocation Gap Grid ---")
+                #     # Print the grid row by row
+                #     for row in gap_grid:
+                #         # Join the numbers in the row with spaces for readability
+                #         print(" ".join(map(str, row)))
+                # print("--- ANALYSIS COMPLETE --- \n")
+                # ==========================================================================
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                
+                # ==========================================================================
+                # =========== NEW: Intelligent Euro Centre Placement Logic =================
+                # ==========================================================================
+                print("\n--- ⚖️  Running Simulations to Determine Optimal Euro Centre Strategy ---")
+
+                # Step 1: Run both simulations to get the maximum possible count for each strategy.    
+                capacity_v1 = dxfc.calculate_max_euro_capacity()
+                capacity_v2 = dxfc.calculate_max_euro_capacity_v2()
+
+                # Get the number of Euros we actually need to place
+                needed_euros = dxfc.fixtures.get("floor_fixtures", {}).get("Euro_centre", 0)
+                max_capacity = max(capacity_v1, capacity_v2)
+
+                # Step 2: Compare the results and call the function that yields a higher count.
+                if capacity_v1 >= capacity_v2:
+                    print(f"\n--- ✅ V1 (Rotated) is Optimal ({capacity_v1} vs {capacity_v2}). Executing V1 Placement. ---")
+                    dxfc.place_central_fixtures_from_qms_v1(
+                        placed_bboxes=all_placed_bboxes
+                    )
+                else:
+                    print(f"\n--- ✅ V2 (Zero Rotation) is Optimal ({capacity_v2} vs {capacity_v1}). Executing V2 Placement. ---")
+                    dxfc.place_central_fixtures_from_qms_v2_(
+                        placed_bboxes=all_placed_bboxes
+                    )
+                # ==========================================================================
+                # ======================== END OF NEW LOGIC ================================
+                # ==========================================================================
+
+                dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
+                dxfc.place_corian_table_set(all_placed_bboxes)
+                # dxfc.place_pos_ar_portrait_dynamically(all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)    
+                # dxfc.place_sofas_above_screen_ar(all_placed_bboxes, bottom_margin_pct=euro_bottom_margin, gap_above_ar=200)
+                dxfc.place_Blue_Zero_attached(all_placed_bboxes)
+                dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
 
             dxfc.close_plan()
             
