@@ -562,14 +562,22 @@ def process_floorplan(request, file_id: uuid.UUID):
         # Get the project and its fixtures configuration
         merch_mix_file = "app/merch_mix.json"
         project = project_file.project
+        room_measurements_from_db = project.room_measurements or {}
+        if 'rotation' not in room_measurements_from_db:
+            room_measurements_from_db['rotation'] = 0.0
+
         project_id = project.id
         project_name = project.name
         room_measurements_dir = os.path.join(settings.MEDIA_ROOT, 'room_measurements')
 
-        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_project_name = safe_project_name.replace(' ', '_')
-        filename = f"{safe_project_name}_{project.id}_room_measurements.json"
-        measurment_file_path = os.path.join(room_measurements_dir, filename)
+        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')
+        json_filename = f"{safe_project_name}_{project.id}_room_measurements.json"
+        measurement_file_path = os.path.join(room_measurements_dir, json_filename)
+
+        # Check if the file actually exists. If not, use an empty string.
+        if not os.path.exists(measurement_file_path):
+            logger.warning(f"Measurement JSON not found at {measurement_file_path}. Proceeding without it.")
+            measurement_file_path = ""
         
         # Check if project has fixtures configuration
         if not project.fixtures:
@@ -704,7 +712,8 @@ def process_floorplan(request, file_id: uuid.UUID):
                 "floor_fixtures_table": { "Discussion_table_small": 0, "Discussion_table_medium": 0, "Discussion_table_large": 0 }
             }
             
-            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, room_measurements, {})
+            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, room_measurements_from_db, {})
+
             dxfc.create_floorplan()
             dxfc.cvc.get_metadata()
             dxfc.cvc.reorder_bot_left()

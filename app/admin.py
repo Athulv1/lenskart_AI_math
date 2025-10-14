@@ -692,54 +692,37 @@ class ProjectFileAdmin(admin.ModelAdmin):
                 if not file_id or not image:
                     return JsonResponse({'success': False, 'error': 'Missing file ID or image data'})
 
-                # Get the project file
-                try:
-                    project_file = ProjectFile.objects.get(id=file_id)
-                except ProjectFile.DoesNotExist:
-                    return JsonResponse({'success': False, 'error': 'File not found'})
-
+                project_file = get_object_or_404(ProjectFile, id=file_id)
                 project = project_file.project
 
-                # Save the edited image, overwriting the original
+                
+                room_measurements_data = project.room_measurements or {}
+
+                
+                room_measurements_data['rotation'] = rotation
+
+                # 3. Save the modified dictionary back to the project's JSONField.
+                project.room_measurements = room_measurements_data
+                project.save()
+
                 original_path = project_file.file.path
                 project_file.file.save(
-                    os.path.basename(original_path),  # Keep original filename
-                    image,  # New content
-                    save=True  # Save the model
+                    os.path.basename(original_path),
+                    image,
+                    save=True
                 )
-
-                # Update the JSON file with rotation
-                room_measurements_dir = os.path.join(settings.MEDIA_ROOT, 'room_measurements')
-                safe_project_name = "".join(c for c in project.name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                safe_project_name = safe_project_name.replace(' ', '_')
-                json_filename = f"{safe_project_name}_{project.id}_room_measurements.json"
-                json_file_path = os.path.join(room_measurements_dir, json_filename)
-
-                # Read existing JSON file and update with rotation
-                if os.path.exists(json_file_path):
-                    try:
-                        with open(json_file_path, 'r', encoding='utf-8') as json_file:
-                            json_data = json.load(json_file)
-                        
-                        # Add/update rotation parameter
-                        json_data['rotation'] = rotation
-                        
-                        # Write back to JSON file
-                        with open(json_file_path, 'w', encoding='utf-8') as json_file:
-                            json.dump(json_data, json_file, indent=2, ensure_ascii=False)
-                        
-                        logger.info(f"Updated rotation ({rotation}°) in JSON file: {json_filename}")
-                    except Exception as e:
-                        logger.error(f"Error updating JSON file {json_filename}: {str(e)}")
-                else:
-                    logger.warning(f"JSON file not found: {json_file_path}")
-
+                
+                logger.info(f"Updated rotation to {rotation}° in room_measurements for project {project.id}")
                 return JsonResponse({'success': True})
 
+            except ProjectFile.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'File not found'})
             except Exception as e:
+                logger.exception(f"Error saving edited image: {e}")
                 return JsonResponse({'success': False, 'error': str(e)})
 
         return JsonResponse({'success': False, 'error': 'Invalid request method'})
+
 
     
 
