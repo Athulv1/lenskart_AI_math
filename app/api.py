@@ -619,33 +619,42 @@ def process_floorplan(request, file_id: uuid.UUID):
                 
                 if project:
                     merch_mix_data = project.__dict__['merch_mix_max']
+                    room_measurements = project.__dict__['room_measurements']
+                    # for k, v in project.__dict__.items():
+                    #     print(k)
+                    # room_measurements["rotation"] = project.__dict__['rotation']
                     
-                    if merch_mix_data is None:
+                    if room_measurements is None:
+                        logger.info(f"Project '{project.name}' found, but 'room_measurements' is not set.")
+                        raise Exception("room_measurements not found")
+                    elif merch_mix_data is None:
                         logger.info(f"Project '{project.name}' found, but 'merch_mix_max' is not set.")
-                        # return {}
-                    
-                    logger.info(f"Successfully retrieved merch_mix_max for project: {project.name}")
-                    logger.info(f"Data: {merch_mix_data}")
+                        raise Exception("merch mix not found")
+                    else:
+                        logger.info(f"Successfully retrieved merch_mix_max for project: {project.name}")
+                        logger.info(f"merch_mix: {merch_mix_data}")
+                        logger.info(f"room: {room_measurements}")
                 else:
                     logger.error(f"Error: No project found with the name '{project_name}'.")
                     return {}
                 
             except Exception as e:
-                logger.error(f"An unexpected error occurred retrieving the merch mix: {e}")
+                logger.error(f"An unexpected error occurred retrieving the merch mix and room_measurements: {e}")
+                raise e
 
-                try:
-                    with open(merch_mix_file, 'r') as f:
-                        merch_json_data = json.load(f)
-                    # Extract the 'merch_mix_max' object, which contains the final counts
-                    merch_mix_data = merch_json_data['merch_mix_max']
-                    if merch_mix_data is None:
-                        logger.info(f"File found, but 'merch_mix_max' is not set.")
-                        return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+                # try:
+                #     with open(merch_mix_file, 'r') as f:
+                #         merch_json_data = json.load(f)
+                #     # Extract the 'merch_mix_max' object, which contains the final counts
+                #     merch_mix_data = merch_json_data['merch_mix_max']
+                #     if merch_mix_data is None:
+                #         logger.info(f"File found, but 'merch_mix_max' is not set.")
+                #         return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
 
-                    logger.info("--- ✅ Successfully loaded backup merch mix data. ---")
-                except (FileNotFoundError, KeyError) as e:
-                    logger.error(f"--- 🚨 ERROR: Could not load or parse {merch_mix_file}. Error: {e} ---")
-                    return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+                #     logger.info("--- ✅ Successfully loaded backup merch mix data. ---")
+                # except (FileNotFoundError, KeyError) as e:
+                #     logger.error(f"--- 🚨 ERROR: Could not load or parse {merch_mix_file}. Error: {e} ---")
+                #     return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
                 
             # rotation = 42  # REPLACE WITH VALUE FROM DB
             # json_path = f"/home/ubuntu/lenskart-backend/media/room_measurements/{project.name}_{project.id}_room_measurements.json"
@@ -695,7 +704,7 @@ def process_floorplan(request, file_id: uuid.UUID):
                 "floor_fixtures_table": { "Discussion_table_small": 0, "Discussion_table_medium": 0, "Discussion_table_large": 0 }
             }
             
-            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, measurment_file_path, {})
+            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, room_measurements, {})
             dxfc.create_floorplan()
             dxfc.cvc.get_metadata()
             dxfc.cvc.reorder_bot_left()
@@ -714,9 +723,9 @@ def process_floorplan(request, file_id: uuid.UUID):
 
             if orientation == 'landscape':
                 print("--- Applying LANDSCAPE placement strategy---")
-                dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
-                dxfc.place_boh_intelligently(all_placed_bboxes)
-                dxfc.place_boh_preset(all_placed_bboxes)
+                # dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
+                # dxfc.place_boh_intelligently(all_placed_bboxes)
+                # dxfc.place_boh_preset(all_placed_bboxes)
                 dxfc.place_clinics_with_best_fit_and_fallback(all_placed_bboxes)
                 dxfc.place_boh_fixtures_in_room(all_placed_bboxes) 
                 dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
@@ -747,9 +756,9 @@ def process_floorplan(request, file_id: uuid.UUID):
                 dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 dxfc.place_benches_under_separation_line(all_placed_bboxes) 
-                dxfc.place_ar_under_separation_line(all_placed_bboxes)
+                # dxfc.place_ar_under_separation_line(all_placed_bboxes)
                 dxfc.place_qms_at_entrance_center(all_placed_bboxes)
-                dxfc.place_standing_tables_beside_euros(all_placed_bboxes)
+                dxfc.place_standing_tables(all_placed_bboxes)
                 # ------------------------------------
                 # ------------------------------------
                 left_wall_data = dxfc.get_retail_wall_data(side='left')
@@ -758,13 +767,6 @@ def process_floorplan(request, file_id: uuid.UUID):
                 right_wall_length = right_wall_data["total_length"]
                 total_retail_wall_length = left_wall_length + right_wall_length
                 print(f"Left wall length: {left_wall_length} mm, Right wall length: {right_wall_length} mm, Total: {total_retail_wall_length} mm")
-                print("\n--- Left Wall Segments ---")
-                print(json.dumps(left_wall_data["segments"], indent=4))
-                print("\n--- Right Wall Segments ---")
-                print(json.dumps(right_wall_data["segments"], indent=4))
-                # ------------------------------------
-                # ------------------------------------
-
                 if Primary == "right":
                     all_wall_segments = {
                         "right_segments": right_wall_data["segments"],
@@ -775,77 +777,28 @@ def process_floorplan(request, file_id: uuid.UUID):
                         "left_segments": left_wall_data["segments"],   # Corrected
                         "right_segments": right_wall_data["segments"]  # Corrected
                     }
-                display_calcs = dxfc.display_count_calc(floor_area=19819000, wall_length=total_retail_wall_length,display_count=0) 
-                # display_calcs = dxfc.display_count_calc(floor_area=41977000, wall_length=17050,display_count=20) 
-                placement_dict, remaining_fixtures = dxfc.generate_wall_fixture_plan(
+                display_calcs = dxfc.display_count_calc(floor_area=0, wall_length=total_retail_wall_length,display_count=0) 
+                placement_dict, remaining_wall_fixtures = dxfc.generate_wall_fixture_plan(
                 wall_segments_data=all_wall_segments,
                 display_calculations=display_calcs,
                 primary_side=Primary
                 )
-                
-                # --- NEW: Execute the Placement from the Blueprint ---
                 dxfc.place_fixtures_from_plan(placement_dict, all_placed_bboxes)
 
+                dxfc.euro_center_placement_area()
+                # dxfc.draw_euro_center_placement_zone()
+                print(f"  -> Adding {remaining_wall_fixtures} to floor fixtures.")
+                display_calcs['floor_fixtures'] = display_calcs.get('floor_fixtures', 0) + remaining_wall_fixtures
 
-                dxfc.orchestrate_wall_and_overflow_placement(
-                    total_retail_wall_length=total_retail_wall_length,
-                    floor_area=floor_area,
-                    primary_side=Primary
-                )
+                print(f"  -> New total floor fixtures required: {display_calcs['floor_fixtures']}")
+                placement_blueprint = dxfc.analyze_placement_patterns()
                 
-                
-
-                # ==========================================================================
-                # ***** ✅ ADD THE NEW TEST CALL HERE *****
-                # ==========================================================================
-                print("\n--- RUNNING RELOCATION ANALYSIS ---")
-                gap_grid, score_grid = dxfc.analyze_relocation_opportunities()
-
-                # Optional: Print the score grid to the console to see the results
-                # if score_grid:
-                #     print("--- Relocation Suitability Score Grid ---")
-                #     # Print the grid row by row
-                #     for row in score_grid:
-                #         # Join the numbers in the row with spaces for readability
-                #         print(" ".join(map(str, row)))
-                # if gap_grid:
-                #     print("--- Relocation Gap Grid ---")
-                #     # Print the grid row by row
-                #     for row in gap_grid:
-                #         # Join the numbers in the row with spaces for readability
-                #         print(" ".join(map(str, row)))
-                # print("--- ANALYSIS COMPLETE --- \n")
-                # ==========================================================================
+                # --- Generate and draw the ROW-WISE grid (0° Rotation) ---
+                # row_wise_coords = dxfc.generate_row_wise_grid()
+                # column_wise_coords = dxfc.generate_column_wise_grid()
+                dxfc.place_euro_centers_from_blueprint(placement_blueprint, display_calcs, all_placed_bboxes)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 
-                # ==========================================================================
-                # =========== NEW: Intelligent Euro Centre Placement Logic =================
-                # ==========================================================================
-                print("\n--- ⚖️  Running Simulations to Determine Optimal Euro Centre Strategy ---")
-
-                # Step 1: Run both simulations to get the maximum possible count for each strategy.    
-                capacity_v1 = dxfc.calculate_max_euro_capacity()
-                capacity_v2 = dxfc.calculate_max_euro_capacity_v2()
-
-                # Get the number of Euros we actually need to place
-                needed_euros = dxfc.fixtures.get("floor_fixtures", {}).get("Euro_centre", 0)
-                max_capacity = max(capacity_v1, capacity_v2)
-
-                # Step 2: Compare the results and call the function that yields a higher count.
-                if capacity_v1 >= capacity_v2:
-                    print(f"\n--- ✅ V1 (Rotated) is Optimal ({capacity_v1} vs {capacity_v2}). Executing V1 Placement. ---")
-                    dxfc.place_central_fixtures_from_qms_v1(
-                        placed_bboxes=all_placed_bboxes
-                    )
-                else:
-                    print(f"\n--- ✅ V2 (Zero Rotation) is Optimal ({capacity_v2} vs {capacity_v1}). Executing V2 Placement. ---")
-                    dxfc.place_central_fixtures_from_qms_v2_(
-                        placed_bboxes=all_placed_bboxes
-                    )
-                # ==========================================================================
-                # ======================== END OF NEW LOGIC ================================
-                # ==========================================================================
-
                 dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
                 dxfc.place_corian_table_set(all_placed_bboxes)
                 # dxfc.place_pos_ar_portrait_dynamically(all_placed_bboxes)
@@ -854,6 +807,10 @@ def process_floorplan(request, file_id: uuid.UUID):
                 dxfc.place_Blue_Zero_attached(all_placed_bboxes)
                 dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
 
+
+            dxfc.place_lensometer()
+
+            # --- Save and close ---
             dxfc.close_plan()
             
             
