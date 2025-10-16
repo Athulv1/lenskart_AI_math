@@ -25,7 +25,7 @@ from django.db import transaction
 
 from django.contrib.auth import authenticate
 from ninja_jwt.tokens import RefreshToken # type: ignore
-from .schema import ErrorSchema # Make sure you have this ErrorSchema defined
+from .schema import ErrorSchema 
 from ninja_jwt.authentication import JWTAuth # type: ignore # Import the authentication handler
 from django.db.models import Q
 
@@ -67,6 +67,22 @@ def initialize_modules():
 
 # Try to initialize FreeCAD at module load time
 initialize_modules()
+def is_test_mode():
+    """Check if Django is running in test mode"""
+    import sys
+    import os
+    return any([
+        'test' in sys.argv,
+        'pytest' in sys.modules,
+        os.environ.get('DB_NAME', '').startswith('test_'),
+        os.environ.get('TESTING') == 'true',
+    ])
+
+if not is_test_mode():
+    initialize_modules()
+else:
+    print("⚠️  Skipping module initialization - running in test mode")
+
 
 
 api = NinjaAPI(version='3.0.0', urls_namespace='floorplan_api_unique')
