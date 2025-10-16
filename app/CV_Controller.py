@@ -7,6 +7,7 @@ import subprocess
 import sys
 from django.conf import settings
 from typing import List, Tuple, Dict, Any
+import json
 
 
 Seg2D = Tuple[float, float, float, float]        # (x1, y1, x2, y2) mm
@@ -198,7 +199,7 @@ class CV_Controller:
     def get_corners(self, fp_json):
         # Call worker.py and capture stdout
         result = subprocess.run(
-            ["python", "app/layout.py", fp_json],  # changed from "python3" to "python"
+            ["python", "app/layout.py", json.dumps(fp_json)],  # changed from "python3" to "python"
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True  # to get output as string instead of bytes

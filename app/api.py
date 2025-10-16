@@ -37,7 +37,7 @@ dxf_c = None
 Fixture = None
 
 def initialize_modules():
-    """Initialize modules"""
+    """Initialize FreeCAD and related modules"""
     global cvc, dxf_c, Fixture
     
     try:
@@ -57,14 +57,16 @@ def initialize_modules():
         print("All modules initialized successfully")
         return True
     except ImportError as e:
-        logger.error(f"Failed to import modules: {e}")
+        logger.error(f"Failed to import FreeCAD modules: {e}")
         logger.error(traceback.format_exc())
         return False
     except Exception as e:
-        logger.error(f"Unexpected error during initialization: {e}")
+        logger.error(f"Unexpected error during FreeCAD initialization: {e}")
         logger.error(traceback.format_exc())
         return False
 
+# Try to initialize FreeCAD at module load time
+initialize_modules()
 def is_test_mode():
     """Check if Django is running in test mode"""
     import sys
@@ -560,7 +562,7 @@ class ProcessedFloorplanResponse(Schema):
 
 @api.post("/process-floorplan/{file_id}/", response={200: ProcessedFloorplanResponse, 400: ErrorSchema, 404: ErrorSchema})
 def process_floorplan(request, file_id: uuid.UUID):
-    """Process an image into a DXF floorplan"""
+    """Process an image into a FreeCAD floorplan"""
     
     # Use consistent project naming that matches the export method
     consistent_project_name = f"{file_id}_floorplan"
@@ -576,14 +578,22 @@ def process_floorplan(request, file_id: uuid.UUID):
         # Get the project and its fixtures configuration
         merch_mix_file = "app/merch_mix.json"
         project = project_file.project
+        room_measurements_from_db = project.room_measurements or {}
+        if 'rotation' not in room_measurements_from_db:
+            room_measurements_from_db['rotation'] = 0.0
+
         project_id = project.id
         project_name = project.name
         room_measurements_dir = os.path.join(settings.MEDIA_ROOT, 'room_measurements')
 
-        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_project_name = safe_project_name.replace(' ', '_')
-        filename = f"{safe_project_name}_{project.id}_room_measurements.json"
-        measurment_file_path = os.path.join(room_measurements_dir, filename)
+        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')
+        json_filename = f"{safe_project_name}_{project.id}_room_measurements.json"
+        measurement_file_path = os.path.join(room_measurements_dir, json_filename)
+
+        # Check if the file actually exists. If not, use an empty string.
+        if not os.path.exists(measurement_file_path):
+            logger.warning(f"Measurement JSON not found at {measurement_file_path}. Proceeding without it.")
+            measurement_file_path = ""
         
         # Check if project has fixtures configuration
         if not project.fixtures:
@@ -633,33 +643,42 @@ def process_floorplan(request, file_id: uuid.UUID):
                 
                 if project:
                     merch_mix_data = project.__dict__['merch_mix_max']
+                    room_measurements = project.__dict__['room_measurements']
+                    # for k, v in project.__dict__.items():
+                    #     print(k)
+                    # room_measurements["rotation"] = project.__dict__['rotation']
                     
-                    if merch_mix_data is None:
+                    if room_measurements is None:
+                        logger.info(f"Project '{project.name}' found, but 'room_measurements' is not set.")
+                        raise Exception("room_measurements not found")
+                    elif merch_mix_data is None:
                         logger.info(f"Project '{project.name}' found, but 'merch_mix_max' is not set.")
-                        # return {}
-                    
-                    logger.info(f"Successfully retrieved merch_mix_max for project: {project.name}")
-                    logger.info(f"Data: {merch_mix_data}")
+                        raise Exception("merch mix not found")
+                    else:
+                        logger.info(f"Successfully retrieved merch_mix_max for project: {project.name}")
+                        logger.info(f"merch_mix: {merch_mix_data}")
+                        logger.info(f"room: {room_measurements}")
                 else:
                     logger.error(f"Error: No project found with the name '{project_name}'.")
                     return {}
                 
             except Exception as e:
-                logger.error(f"An unexpected error occurred retrieving the merch mix: {e}")
+                logger.error(f"An unexpected error occurred retrieving the merch mix and room_measurements: {e}")
+                raise e
 
-                try:
-                    with open(merch_mix_file, 'r') as f:
-                        merch_json_data = json.load(f)
-                    # Extract the 'merch_mix_max' object, which contains the final counts
-                    merch_mix_data = merch_json_data['merch_mix_max']
-                    if merch_mix_data is None:
-                        logger.info(f"File found, but 'merch_mix_max' is not set.")
-                        return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+                # try:
+                #     with open(merch_mix_file, 'r') as f:
+                #         merch_json_data = json.load(f)
+                #     # Extract the 'merch_mix_max' object, which contains the final counts
+                #     merch_mix_data = merch_json_data['merch_mix_max']
+                #     if merch_mix_data is None:
+                #         logger.info(f"File found, but 'merch_mix_max' is not set.")
+                #         return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
 
-                    logger.info("--- ✅ Successfully loaded backup merch mix data. ---")
-                except (FileNotFoundError, KeyError) as e:
-                    logger.error(f"--- 🚨 ERROR: Could not load or parse {merch_mix_file}. Error: {e} ---")
-                    return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+                #     logger.info("--- ✅ Successfully loaded backup merch mix data. ---")
+                # except (FileNotFoundError, KeyError) as e:
+                #     logger.error(f"--- 🚨 ERROR: Could not load or parse {merch_mix_file}. Error: {e} ---")
+                #     return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
                 
             # rotation = 42  # REPLACE WITH VALUE FROM DB
             # json_path = f"/home/ubuntu/lenskart-backend/media/room_measurements/{project.name}_{project.id}_room_measurements.json"
@@ -709,12 +728,114 @@ def process_floorplan(request, file_id: uuid.UUID):
                 "floor_fixtures_table": { "Discussion_table_small": 0, "Discussion_table_medium": 0, "Discussion_table_large": 0 }
             }
             
-            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, measurment_file_path, {})
+            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, room_measurements_from_db, {})
+
             dxfc.create_floorplan()
             dxfc.cvc.get_metadata()
             dxfc.cvc.reorder_bot_left()
             DRAW_SEPARATOR_LINE = True 
 
+            # 4. NEW: Call the single setup and calculation function
+            dxfc.merch_mix_cal(merch_mix_data, static_fixtures) # type: ignore
+
+            # --- PLACEMENT PHASE ---
+            all_placed_bboxes = dxfc.get_existing_nonwall_bboxes()
+            floor_area = dxfc.calculate_area_sqft()
+            orientation = dxfc.cvc.orientation
+            Primary = "right"
+            print("Primary side for the floorplan is ", Primary)
+
+
+            if orientation == 'landscape':
+                print("--- Applying LANDSCAPE placement strategy---")
+                # dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
+                # dxfc.place_boh_intelligently(all_placed_bboxes)
+                # dxfc.place_boh_preset(all_placed_bboxes)
+                dxfc.place_clinics_with_best_fit_and_fallback(all_placed_bboxes)
+                dxfc.place_boh_fixtures_in_room(all_placed_bboxes) 
+                dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
+                dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
+                dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
+                remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
+                if remaining_tables:
+                    dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
+                dxfc.place_corian_table_set_landscape(all_placed_bboxes)
+                dxfc.place_standing_tables_landscape(all_placed_bboxes)
+                dxfc.place_blue_zero_landscape(all_placed_bboxes)
+                dxfc.place_pos_ar_landscape(all_placed_bboxes)
+                dxfc.place_qms_at_entrance(all_placed_bboxes)
+                dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
+
+            else: # Default to portrait
+                print("---Applying PORTRAIT placement strategy---")
+                # ***** ADD THE NEW FUNCTION CALL HERE *****
+                
+                dxfc.place_clinics_master_strategy(all_placed_bboxes) 
+                
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                dxfc.place_pickup_area_fixture(all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_boh_fixtures_in_room(all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_benches_under_separation_line(all_placed_bboxes) 
+                # dxfc.place_ar_under_separation_line(all_placed_bboxes)
+                dxfc.place_qms_at_entrance_center(all_placed_bboxes)
+                dxfc.place_standing_tables(all_placed_bboxes)
+                # ------------------------------------
+                # ------------------------------------
+                left_wall_data = dxfc.get_retail_wall_data(side='left')
+                right_wall_data = dxfc.get_retail_wall_data(side='right')
+                left_wall_length = left_wall_data["total_length"]
+                right_wall_length = right_wall_data["total_length"]
+                total_retail_wall_length = left_wall_length + right_wall_length
+                print(f"Left wall length: {left_wall_length} mm, Right wall length: {right_wall_length} mm, Total: {total_retail_wall_length} mm")
+                if Primary == "right":
+                    all_wall_segments = {
+                        "right_segments": right_wall_data["segments"],
+                        "left_segments": left_wall_data["segments"]
+                    }
+                else: # When Primary == 'left'
+                    all_wall_segments = {
+                        "left_segments": left_wall_data["segments"],   # Corrected
+                        "right_segments": right_wall_data["segments"]  # Corrected
+                    }
+                display_calcs = dxfc.display_count_calc(floor_area=0, wall_length=total_retail_wall_length,display_count=0) 
+                placement_dict, remaining_wall_fixtures = dxfc.generate_wall_fixture_plan(
+                wall_segments_data=all_wall_segments,
+                display_calculations=display_calcs,
+                primary_side=Primary
+                )
+                dxfc.place_fixtures_from_plan(placement_dict, all_placed_bboxes)
+
+                dxfc.euro_center_placement_area()
+                # dxfc.draw_euro_center_placement_zone()
+                print(f"  -> Adding {remaining_wall_fixtures} to floor fixtures.")
+                display_calcs['floor_fixtures'] = display_calcs.get('floor_fixtures', 0) + remaining_wall_fixtures
+
+                print(f"  -> New total floor fixtures required: {display_calcs['floor_fixtures']}")
+                placement_blueprint = dxfc.analyze_placement_patterns()
+                
+                # --- Generate and draw the ROW-WISE grid (0° Rotation) ---
+                # row_wise_coords = dxfc.generate_row_wise_grid()
+                # column_wise_coords = dxfc.generate_column_wise_grid()
+                dxfc.place_euro_centers_from_blueprint(placement_blueprint, display_calcs, all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                
+                dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
+                dxfc.place_corian_table_set(all_placed_bboxes)
+                # dxfc.place_pos_ar_portrait_dynamically(all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)    
+                # dxfc.place_sofas_above_screen_ar(all_placed_bboxes, bottom_margin_pct=euro_bottom_margin, gap_above_ar=200)
+                dxfc.place_Blue_Zero_attached(all_placed_bboxes)
+                dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
+
+
+            dxfc.place_lensometer()
+
+            # --- Save and close ---
             dxfc.close_plan()
             
             
