@@ -747,7 +747,7 @@ class CV_Controller:
 
 
 
-    def get_internal_wall_partitions(self, max_length=200.0, thickness= 200.0) -> List[Tuple[float, float, float, float]]:
+    def get_internal_wall_partitions(self, min_length = 50.0 ,max_length=200.0, thickness= 200.0) -> List[Tuple[float, float, float, float]]:
         """
         Identifies small, internal wall segments that act as partitions or columns.
         It returns a list of their bounding boxes to be used as obstacles.
@@ -772,7 +772,7 @@ class CV_Controller:
             length = p1.distance(p2)
 
             # A segment is considered a partition if it's shorter than the max_length
-            if 50.0 < length < max_length:
+            if min_length < length < max_length:
                 # Create a bounding box for the wall segment
                 min_x = min(p1.x, p2.x) - (thickness / 2)
                 max_x = max(p1.x, p2.x) + (thickness / 2)
