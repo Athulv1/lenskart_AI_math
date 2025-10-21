@@ -751,8 +751,8 @@ def process_floorplan(request, file_id: uuid.UUID):
                 # dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
                 # dxfc.place_boh_intelligently(all_placed_bboxes)
                 # dxfc.place_boh_preset(all_placed_bboxes)
-                dxfc.place_clinics_with_best_fit_and_fallback(all_placed_bboxes)
-                dxfc.place_boh_fixtures_in_room(all_placed_bboxes) 
+                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
+                dxfc.place_boh_fixtures(all_placed_bboxes)
                 dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
                 dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
                 dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
@@ -770,13 +770,12 @@ def process_floorplan(request, file_id: uuid.UUID):
                 print("---Applying PORTRAIT placement strategy---")
                 # ***** ADD THE NEW FUNCTION CALL HERE *****
                 
-                dxfc.place_clinics_master_strategy(all_placed_bboxes) 
+                
+                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
                 
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_boh_fixtures(all_placed_bboxes)
 
-                dxfc.place_pickup_area_fixture(all_placed_bboxes)
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.place_boh_fixtures_in_room(all_placed_bboxes)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
@@ -786,42 +785,21 @@ def process_floorplan(request, file_id: uuid.UUID):
                 dxfc.place_standing_tables(all_placed_bboxes)
                 # ------------------------------------
                 # ------------------------------------
-                left_wall_data = dxfc.get_retail_wall_data(side='left')
-                right_wall_data = dxfc.get_retail_wall_data(side='right')
-                left_wall_length = left_wall_data["total_length"]
-                right_wall_length = right_wall_data["total_length"]
-                total_retail_wall_length = left_wall_length + right_wall_length
-                print(f"Left wall length: {left_wall_length} mm, Right wall length: {right_wall_length} mm, Total: {total_retail_wall_length} mm")
-                if Primary == "right":
-                    all_wall_segments = {
-                        "right_segments": right_wall_data["segments"],
-                        "left_segments": left_wall_data["segments"]
-                    }
-                else: # When Primary == 'left'
-                    all_wall_segments = {
-                        "left_segments": left_wall_data["segments"],   # Corrected
-                        "right_segments": right_wall_data["segments"]  # Corrected
-                    }
-                display_calcs = dxfc.display_count_calc(floor_area=0, wall_length=total_retail_wall_length,display_count=0) 
-                placement_dict, remaining_wall_fixtures = dxfc.generate_wall_fixture_plan(
-                wall_segments_data=all_wall_segments,
-                display_calculations=display_calcs,
-                primary_side=Primary
+                # --- Orchestrate wall fixtures ---
+                remaining_wall_fixtures, display_calcs = dxfc.plan_and_place_wall_fixtures(
+                    all_placed_bboxes=all_placed_bboxes,
+                    primary_side=Primary,
+                    draw_debug=False  # Set to False to hide debug drawings
                 )
-                dxfc.place_fixtures_from_plan(placement_dict, all_placed_bboxes)
 
-                dxfc.euro_center_placement_area()
-                # dxfc.draw_euro_center_placement_zone()
-                print(f"  -> Adding {remaining_wall_fixtures} to floor fixtures.")
-                display_calcs['floor_fixtures'] = display_calcs.get('floor_fixtures', 0) + remaining_wall_fixtures
-
-                print(f"  -> New total floor fixtures required: {display_calcs['floor_fixtures']}")
-                placement_blueprint = dxfc.analyze_placement_patterns()
+                # --- Orchestrate Euro Center fixtures ---
+                dxfc.plan_and_place_euro_fixtures(
+                    all_placed_bboxes=all_placed_bboxes,
+                    remaining_wall_fixtures=remaining_wall_fixtures,
+                    display_calcs=display_calcs,
+                    draw_debug=False # Set to False to hide debug drawings
+                )
                 
-                # --- Generate and draw the ROW-WISE grid (0° Rotation) ---
-                # row_wise_coords = dxfc.generate_row_wise_grid()
-                # column_wise_coords = dxfc.generate_column_wise_grid()
-                dxfc.place_euro_centers_from_blueprint(placement_blueprint, display_calcs, all_placed_bboxes)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 
                 dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
@@ -832,7 +810,7 @@ def process_floorplan(request, file_id: uuid.UUID):
                 dxfc.place_Blue_Zero_attached(all_placed_bboxes)
                 dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
 
-
+            dxfc.place_door(Primary)
             dxfc.place_lensometer()
 
             # --- Save and close ---
