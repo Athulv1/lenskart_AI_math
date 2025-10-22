@@ -768,18 +768,15 @@ def process_floorplan(request, file_id: uuid.UUID):
 
             else: # Default to portrait
                 print("---Applying PORTRAIT placement strategy---")
-                # ***** ADD THE NEW FUNCTION CALL HERE *****
-                
-                
-                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
-                
+                dxfc.orchestrate_clinic_placement(all_placed_bboxes)
+    
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 dxfc.place_boh_fixtures(all_placed_bboxes)
 
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.place_benches_under_separation_line(all_placed_bboxes) 
+                dxfc.place_benches(all_placed_bboxes) 
                 # dxfc.place_ar_under_separation_line(all_placed_bboxes)
                 dxfc.place_qms_at_entrance_center(all_placed_bboxes)
                 dxfc.place_standing_tables(all_placed_bboxes)
