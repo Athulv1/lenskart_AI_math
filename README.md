@@ -29,7 +29,7 @@ A comprehensive floor planning solution for Lenskart retail stores, combining:
 - **70+ fixture types** with high-quality PNG rendering (clinic units, screens, tables, seating, etc.)
 - **Pan & Zoom controls** - Mouse wheel zoom, Ctrl+drag pan mode
 - **Multi-select support** - Ctrl+click for batch operations
-- **Professional UI** - Navy/teal architecture theme with glassmorphism effects
+
 
 ### 🤖 **AI-Powered Optimization**
 - **Google Gemini 1.5 Pro** integration for intelligent fixture rearrangement
@@ -63,8 +63,7 @@ A comprehensive floor planning solution for Lenskart retail stores, combining:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Production Server                         │
-│                  13.201.224.32 (AWS)                        │
+│               server                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────────────┐      ┌──────────────────────┐   │
@@ -618,53 +617,5 @@ python -c "import google.generativeai as genai; genai.configure(api_key='YOUR_KE
 ls AI_DASHBOARD/static/images/*.png | wc -l
 # Should show 70+
 
-# Verify file permissions
-chmod 644 AI_DASHBOARD/static/images/*.png
-```
 
----
-
-## 🤝 Contributing
-
-This is a proprietary project for Lenskart. For internal contributions:
-
-1. Create a feature branch from `feature/ai-model`
-2. Make your changes
-3. Test thoroughly (Django + Flask)
-4. Submit a pull request with detailed description
-
----
-
-## 📝 License
-
-Proprietary - © 2025 ThinkNeural AI. All rights reserved.
-
----
-
-## 👥 Team
-
-- **Backend Development** - Django API, Database, DXF Processing
-- **AI Development** - Gemini Integration, Optimization Algorithms
-- **Frontend Development** - Canvas Editor, UI/UX
-- **DevOps** - Deployment, CI/CD, Infrastructure
-
----
-
-## 📞 Support
-
-For issues or questions:
-- **Email:** support@thinkneural.ai
-- **GitHub Issues:** [Create an issue](https://github.com/ThinkNeuralAi/lenskart_backend/issues)
-
----
-
-## 🎉 Acknowledgments
-
-- Google Gemini AI for intelligent optimization
-- AutoCAD for DXF format specification
-- Open source community for amazing libraries
-
----
-
-**Built with ❤️ by ThinkNeural AI**
 
