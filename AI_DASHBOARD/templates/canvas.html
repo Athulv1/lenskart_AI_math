@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Canvas Editor | Spazeapp Pro</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI Floor Plan Canvas Editor</h1>
+            <p>Professional fixture management with real-time AI-powered layout optimization</p>
+            <div class="ai-badge">
+                ✨ Powered by Thinkneural.ai
+            </div>
+        </header>
+
+        <!-- Upload Section -->
+        <section id="upload-section" class="section">
+            <div class="upload-area">
+                <h2>📁 Import Floor Plan</h2>
+                <input type="file" id="dxf-upload" accept=".dxf" style="display:none;">
+                <button class="btn btn-primary" onclick="document.getElementById('dxf-upload').click()">
+                    📤 Select DXF File
+                </button>
+                <p class="hint">AutoCAD DXF Format | Maximum 50MB | Full Layer Support</p>
+                <div id="upload-status"></div>
+            </div>
+        </section>
+
+        <!-- Canvas Section -->
+        <section id="canvas-section" class="section" style="display:none;">
+            <div class="canvas-header">
+                <h2>📐 Blueprint Canvas</h2>
+                <div class="file-info">
+                    <span id="current-filename">Loading...</span>
+                    <span id="fixture-count"></span>
+                </div>
+            </div>
+
+            <!-- Canvas and AI Prompt Layout -->
+            <div class="canvas-ai-layout">
+                <!-- Left Side: Canvas -->
+                <div class="canvas-side">
+                    <div class="canvas-container">
+                        <canvas id="canvas" width="2000" height="1200"></canvas>
+                        
+                        <!-- Controls Overlay -->
+                        <div class="canvas-controls">
+                            <button class="btn btn-zoom" onclick="editor.zoomIn()">🔍+</button>
+                            <button class="btn btn-zoom" onclick="editor.zoomOut()">🔍-</button>
+                            <button class="btn btn-zoom" onclick="editor.resetView()">⟲ Reset</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Side: AI Prompt -->
+                <div class="ai-side">
+                    <div class="prompt-section">
+                        <h3>🤖 AI-Prompt </h3>
+                        <div class="prompt-display">
+                            <textarea id="movement-prompt" rows="15" placeholder="Move fixtures on the canvas... prompts will appear here automatically. You can edit them before generating."></textarea>
+                            <div class="prompt-actions">
+                                <button class="btn btn-primary" id="generate-btn" onclick="generateWithAI()" disabled>
+                                    ✨ Generate with AI
+                                </button>
+                                <button class="btn btn-secondary" onclick="clearPrompts()">
+                                    🗑️ Clear Prompts
+                                </button>
+                            </div>
+                            <div id="ai-status" class="ai-status"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Coordinate Display -->
+            <div class="info-panel">
+                <h3>📍 Fixture Information</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>Selected:</label>
+                        <span id="selected-fixture" class="value">None</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Start Position:</label>
+                        <span id="start-coords" class="value">(0.00, 0.00)</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Current Position:</label>
+                        <span id="current-coords" class="value">(0.00, 0.00)</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Delta (ΔX, ΔY):</label>
+                        <span id="delta-coords" class="value">(0.00, 0.00)</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Distance Moved:</label>
+                        <span id="distance-moved" class="value">0.00 mm</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="actions">
+                <button class="btn btn-success" onclick="downloadDXF()" id="download-btn" disabled>
+                    📥 Export Modified DXF
+                </button>
+                <button class="btn btn-secondary" onclick="resetCanvas()">
+                    🔄 Reset Layout
+                </button>
+                <button class="btn btn-secondary" onclick="showUploadSection()">
+                    📁 Load New Floor Plan
+                </button>
+            </div>
+
+            <!-- Status Messages -->
+            <div id="status-message" class="status-message"></div>
+        </section>
+
+        <!-- Loading Overlay - Simple Version -->
+        <div id="loading-overlay" style="display:none;">
+            <div class="loading-content">
+                <div class="loading-logo">
+                    <div class="spinner-ring"></div>
+                    <div class="loading-icon">🏗️</div>
+                </div>
+                <h2 id="loading-title">Processing Floor Plan</h2>
+                <p class="loading-subtitle" id="loading-subtitle">Please wait while we process your floor plan...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/canvas-editor.js') }}"></script>
+    <script>
+        // Initialize on page load
+        let editor;
+        let currentSessionId = null;
+        let movementPrompts = [];  // Store all movement prompts
+        let selectedFixtures = [];  // Track selected fixtures for AI rearrangement
+
+        // Check for auto-load parameter on page load
+        window.addEventListener('DOMContentLoaded', async function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const autoloadUrl = urlParams.get('autoload');
+            
+            if (autoloadUrl) {
+                console.log('🔄 Auto-loading DXF file from:', autoloadUrl);
+                await autoLoadDXFFromUrl(autoloadUrl);
+            }
+        });
+
+        // Auto-load DXF from Django-generated file
+        async function autoLoadDXFFromUrl(fileUrl) {
+            const uploadStatus = document.getElementById('upload-status');
+            
+            showLoading('Loading Floor Plan from Django');
+            updateLoadingSubtitle('Fetching and processing DXF file...');
+            
+            try {
+                // Call Flask backend to fetch and process the DXF file from URL
+                const response = await fetch('/upload-from-url', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: fileUrl
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                updateLoadingSubtitle('Loading fixture images and rendering canvas...');
+
+                // Store session ID
+                currentSessionId = data.session_id;
+
+                // Update file info
+                document.getElementById('current-filename').textContent = data.filename;
+                document.getElementById('fixture-count').textContent = 
+                    `${data.canvas_data.fixture_count} fixtures`;
+
+                // Initialize canvas editor
+                editor = new CanvasEditor('canvas', currentSessionId);
+                editor.loadCanvasData(data.canvas_data);
+                
+                // DON'T hide loading overlay here!
+                // The CanvasEditor will hide it after all images are loaded and rendered
+                uploadStatus.innerHTML = '<div class="success">✅ DXF file loaded successfully from Django!</div>';
+                console.log('✅ Auto-load complete! Session:', currentSessionId);
+                
+            } catch (error) {
+                console.error('Auto-load error:', error);
+                uploadStatus.innerHTML = `<div class="error">❌ Failed to auto-load: ${error.message}</div>`;
+                uploadStatus.innerHTML += '<div>Please use manual upload instead.</div>';
+                
+                updateLoadingSubtitle('Error: ' + error.message);
+                
+                setTimeout(() => {
+                    hideLoading();
+                }, 3000);
+            }
+        }
+
+        // Handle file upload
+        document.getElementById('dxf-upload').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            await uploadDXF(file);
+        });
+
+        async function uploadDXF(file) {
+            const uploadStatus = document.getElementById('upload-status');
+            uploadStatus.innerHTML = '<div class="loading">📤 Uploading and processing DXF file...</div>';
+            
+            showLoading('Processing Floor Plan');
+
+            const formData = new FormData();
+            formData.append('dxf_file', file);
+
+            try {
+                updateLoadingSubtitle('Uploading and processing your floor plan...');
+                
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                updateLoadingSubtitle('Loading fixture images and rendering canvas...');
+
+                // Store session ID
+                currentSessionId = data.session_id;
+
+                // Update file info
+                document.getElementById('current-filename').textContent = data.filename;
+                document.getElementById('fixture-count').textContent = 
+                    `${data.canvas_data.fixture_count} fixtures`;
+
+                // Initialize canvas editor
+                editor = new CanvasEditor('canvas', currentSessionId);
+                editor.loadCanvasData(data.canvas_data);
+                
+                // DON'T hide loading overlay here!
+                // The CanvasEditor will hide it after all images are loaded and rendered
+
+            } catch (error) {
+                console.error('Upload error:', error);
+                uploadStatus.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                
+                updateLoadingSubtitle('Error: ' + error.message);
+                
+                setTimeout(() => {
+                    hideLoading();
+                }, 2000);
+            }
+        }
+
+        async function downloadDXF() {
+            if (!currentSessionId) {
+                showStatus('❌ No session active', 'error');
+                return;
+            }
+
+            showLoading();
+            showStatus('📥 Generating modified DXF file...', 'info');
+
+            try {
+                const response = await fetch(`/download/${currentSessionId}`);
+                
+                if (!response.ok) {
+                    throw new Error('Download failed');
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = document.getElementById('current-filename').textContent.replace('.dxf', '-MODIFIED.dxf');
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                hideLoading();
+                showStatus('✅ DXF file downloaded successfully!', 'success');
+
+            } catch (error) {
+                console.error('Download error:', error);
+                hideLoading();
+                showStatus('❌ Download failed: ' + error.message, 'error');
+            }
+        }
+
+        function resetCanvas() {
+            if (confirm('Reset all changes and reload the original DXF?')) {
+                location.reload();
+            }
+        }
+
+        function showUploadSection() {
+            document.getElementById('canvas-section').style.display = 'none';
+            document.getElementById('upload-section').style.display = 'block';
+            currentSessionId = null;
+        }
+
+        // Simple loading functions
+        function showLoading(title = 'Processing Floor Plan') {
+            const overlay = document.getElementById('loading-overlay');
+            document.getElementById('loading-title').textContent = title;
+            overlay.style.display = 'flex';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
+
+        function updateLoadingSubtitle(text) {
+            document.getElementById('loading-subtitle').textContent = text;
+        }
+        
+        // Global function for CanvasEditor to call
+        window.hideLoadingOverlay = function() {
+            hideLoading();
+        }
+
+        // Global function to hide loading overlay (called from CanvasEditor when images loaded)
+        function hideLoadingOverlay() {
+            updateLoadingStep(4, 'completed');
+            updateLoadingSubtitle('✨ Ready! You can now edit the floor plan.');
+            
+            setTimeout(() => {
+                hideLoading();
+                showStatus('✅ Floor plan loaded successfully! Drag fixtures to move them.', 'success');
+            }, 500);
+        }
+
+        function showStatus(message, type = 'info') {
+            const statusEl = document.getElementById('status-message');
+            statusEl.textContent = message;
+            statusEl.className = `status-message ${type}`;
+            statusEl.style.display = 'block';
+
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 5000);
+        }
+
+        // Add movement to prompt list
+        function addMovementPrompt(fixtureName, startPos, endPos, delta) {
+            const prompt = {
+                fixture: fixtureName,
+                start: startPos,
+                end: endPos,
+                delta: delta,
+                description: generatePromptDescription(fixtureName, delta, startPos, endPos)
+            };
+            
+            movementPrompts.push(prompt);
+            updatePromptDisplay();
+            
+            // Enable generate button
+            document.getElementById('generate-btn').disabled = false;
+        }
+
+        function generatePromptDescription(fixtureName, delta, startPos, endPos) {
+            const [dx, dy] = delta;
+            let parts = [];
+            
+            // Determine direction and distance
+            if (Math.abs(dx) > 1) {
+                const direction = dx > 0 ? 'right' : 'left';
+                parts.push(`${Math.abs(dx).toFixed(0)}mm ${direction}`);
+            }
+            
+            if (Math.abs(dy) > 1) {
+                const direction = dy > 0 ? 'up' : 'down';
+                parts.push(`${Math.abs(dy).toFixed(0)}mm ${direction}`);
+            }
+            
+            if (parts.length === 0) {
+                return `Move ${fixtureName} (no significant movement)`;
+            }
+            
+            // Include ABSOLUTE target coordinates for Gemini
+            const [endX, endY] = endPos;
+            return `Move ${fixtureName} ${parts.join(' and ')} to position (${endX.toFixed(1)}, ${endY.toFixed(1)})`;
+        }
+
+        function updatePromptDisplay() {
+            const promptText = movementPrompts.map((p, i) => 
+                `${i + 1}. ${p.description}`
+            ).join('\n');
+            
+            document.getElementById('movement-prompt').value = promptText || 
+                'Move fixtures on the canvas... prompts will appear here automatically';
+        }
+
+        function clearPrompts() {
+            movementPrompts = [];
+            selectedFixtures = [];  // Clear selected fixtures too
+            updatePromptDisplay();
+            document.getElementById('generate-btn').disabled = true;
+            document.getElementById('download-btn').disabled = true;
+            showStatus('🗑️ Prompts cleared', 'info');
+            
+            // Clear selection visuals on canvas
+            if (editor) {
+                editor.clearSelections();
+            }
+        }
+
+        async function generateWithAI() {
+            // Get the edited prompt from textarea
+            const userPrompt = document.getElementById('movement-prompt').value.trim();
+            
+            if (!userPrompt || userPrompt === 'Move fixtures on the canvas... prompts will appear here automatically. You can edit them before generating.') {
+                showStatus('❌ Please enter a command or move fixtures first', 'error');
+                return;
+            }
+
+            showLoading();
+            document.getElementById('ai-status').innerHTML = '<div class="loading">🤖 Calling Gemini AI...</div>';
+
+            try {
+                const response = await fetch('/generate_with_ai', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        prompt: userPrompt  // Send the user's edited prompt
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error || !data.success) {
+                    throw new Error(data.error || 'AI generation failed');
+                }
+
+                hideLoading();
+                document.getElementById('ai-status').innerHTML = 
+                    `<div class="success">${data.message}</div>`;
+                
+                // Enable download button
+                document.getElementById('download-btn').disabled = false;
+                
+                // Show validation results if any corrections or rejections occurred
+                if (data.validation_results) {
+                    const vr = data.validation_results;
+                    let validationMessage = '';
+                    
+                    if (vr.corrected && vr.corrected.length > 0) {
+                        validationMessage += `\n⚠️ ${vr.corrected.length} fixture(s) adjusted to fit within floorplan`;
+                        console.log('🔧 Corrected fixtures:', vr.corrected);
+                    }
+                    
+                    if (vr.rejected && vr.rejected.length > 0) {
+                        validationMessage += `\n❌ ${vr.rejected.length} fixture(s) rejected (too far outside boundaries)`;
+                        console.log('❌ Rejected fixtures:', vr.rejected);
+                    }
+                    
+                    if (validationMessage) {
+                        showStatus(`✅ ${data.message}${validationMessage}`, vr.rejected.length > 0 ? 'warning' : 'success');
+                    } else {
+                        showStatus(`✅ ${data.message}`, 'success');
+                    }
+                } else {
+                    showStatus(`✅ ${data.message}`, 'success');
+                }
+                
+                // 🔥 TWO-WAY COMMUNICATION: Update canvas with AI-generated changes
+                if (data.updated_canvas_data && editor) {
+                    console.log('🔄 Updating canvas with AI-generated layout...');
+                    
+                    // Reload canvas with updated data (no visual effects)
+                    editor.loadCanvasData(data.updated_canvas_data);
+                    
+                    // Clear selections and prompts since changes are applied
+                    selectedFixtures = [];
+                    movementPrompts = [];
+                    updatePromptDisplay();
+                    
+                    // Show success message
+                    showStatus('✨ Canvas updated! You can see the changes and continue editing.', 'success');
+                }
+
+            } catch (error) {
+                console.error('AI generation error:', error);
+                hideLoading();
+                document.getElementById('ai-status').innerHTML = 
+                    `<div class="error">❌ Error: ${error.message}</div>`;
+                showStatus('❌ AI generation failed: ' + error.message, 'error');
+            }
+        }
+
+        // Make functions available globally for canvas-editor.js
+        window.addMovementPrompt = addMovementPrompt;
+        
+        // Function to handle fixture click selection
+        window.onFixtureClicked = function(fixtureName, position) {
+            // Check if already selected
+            const existingIndex = selectedFixtures.findIndex(f => f.name === fixtureName);
+            
+            if (existingIndex >= 0) {
+                // Deselect if already selected
+                selectedFixtures.splice(existingIndex, 1);
+                showStatus(`❌ Deselected ${fixtureName}`, 'info');
+            } else {
+                // Add to selection
+                selectedFixtures.push({
+                    name: fixtureName,
+                    position: position
+                });
+                showStatus(`✅ Selected ${fixtureName}`, 'info');
+            }
+            
+            // Update prompt display with selected fixtures
+            updatePromptWithSelection();
+        };
+        
+        function updatePromptWithSelection() {
+            const promptArea = document.getElementById('movement-prompt');
+            
+            if (selectedFixtures.length === 0) {
+                // No fixtures selected, show movement prompts or placeholder
+                updatePromptDisplay();
+                return;
+            }
+            
+            // Show selected fixtures in prompt
+            const fixtureList = selectedFixtures.map(f => f.name).join(', ');
+            
+            let promptText = `Selected fixtures: ${fixtureList}\n\n`;
+            promptText += `You can now give commands like:\n`;
+            promptText += `- "Rearrange these fixtures like an architect"\n`;
+            promptText += `- "Organize these fixtures in a grid layout"\n`;
+            promptText += `- "Space these fixtures 500mm apart"\n`;
+            promptText += `- "Align these fixtures horizontally"\n`;
+            promptText += `- "Move these fixtures to the left wall"\n\n`;
+            promptText += `Edit this text to give your own instructions...`;
+            
+            promptArea.value = promptText;
+            
+            // Enable generate button
+            document.getElementById('generate-btn').disabled = false;
+        }
+    </script>
+</body>
+</html>
