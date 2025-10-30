@@ -18,7 +18,7 @@ A comprehensive floor planning solution for Lenskart retail stores, combining:
 - **Google Gemini AI** - Intelligent fixture placement and space optimization
 - **Computer Vision** - Automated floor plan analysis and fixture detection
 
-**Live Demo:** `https://lenskart.thinkneural.ai`
+
 
 ---
 
