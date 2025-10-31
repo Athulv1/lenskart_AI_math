@@ -1,0 +1,436 @@
+{
+  "project_id": "gemini-image-to-json-20250923",
+  "project_name": "Gemini Generated Layout from Image Analysis",
+  "created_at": "2025-09-23T12:22:20+05:30",
+  "room_measurements": {
+    "floor_polygon": [
+      {
+        "x": 0.0,
+        "y": 0.0
+      },
+      {
+        "x": 1.0,
+        "y": 0.0
+      },
+      {
+        "x": 1.0,
+        "y": 1.0
+      },
+      {
+        "x": 0.0,
+        "y": 1.0
+      }
+    ],
+    "fixtures": [
+      {
+        "name": "vc_repair_table",
+        "center": {
+          "x": 0.183,
+          "y": 0.071
+        },
+        "size": {
+          "width": 0.233,
+          "height": 0.071
+        },
+        "rotation": 0
+      },
+      {
+        "name": "sc_front_desk",
+        "center": {
+          "x": 0.175,
+          "y": 0.147
+        },
+        "size": {
+          "width": 0.217,
+          "height": 0.059
+        },
+        "rotation": 0
+      },
+      {
+        "name": "nummi_bilen",
+        "center": {
+          "x": 0.333,
+          "y": 0.047
+        },
+        "size": {
+          "width": 0.183,
+          "height": 0.059
+        },
+        "rotation": 0
+      },
+      {
+        "name": "soins_lens_large",
+        "center": {
+          "x": 0.567,
+          "y": 0.047
+        },
+        "size": {
+          "width": 0.217,
+          "height": 0.059
+        },
+        "rotation": 0
+      },
+      {
+        "name": "vasagle_storage_cabinet",
+        "center": {
+          "x": 0.783,
+          "y": 0.065
+        },
+        "size": {
+          "width": 0.1,
+          "height": 0.059
+        },
+        "rotation": 0
+      },
+      {
+        "name": "wascon_desk_meallier",
+        "center": {
+          "x": 0.813,
+          "y": 0.256
+        },
+        "size": {
+          "width": 0.175,
+          "height": 0.1
+        },
+        "rotation": 0
+      },
+      {
+        "name": "screen_55",
+        "center": {
+          "x": 0.317,
+          "y": 0.224
+        },
+        "size": {
+          "width": 0.1,
+          "height": 0.059
+        },
+        "rotation": 0
+      },
+      {
+        "name": "euro_ccvlite",
+        "center": {
+          "x": 0.508,
+          "y": 0.224
+        },
+        "size": {
+          "width": 0.1,
+          "height": 0.059
+        },
+        "rotation": 0
+      },
+      {
+        "name": "staff_rack",
+        "center": {
+          "x": 0.25,
+          "y": 0.324
+        },
+        "size": {
+          "width": 0.167,
+          "height": 0.082
+        },
+        "rotation": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center": {
+          "x": 0.058,
+          "y": 0.324
+        },
+        "size": {
+          "width": 0.033,
+          "height": 0.153
+        },
+        "rotation": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center": {
+          "x": 0.058,
+          "y": 0.529
+        },
+        "size": {
+          "width": 0.033,
+          "height": 0.153
+        },
+        "rotation": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center": {
+          "x": 0.058,
+          "y": 0.659
+        },
+        "size": {
+          "width": 0.033,
+          "height": 0.082
+        },
+        "rotation": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center": {
+          "x": 0.058,
+          "y": 0.8
+        },
+        "size": {
+          "width": 0.033,
+          "height": 0.153
+        },
+        "rotation": 0
+      },
+      {
+        "name": "jjke_lens",
+        "center": {
+          "x": 0.942,
+          "y": 0.247
+        },
+        "size": {
+          "width": 0.033,
+          "height": 0.082
+        },
+        "rotation": 0
+      },
+      {
+        "name": "pos_Noire_medium",
+        "center": {
+          "x": 0.942,
+          "y": 0.376
+        },
+        "size": {
+          "width": 0.033,
+          "height": 0.153
+        },
+        "rotation": 0
+      },
+      {
+        "name": "mirror_different",
+        "center": {
+          "x": 0.892,
+          "y": 0.503
+        },
+        "size": {
+          "width": 0.067,
+          "height": 0.053
+        },
+        "rotation": 0
+      },
+      {
+        "name": "jjtensoldfone_large",
+        "center": {
+          "x": 0.942,
+          "y": 0.624
+        },
+        "size": {
+          "width": 0.033,
+          "height": 0.153
+        },
+        "rotation": 0
+      },
+      {
+        "name": "mirror_large",
+        "center": {
+          "x": 0.892,
+          "y": 0.782
+        },
+        "size": {
+          "width": 0.067,
+          "height": 0.118
+        },
+        "rotation": 0
+      },
+      {
+        "name": "mirror_large",
+        "center": {
+          "x": 0.892,
+          "y": 0.924
+        },
+        "size": {
+          "width": 0.067,
+          "height": 0.118
+        },
+        "rotation": 0
+      },
+      {
+        "name": "euro_centre",
+        "center": {
+          "x": 0.5,
+          "y": 0.335
+        },
+        "size": {
+          "width": 0.117,
+          "height": 0.071
+        },
+        "rotation": 0
+      },
+      {
+        "name": "euro_centre",
+        "center": {
+          "x": 0.5,
+          "y": 0.456
+        },
+        "size": {
+          "width": 0.117,
+          "height": 0.1
+        },
+        "rotation": 0
+      },
+      {
+        "name": "euro_centre",
+        "center": {
+          "x": 0.5,
+          "y": 0.585
+        },
+        "size": {
+          "width": 0.117,
+          "height": 0.1
+        },
+        "rotation": 0
+      },
+      {
+        "name": "euro_centre",
+        "center": {
+          "x": 0.5,
+          "y": 0.715
+        },
+        "size": {
+          "width": 0.117,
+          "height": 0.1
+        },
+        "rotation": 0
+      },
+      {
+        "name": "euro_centre",
+        "center": {
+          "x": 0.5,
+          "y": 0.844
+        },
+        "size": {
+          "width": 0.117,
+          "height": 0.1
+        },
+        "rotation": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center": {
+          "x": 0.204,
+          "y": 0.488
+        },
+        "size": {
+          "width": 0.058,
+          "height": 0.141
+        },
+        "rotation": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center": {
+          "x": 0.204,
+          "y": 0.676
+        },
+        "size": {
+          "width": 0.058,
+          "height": 0.141
+        },
+        "rotation": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center": {
+          "x": 0.204,
+          "y": 0.841
+        },
+        "size": {
+          "width": 0.058,
+          "height": 0.141
+        },
+        "rotation": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center": {
+          "x": 0.796,
+          "y": 0.488
+        },
+        "size": {
+          "width": 0.058,
+          "height": 0.141
+        },
+        "rotation": 0
+      },
+      {
+        "name": "mirror_large",
+        "center": {
+          "x": 0.796,
+          "y": 0.794
+        },
+        "size": {
+          "width": 0.058,
+          "height": 0.141
+        },
+        "rotation": 0
+      },
+      {
+        "name": "euro_csinle",
+        "center": {
+          "x": 0.35,
+          "y": 0.582
+        },
+        "size": {
+          "width": 0.1,
+          "height": 0.047
+        },
+        "rotation": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center": {
+          "x": 0.713,
+          "y": 0.685
+        },
+        "size": {
+          "width": 0.075,
+          "height": 0.065
+        },
+        "rotation": 0
+      },
+      {
+        "name": "jjke_lens",
+        "center": {
+          "x": 0.292,
+          "y": 0.947
+        },
+        "size": {
+          "width": 0.1,
+          "height": 0.047
+        },
+        "rotation": 0
+      },
+      {
+        "name": "accuairte",
+        "center": {
+          "x": 0.708,
+          "y": 0.947
+        },
+        "size": {
+          "width": 0.1,
+          "height": 0.047
+        },
+        "rotation": 0
+      },
+      {
+        "name": "large_bench",
+        "center": {
+          "x": 0.5,
+          "y": 0.953
+        },
+        "size": {
+          "width": 0.217,
+          "height": 0.059
+        },
+        "rotation": 0
+      }
+    ]
+  },
+  "rotation": 0.0
+}

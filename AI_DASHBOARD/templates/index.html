@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        body {
+            margin: 0;
+            background: #0A1628;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: 'Sora', sans-serif;
+        }
+        .redirect-message {
+            text-align: center;
+            color: #2DD4BF;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(46, 212, 191, 0.2);
+            border-top-color: #2DD4BF;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+    <script>
+        // Immediately redirect to canvas with autoload parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const autoloadFile = urlParams.get('autoload');
+        
+        if (autoloadFile) {
+            // Redirect immediately - no delay
+            window.location.replace('/canvas?autoload=' + encodeURIComponent(autoloadFile));
+        } else {
+            // If no autoload, redirect to canvas anyway
+            window.location.replace('/canvas');
+        }
+    </script>
+</head>
+<body>
+    <div class="redirect-message">
+        <div class="spinner"></div>
+        <p>Loading Floor Plan Editor...</p>
+    </div>
+</body>
+</html>

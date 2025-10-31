@@ -1,0 +1,2017 @@
+# **OPTICAL STORE LAYOUT GENERATION PROMPT**    # **REFINED OPTICAL STORE LAYOUT GENERATION PROMPT - DXF CONTROLLER ALIGNED**
+
+*Based on DXF_Controller.py Implementation and Merch_Mix.json Fixture Requirements*
+
+    *Based on DXF_Controller.py Implementation and Merch_Mix.json Fixture Requirements*
+
+## **🚫 ABSOLUTE COMPLIANCE DIRECTIVES**
+
+    ## **ABSOLUTE COMPLIANCE DIRECTIVES - CODE IMPLEMENTATION STANDARDS**
+
+- **NO CREATIVITY**: Follow ONLY what is explicitly implemented in DXF_Controller.py
+
+- **NO MODIFICATIONS**: Do not alter any measurement, rule, or placement algorithm    ### **🚫 ZERO TOLERANCE VIOLATIONS**
+
+- **NO LAYOUT CHANGES**: NEVER modify, resize, reshape, or alter the input floorplan geometry
+
+- **ALL FIXTURES INSIDE BOUNDARY**: EVERY fixture must be completely contained within floorplan_polygon.buffer(-1.0)    - **NO CREATIVITY**: Follow ONLY what is explicitly implemented in DXF_Controller.py
+
+    - **NO ASSUMPTIONS**: Use ONLY fixtures defined in fixture_dict
+
+## **🎯 MERCH MIX QUANTITY REQUIREMENTS**    - **NO MODIFICATIONS**: Do not alter any measurement, rule, or placement algorithm
+
+    - **NO SUBSTITUTIONS**: Use ONLY fixture names exactly as defined in DXF_Controller.py
+
+**MINIMUM FIXTURE COUNTS (merch_mix_min):**    - **NO INTERPRETATIONS**: Execute placement rules as coded in the implementation
+
+- JJ_Eye: 4.0 units → jj_fixture_large (2) + jj_fixture_medium (2)    - **NO OPTIMIZATIONS**: Follow actual algorithm logic without "improvements"
+
+- JJ_Sun: 1.0 unit → jj_super_hybrid_small (1)    - **NO LAYOUT CHANGES**: NEVER modify, resize, reshape, or alter the input floorplan geometry
+
+- VC_Eye: 4.1 units → vc_fixture_large (2) + vc_fixture_medium (2)    - **ALL FIXTURES INSIDE BOUNDARY**: EVERY fixture must be completely contained within floorplan_polygon.buffer(-1.0)
+
+- VC_Sun: 2.2 units → with_screen (1) + window_1_section (1)
+
+- LK_Air: 4.7 units → Lensometer_large (2) + Lensometer_medium (3)    ### **🎯 MERCH MIX QUANTITY REQUIREMENTS**
+
+- VC_Kids: 2.0 units → Discussion_table_large (1) + Discussion_table_medium (1)
+
+- Tentpole: 1.0 unit → screen_49 (1)    **MINIMUM FIXTURE COUNTS (merch_mix_min):**
+
+- Hustlr: 1.0 unit → AR (1) + pos_with_screen_medium (1)    - JJ_Eye fixtures: 4.0 units (jj_fixture_* variants)
+
+    - JJ_Sun fixtures: 1.0 unit (jj_super_hybrid_* variants)  
+
+**MAXIMUM FIXTURE COUNTS (merch_mix_max):**    - VC_Eye fixtures: 4.1 units (vc_fixture_* variants)
+
+- JJ_Eye: 1 max, JJ_Sun: 3 max, VC_Eye: 2 max, VC_Sun: 0 max    - VC_Sun fixtures: 2.2 units (with_screen, window_* variants)
+
+- LK_Air: 2 max, VC_Kids: 2 max, Reading_Glasses: 1 max    - LK_Air fixtures: 4.7 units (Lensometer_* variants)
+
+- CL/OD/LPL: 1 each max, Tentpole: 0.5 max, Hustlr: 0.5 max    - VC_Kids fixtures: 2.0 units (Discussion_table_* variants)
+
+    - Tentpole displays: 1.0 unit (screen_* variants)
+
+## **🔒 MANDATORY FIXTURE INVENTORY**    - Hustlr displays: 1.0 unit (AR, pos_* variants)
+
+    - Reading_Glasses: 0.0 units (Euro_centre)
+
+**USE ONLY THESE EXACT FIXTURE NAMES:**    - CL/OD/LPL: 0.0 units each (clinic fixtures)
+
+
+
+**Wall Fixtures (PERIMETER_PASS_PLACEMENT):**    **MAXIMUM FIXTURE COUNTS (merch_mix_max):**
+
+- jj_fixture_large, jj_fixture_medium, jj_super_hybrid_small    - JJ_Eye fixtures: 1 unit maximum
+
+- vc_fixture_large, vc_fixture_medium    - JJ_Sun fixtures: 3 units maximum  
+
+- with_screen, window_1_section, window_3_section    - VC_Eye fixtures: 2 units maximum
+
+- mirror, mirror_different, pick_up_counter    - VC_Sun fixtures: 0 units maximum
+
+    - LK_Air fixtures: 2 units maximum
+
+**Floor Fixtures (CENTRAL_PLACEMENT):**    - VC_Kids fixtures: 2 units maximum
+
+- Euro_centre, Lensometer_large, Lensometer_medium    - Reading_Glasses: 1 unit (Euro_centre)
+
+- Discussion_table_large, Discussion_table_medium, Blue_zero    - CL/OD/LPL: 1 unit each (clinic fixtures)
+
+- AR, pos_with_screen_medium, sofa, QMS_desk, Standing_table    - Tentpole displays: 0.5 unit (screen_* variants)
+
+    - Hustlr displays: 0.5 unit (AR, pos_* variants)
+
+**Screen Fixtures:**
+
+- screen_49, screen_43, screen_55, screen_65
+
+
+
+**Clinic Fixtures (TOP_WALL_PLACEMENT):**    ### **🔒 MANDATORY VERIFICATION PROTOCOL**
+
+- Clinic_regular, Clinic_with_sink, ROC_clinic
+
+    1. **BEFORE PLACING ANY FIXTURE**: Verify fixture name exists exactly in DXF_Controller.fixture_dict
+
+**BOH Fixtures:**    2. **BEFORE APPLYING ANY RULE**: Reference actual method implementation in DXF_Controller.py
+
+- pickup_storage_900, storage_rack, QC_table_large, Repair_Table_medium    3. **BEFORE MAKING ANY DECISION**: Follow algorithms as coded in place_* methods
+
+- basic_boh_preset_1, small_basic_boh    4. **AFTER EACH PLACEMENT**: Use _validate_and_place_at_point() validation logic
+
+    5. **AFTER EACH PLACEMENT**: Check against floorplan_polygon.buffer(-1.0).contains()
+
+**Loose Furniture:**    6. **REPORT ALL ACTIONS**: Log decisions using actual DXF_Controller method names
+
+- large_bench, medium_bench, Corian_table, Lounge_seat
+
+- Eye_massage_chair, toilet    ---
+
+
+
+## **⚙️ PLACEMENT ALGORITHMS**    ## **APPROVED FIXTURE INVENTORY - EXACT DXF_CONTROLLER.PY SPECIFICATIONS**
+
+
+
+**1. CLINIC PLACEMENT (FIRST):**    ### **WALL FIXTURES (TYPE: "wall") - PERIMETER PLACEMENT ALGORITHM**
+
+```python
+
+# Use place_clinics_with_best_fit_and_fallback_new()    **JJ FIXTURE VARIANTS:**
+
+# Top wall analysis with greedy best fit algorithm    ```
+
+# Validation: self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)    jj_fixture_different_large: path="assets/wall_fixtures/jj_fixture_different_large.dxf" | PERIMETER_PASS_PLACEMENT
+
+```    jj_fixture_different_medium: path="assets/wall_fixtures/jj_fixture_different_medium.dxf" | PERIMETER_PASS_PLACEMENT
+
+    jj_fixture_large: path="assets/wall_fixtures/jj_fixture_large.dxf" | PERIMETER_PASS_PLACEMENT
+
+**2. WALL FIXTURE PLACEMENT:**    jj_fixture_medium: path="assets/wall_fixtures/jj_fixture_medium.dxf" | PERIMETER_PASS_PLACEMENT
+
+```python    jj_super_hybrid_large: path="assets/wall_fixtures/jj_super_hybrid_large.dxf" | PERIMETER_PASS_PLACEMENT
+
+# Use place_wall_fixtures_perimeter_pass()    jj_super_hybrid_medium: path="assets/wall_fixtures/jj_super_hybrid_medium.dxf" | PERIMETER_PASS_PLACEMENT
+
+# Even split: left_count = total_to_place // 2    jj_super_hybrid_small: path="assets/wall_fixtures/jj_super_hybrid_small.dxf" | PERIMETER_PASS_PLACEMENT
+
+# Spacing: GAP_BETWEEN_PAIRS = 0, margin_from_wall = 1.0    ```
+
+```
+
+    **VC FIXTURE VARIANTS:**
+
+**3. CENTRAL FIXTURE PLACEMENT:**    ```
+
+```python    vc_fixture_large: path="assets/wall_fixtures/vc_fixture_large.dxf" | PERIMETER_PASS_PLACEMENT
+
+# Use place_central_fixtures_portrait()    vc_fixture_medium: path="assets/wall_fixtures/vc_fixture_medium.dxf" | PERIMETER_PASS_PLACEMENT
+
+# Dynamic gaps: GAP_EURO_TO_EURO = 5.0, GAP_LENSBAR_TO_LENSBAR = 50.0    ```
+
+# Vertical stacking with area-based gap calculation
+
+```    **SPECIALIZED WALL FIXTURES:**
+
+    ```
+
+**4. VALIDATION LOGIC:**    window_1_section: path="assets/wall_fixtures/window_1_section.dxf" | PERIMETER_PASS_PLACEMENT
+
+```python    window_3_section: path="assets/wall_fixtures/window_3_section.dxf" | PERIMETER_PASS_PLACEMENT
+
+def _validate_and_place_at_point(fixture, target_center, angle_deg, placed_bboxes):    with_screen: path="assets/wall_fixtures/with_screen.dxf" | PERIMETER_PASS_PLACEMENT
+
+    # Transform fixture to target position    mirror_different: path="assets/wall_fixtures/mirror_different.dxf" | PAIRED_WITH_WALL_FIXTURES
+
+    # Check: is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)    mirror: path="assets/wall_fixtures/mirror.dxf" | PAIRED_WITH_WALL_FIXTURES
+
+    # Check: no overlap with existing fixtures    pick_up_counter: path="assets/wall_fixtures/pick_up_counter.dxf" | SPECIAL_PLACEMENT
+
+    # Place only if both conditions met    ```
+
+```
+
+    ### **FLOOR FIXTURES (TYPE: "floor") - CENTRAL PLACEMENT ALGORITHM**
+
+## **📍 EXECUTION SEQUENCE**
+
+    **CENTRAL FIXTURES:**
+
+1. **ORIGINAL LAYOUT PRESERVATION**: Never modify input floorplan geometry    ```
+
+2. **BOUNDARY VALIDATION**: All fixtures must be inside floorplan_polygon.buffer(-1.0)    Euro_centre: path="assets/floor/Euro_centre.dxf" | VERTICAL_STACKING_PORTRAIT_MODE
+
+3. **PLACEMENT ORDER**: Clinics → Pickup → Toilet → BOH → Central → Wall → Benches    Lensbar: path="assets/floor/Lensbar.dxf" | ROTATED_270_DEGREES_WITH_DYNAMIC_GAP
+
+4. **SPACING**: Use exact values from code (GAP_BETWEEN_PAIRS=0, etc.)    ```
+
+5. **VALIDATION**: Apply _validate_and_place_at_point() for every fixture
+
+    **DISCUSSION TABLES:**
+
+## **🎯 FINAL REQUIREMENTS**    ```
+
+    Discussion_table_large: path="assets/floor/Discussion_table_large.dxf" | ANCHORED_TO_EURO_CENTRE  
+
+- **USE MERCH_MIX.JSON QUANTITIES**: Read exact values from min/max ranges    Discussion_table_medium: path="assets/floor/Discussion_table_medium.dxf" | ANCHORED_TO_EURO_CENTRE
+
+- **PRESERVE LAYOUT SHAPE**: Never change the input floorplan geometry    Discussion_table_small: path="assets/floor/Discussion_table_small.dxf" | ANCHORED_TO_EURO_CENTRE
+
+- **ALL FIXTURES INSIDE**: Complete containment within boundary required    Blue_zero: path="assets/floor/Blue_zero.dxf" | ATTACHED_BELOW_DISCUSSION_TABLE
+
+- **EXACT FIXTURE NAMES**: Use only names from the approved fixture list    ```
+
+- **FOLLOW ALGORITHMS**: Execute placement methods exactly as coded
+
+    **LENSOMETER FIXTURES:**
+
+**Generate optimal store layout following these specifications exactly.**    ```
+    Lensometer_large: path="assets/floor/Lensometer_large.dxf" | WALL_PARALLEL_INWARD_FACING
+    Lensometer_medium: path="assets/floor/Lensometer_medium.dxf" | WALL_PARALLEL_INWARD_FACING  
+    Lensometer_small: path="assets/floor/Lensometer_small.dxf" | WALL_PARALLEL_INWARD_FACING
+    ```
+
+    **OTHER FLOOR FIXTURES:**
+    ```
+    AR: path="assets/floor/AR.dxf" | PAIRED_WITH_POS_100MM_GAP
+    drop_box: path="assets/floor/drop_box.dxf" | BELOW_LAST_BOH_FIXTURE
+    QMS_desk: path="assets/floor/QMS_desk.dxf" | CENTRAL_ROW_EURO_ALIGNED
+    sofa: path="assets/floor/sofa.dxf" | 200MM_ABOVE_POS_AR_OR_BOTTOM_AISLE
+    Standing_table: path="assets/floor/Standing_table.dxf" | ANCHORED_TO_EURO_CENTRE
+    ```
+
+    ### **SCREEN FIXTURES (TYPE: "screen") - PRIORITY CORNER PLACEMENT**
+
+    ```
+    screen_43: path="assets/screen/screen_43.dxf" | BOTTOM_RIGHT_CORNER_PRIORITY
+    screen_49: path="assets/screen/screen_49.dxf" | CENTRAL_AREA_BETWEEN_EUROS  
+    screen_55: path="assets/screen/screen_55.dxf" | BOTTOM_LEFT_CORNER_FALLBACK
+    screen_65: path="assets/screen/screen_65.dxf" | WALL_SEGMENT_SEARCH_FALLBACK
+    ```
+
+    ### **POS FIXTURES (TYPE: "pos") - PAIRED WITH AR**
+
+    ```
+    pos_with_screen_large: path="assets/pos/pos_with_screen_large.dxf" | PAIRED_WITH_AR_ANCHORED_TO_EURO
+    pos_with_screen_medium: path="assets/pos/pos_with_screen_medium.dxf" | PAIRED_WITH_AR_ANCHORED_TO_EURO
+    pos_with_screen_small: path="assets/pos/pos_with_screen_small.dxf" | PAIRED_WITH_AR_ANCHORED_TO_EURO
+    pos_without_screen: path="assets/pos/pos_without_screen.dxf" | PAIRED_WITH_AR_ANCHORED_TO_EURO
+    ```
+
+    ### **CLINIC FIXTURES (TYPE: "clinic") - TOP WALL PLACEMENT**
+
+    ```
+    Clinic_with_sink: path="assets/clinic/Clinic_with_sink.dxf" | TOP_WALL_FACE_INWARD_BEST_FIT
+    Clinic_regular: path="assets/clinic/Clinic_regular.dxf" | TOP_WALL_FACE_INWARD_BEST_FIT
+    ROC_clinic: path="assets/clinic/ROC_clinic.dxf" | TOP_WALL_FACE_INWARD_BEST_FIT
+    ```
+
+    ### **BOH FIXTURES (TYPE: "boh") - BACK OF HOUSE ZONE**
+
+    **STORAGE FIXTURES (FIRST):**
+    ```
+    pickup_storage_900: path="assets/boh_furniture/pickup_storage_900.dxf" | BOH_ZONE_STORAGE_FIRST
+    pickup_storage_1200: path="assets/boh_furniture/pickup_storage_1200.dxf" | BOH_ZONE_STORAGE_FIRST
+    storage_rack: path="assets/boh_furniture/storage_rack.dxf" | BOH_ZONE_STORAGE_FIRST
+    ups_rack: path="assets/boh_furniture/ups_rack.dxf" | BOH_ZONE_STORAGE_FIRST
+    ```
+
+    **WORKSTATION FIXTURES (SECOND):**
+    ```
+    QC_table_large: path="assets/boh_furniture/QC_table_large.dxf" | BOH_ZONE_WORKSTATIONS_SECOND
+    QC_table_medium: path="assets/boh_furniture/QC_table_medium.dxf" | BOH_ZONE_WORKSTATIONS_SECOND
+    Repair_Table_large: path="assets/boh_furniture/Repair_Table_large.dxf" | BOH_ZONE_WORKSTATIONS_SECOND
+    Repair_Table_medium: path="assets/boh_furniture/Repair_Table_medium.dxf" | BOH_ZONE_WORKSTATIONS_SECOND
+    pickup_table: path="assets/boh_furniture/pickup_table.dxf" | BOH_ZONE_WORKSTATIONS_SECOND
+    ```
+
+    **AMENITY FIXTURES (LAST):**
+    ```
+    Dining_Table_large: path="assets/boh_furniture/Dining_Table_large.dxf" | BOH_ZONE_AMENITIES_LAST
+    Dining_Table_medium: path="assets/boh_furniture/Dining_Table_medium.dxf" | BOH_ZONE_AMENITIES_LAST
+    staff_rack: path="assets/boh_furniture/staff_rack.dxf" | BOH_ZONE_AMENITIES_LAST
+    water_dispenser: path="assets/boh_furniture/water_dispenser.dxf" | BOH_ZONE_AMENITIES_LAST
+    ```
+
+    ### **LOOSE FURNITURE (TYPE: "loose") - FLEXIBLE PLACEMENT**
+
+    ```
+    Corian_table: path="assets/loose/Corian_table.dxf" | ANCHORED_TO_EURO_CENTRE
+    Eye_massage_area: path="assets/loose/Eye_massage_area.dxf" | TOP_WALL_FACE_INWARD
+    Eye_massage_chair: path="assets/loose/Eye_massage_chair.dxf" | FLEXIBLE_PLACEMENT
+    large_bench: path="assets/loose/large_bench.dxf" | VERTICAL_NEAR_CLINICS_OR_WALLS
+    medium_bench: path="assets/loose/medium_bench.dxf" | VERTICAL_NEAR_CLINICS_OR_WALLS
+    Lounge_seat: path="assets/loose/Lounge_seat.dxf" | PART_OF_CORIAN_TABLE_SET
+    Sofa_large: path="assets/loose/Sofa_large.dxf" | 200MM_ABOVE_POS_AR_OR_BOTTOM_AISLE
+    Sofa_medium: path="assets/loose/Sofa_medium.dxf" | 200MM_ABOVE_POS_AR_OR_BOTTOM_AISLE
+    pouf: path="assets/loose/pouf.dxf" | FLEXIBLE_PLACEMENT
+    stool: path="assets/loose/stool.dxf" | FLEXIBLE_PLACEMENT
+    ```
+
+    ### **BOH PRESETS (TYPE: "boh_preset") - PRESET COMBINATIONS**
+
+    ```
+    basic_boh_preset_1: path="assets/boh_presets/basic_boh_preset_1.dxf" | BOH_PRESET_PLACEMENT
+    small_basic_boh: path="assets/boh_presets/small_basic_boh.dxf" | BOH_PRESET_PLACEMENT
+    boh_vertical_horizontal_preset_basic: path="assets/boh_presets/boh_vertical_horizontal_preset_basic.dxf" | BOH_PRESET_PLACEMENT
+    medium_basic_boh: path="assets/boh_presets/medium_basic_boh.dxf" | BOH_PRESET_PLACEMENT
+    ```
+
+    ### **SPECIAL FIXTURES**
+
+    ```
+    toilet: path="assets/toilet/toilet.dxf" | SPECIAL_TOILET_PLACEMENT
+    Pick_up_window: path="assets/boh_presets/Pick_up_window.dxf" | NEXT_TO_CLINIC_RIGHT_WALL
+    ```
+
+    ---
+
+    ## **NON-NEGOTIABLE SPATIAL CONSTRAINTS - DXF_CONTROLLER.PY IMPLEMENTATION**
+
+    ### **FLOORPLAN POLYGON VALIDATION - EXACT CODE LOGIC**
+
+    ```python
+    # DIRECT FROM DXF_CONTROLLER.PY IMPLEMENTATION:
+
+    # 1. BOUNDARY VALIDATION
+    def _validate_and_place_at_point(self, fixture, target_center, angle_deg, placed_bboxes):
+        # Create fixture polygon at target position
+        fixture_polygon = self._get_transformed_fixture_poly(fixture, target_center, angle_deg)
+        
+        # MANDATORY CHECKS (as implemented in code):
+        is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+        is_overlapping = any(fixture_polygon.intersects(box(*bbox)) for bbox in placed_bboxes)
+        
+        # REJECTION LOGIC:
+        if not is_inside or is_overlapping:
+            return False  # REJECT PLACEMENT
+        
+        # SUCCESS: Place fixture
+        self.place_fixture(fixture, target_center, angle_deg, rotated=True)
+        return True
+
+    # 2. WALL DETECTION ALGORITHM
+    wall_segments = self.cvc.get_wall_segments(min_length=100.0)
+    wall_details = self._get_wall_details(side)  # "left", "right", "top", "bottom"
+
+    # 3. COORDINATE SYSTEM
+    # self.cvc.min_x, self.cvc.max_x = actual floor x-boundaries
+    # self.cvc.min_y, self.cvc.max_y = actual floor y-boundaries  
+    # tolerance = (max_coord - min_coord) * 0.1
+
+    # 4. PLACEABLE ZONE ANALYSIS
+    placeable_zones = self._analyze_perimeter_for_placeable_zones(
+        perimeter_path, 
+        angle_tolerance_deg=2.0, 
+        lateral_tolerance=50.0
+    )
+    ```
+
+    ### **ACTUAL PLACEMENT ALGORITHMS - FROM CODE IMPLEMENTATION**
+
+    **WALL FIXTURE PLACEMENT (place_wall_fixtures_perimeter_pass):**
+    ```python
+    # 1. MASTER LIST CREATION (EXACT CODE LOGIC)
+    master_fixture_list = []
+    for name, count in wall_fixtures_config.items():
+        if count > 0:
+            master_fixture_list.extend([(name, 1)] * count)
+
+    # 2. EVEN SPLIT ALGORITHM (EXACT IMPLEMENTATION)
+    total_to_place = len(master_fixture_list)
+    left_count = total_to_place // 2
+    left_queue = collections.deque(master_fixture_list[:left_count])
+    right_queue = collections.deque(master_fixture_list[left_count:])
+
+    # 3. PERIMETER PATH GENERATION (EXACT METHOD)
+    perimeter_path = self._get_perimeter_path_from_bottom_left()
+    
+    # 4. PERIMETER ZONE ANALYSIS (EXACT ALGORITHM)
+    def _analyze_perimeter_for_placeable_zones(self, perimeter_path, angle_tolerance_deg=2.0, lateral_tolerance=50.0):
+        """EXACT IMPLEMENTATION - NEVER MODIFY"""
+        placeable_zones = []
+        current_zone_start = Vec2(perimeter_path[0][0])
+        main_direction_vector = (Vec2(perimeter_path[0][1]) - current_zone_start).normalize()
+        
+        for i in range(len(perimeter_path)):
+            current_seg_start = Vec2(perimeter_path[i][0])
+            current_seg_end = Vec2(perimeter_path[i][1])
+            current_segment_vector = (current_seg_end - current_seg_start).normalize()
+            
+            # ANGLE CHECK: Detect significant direction changes
+            angle_diff_deg = abs(math.degrees(main_direction_vector.angle_between(current_segment_vector)))
+            
+            # LATERAL CHECK: Distance from main wall line
+            lateral_distance = point_to_line_distance(current_seg_start, zone_start, zone_end)
+            
+            # ZONE BREAK CONDITIONS
+            if angle_diff_deg > angle_tolerance_deg or lateral_distance > lateral_tolerance:
+                # End current zone, start new zone
+                placeable_zones.append((current_zone_start, current_seg_start))
+                current_zone_start = current_seg_start
+                main_direction_vector = current_segment_vector
+
+    # 5. PLACEMENT WITH EXACT SPACING (GAP_BETWEEN_PAIRS = 0)
+    margin_from_wall = 1.0  # Exact value from code
+    horizontal_inset_for_hybrid = 0.0 or 50.0  # Based on mirror selection
+    ```
+
+    **CENTRAL FIXTURE PLACEMENT (place_central_fixtures_portrait):**
+    ```python
+    # 1. DYNAMIC VERTICAL GAP CALCULATION (EXACT IMPLEMENTATION)
+    def _calculate_dynamic_vertical_gap(self):
+        """EXACT CODE LOGIC - NEVER MODIFY"""
+        area_sq_mm = self.floorplan_polygon.area
+        floor_area_sqft = area_sq_mm / 92903.04  # SQMM_PER_SQFT constant
+        
+        # EXACT THRESHOLDS FROM CODE:
+        if floor_area_sqft <= 500: return 200.0
+        elif floor_area_sqft <= 750: return 600.0
+        elif floor_area_sqft <= 1000: return 1200.0
+        else: return 1200.0
+
+    # 2. PORTRAIT MODE PLACEMENT CONSTANTS (EXACT VALUES)
+    GAP_EURO_TO_EURO = 5.0       # Horizontal gap between Euro_centre fixtures
+    GAP_LENSBAR_TO_LENSBAR = 50.0 # Horizontal gap between Lensbar fixtures
+    VERTICAL_ROW_GAP = self._calculate_dynamic_vertical_gap()  # Dynamic vertical spacing
+    
+    # 3. FIXTURE QUEUE SETUP (EXACT ORDER)
+    fixture_queue = collections.deque()
+    if lensbar_count > 0:
+        fixture_queue.extend([lensbar_fxtr_template] * lensbar_count)
+    if euro_count > 0:
+        fixture_queue.extend([euro_fxtr_template] * euro_count)
+    
+    # 4. PORTRAIT PLACEMENT ALGORITHM (EXACT IMPLEMENTATION)
+    # - Bottom margin: room_height * bottom_margin_pct (default 0.20)
+    # - Euro_centre: Vertical stacking with dynamic gaps
+    # - Lensbar: Rotated 270° (height becomes width)
+    # - Dynamic row sizing based on available width
+    # - Adaptive walking space: max(300.0, local_width * 0.50)
+    ```
+
+    **CLINIC PLACEMENT (place_clinics_with_best_fit_and_fallback_new):**
+    ```python
+    # 1. TOP WALL ANALYSIS (EXACT IMPLEMENTATION)
+    top_wall_analysis = self._analyze_top_wall_with_bulge_detection()
+    # Returns: {'top_segments': [], 'total_length': float, 'has_bulge': bool, 'bulge_info': {}}
+
+    # 2. GREEDY BEST FIT ALGORITHM (EXACT CODE LOGIC)
+    def _find_best_combination_for_row(self, clinic_names, available_width, force_orientation=None):
+        """EXACT IMPLEMENTATION - NEVER MODIFY"""
+        # Tries all combinations to maximize clinic placement in available space
+        # Returns: {'combination': [...], 'total_width': float, 'orientations': [...]}
+        
+    # 3. OPPORTUNISTIC BOH ZONE CALCULATION (EXACT METHOD)
+    def _calculate_opportunistic_boh_zone(self, last_clinic_bbox, placed_bboxes):
+        """EXACT IMPLEMENTATION - NEVER MODIFY"""
+        # Calculates remaining space after clinic placement for BOH fixtures
+        # Returns: (boh_polygon, boh_space_area)
+    
+    # 4. CLINIC VALIDATION AND PLACEMENT
+    for segment in top_wall_analysis['top_segments']:
+        segment_length = calculate_segment_length(segment)
+        best_combo = self._find_best_combination_for_row(remaining_clinics, segment_length)
+        
+        if best_combo:
+            # Place clinics using _validate_and_place_at_point logic
+            for clinic_name, orientation in zip(best_combo['combination'], best_combo['orientations']):
+                target_center = calculate_clinic_center(segment, clinic_position)
+                angle_deg = 0 if orientation == 'portrait' else 90
+                success = self._validate_and_place_at_point(clinic_fixture, target_center, angle_deg, placed_bboxes)
+    ```
+
+    ### **SPACING AND CLEARANCE - ACTUAL CODE VALUES**
+
+    ```python
+    # FROM ACTUAL IMPLEMENTATION:
+
+    # WALL FIXTURE SPACING:
+    GAP_BETWEEN_PAIRS = 0  # No gap between wall fixtures
+    margin_from_wall = 1.0  # 1mm from wall
+
+    # CENTRAL FIXTURE SPACING:
+    GAP_EURO_TO_EURO = 5.0  # Between Euro_centre fixtures
+    GAP_LENSBAR_TO_LENSBAR = 50.0  # Between Lensbar fixtures
+    VERTICAL_ROW_GAP = _calculate_dynamic_vertical_gap()  # Dynamic based on area
+
+    # WALKING SPACE:
+    walking_space_margin = max(300.0, local_width * 0.50)  # Adaptive margin
+
+    # COLLISION DETECTION:
+    collision_buffer = 1.0  # Buffer for polygon validation
+    placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
+    ```
+
+    **CRITICAL VALIDATION LOGIC (_validate_and_place_at_point):**
+    ```python
+    def _validate_and_place_at_point(self, fixture, target_center, angle_deg, placed_bboxes):
+        """
+        EXACT IMPLEMENTATION FROM DXF_CONTROLLER.PY - NEVER MODIFY THIS LOGIC
+        """
+        # 1. TRANSFORM FIXTURE TO TARGET POSITION
+        local_center = fixture.bounding_box.center
+        transform = Matrix44.chain(
+            Matrix44.translate(-local_center.x, -local_center.y, 0),
+            Matrix44.z_rotate(math.radians(angle_deg)),
+            Matrix44.translate(target_center.x, target_center.y, 0)
+        )
+        world_corners = list(transform.transform_vertices(fixture.bounding_box.rect_vertices()))
+        fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+        aabb = BoundingBox2d(world_corners)
+
+        # 2. VALIDATION CHECKS (EXACT ORDER FROM CODE - BOUNDARY CHECK IS CRITICAL)
+        is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)  # MANDATORY: FIXTURE MUST BE COMPLETELY INSIDE
+        is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+
+        # 3. PLACEMENT ONLY IF BOTH CONDITIONS MET (INSIDE BOUNDARY + NO OVERLAP)
+        if is_inside and not is_overlapping:
+            rotated_offset = local_center.rotate(math.radians(angle_deg))
+            final_insert_point = target_center - rotated_offset
+            self.place_fixture(fixture, (final_insert_point.x, final_insert_point.y, 0), angle_deg, True)
+            placed_bboxes.append((aabb.extmin.x, aabb.extmin.y, aabb.extmax.x, aabb.extmax.y))
+            return True  # Success
+        return False  # FAILED - Either outside boundary or overlapping (REJECT PLACEMENT)
+        return False  # Failed validation
+    ```
+
+    **COORDINATE TRANSFORMATION & ROTATION LOGIC:**
+    ```python
+    # EXACT MATRIX TRANSFORMATION FROM DXF_CONTROLLER.PY
+    def place_fixture(self, fxtr, insert_point, rotation, rotated, xscale=1.0, yscale=1.0):
+        """EXACT IMPLEMENTATION - NEVER MODIFY TRANSFORMATION LOGIC"""
+        # 1. LOAD FIXTURE GEOMETRY
+        temp_doc = ezdxf.readfile(fxtr.path)
+        fixture_entities = list(temp_doc.modelspace())
+        
+        # 2. CALCULATE TRANSFORMATION MATRIX
+        translation_matrix = Matrix44.translate(insert_point[0], insert_point[1], insert_point[2])
+        rotation_matrix = Matrix44.z_rotate(math.radians(rotation))
+        scale_matrix = Matrix44.scale(xscale, yscale, 1)
+        transform = translation_matrix @ rotation_matrix @ scale_matrix
+        
+        # 3. APPLY TRANSFORMATION TO ALL ENTITIES
+        for entity in fixture_entities:
+            entity.transform(transform)
+            self.doc.modelspace().add_entity(entity)
+            
+        # 4. UPDATE BOUNDING BOX
+        fxtr.bounding_box = fxtr._calculate_bounding_box(transformed_entities)
+
+    # ROTATION ANGLES (EXACT VALUES FROM CODE):
+    # - Wall fixtures: 0° (default orientation)
+    # - Lensbar: 270° (height becomes width in portrait mode)
+    # - Clinics: 0° (portrait) or 90° (landscape) based on best fit
+    # - Mirrors: Match paired fixture rotation exactly
+    ```
+
+    ---
+
+    ## **ACTUAL PLACEMENT EXECUTION SEQUENCE - DXF_CONTROLLER.PY WORKFLOW**
+
+    ### **FIXTURE PLACEMENT ORDER - AS IMPLEMENTED IN CODE**
+
+    ```python
+    # ACTUAL EXECUTION SEQUENCE FROM DXF_Controller.py:
+
+    # 1. CLINIC PLACEMENT (FIRST - ESTABLISHES BOH ZONE)
+    def place_clinics_with_best_fit_and_fallback_new(self, placed_bboxes):
+        # - Analyzes top wall with bulge detection
+        # - Uses greedy best-fit algorithm for optimal clinic combination
+        # - Creates opportunistic BOH zone after clinic placement
+        # - Places clinics facing inward from top wall
+
+    # 2. PICKUP WINDOW PLACEMENT (AFTER CLINICS)  
+    def place_pickup_window_next_to_clinic(self, placed_bboxes):
+        # - Primary: Right wall strategy searching inward from clinics
+        # - Fallback: Central area placement if right wall fails
+
+    # 3. TOILET PLACEMENT (SPECIAL CASE)
+    def place_toilet(self):
+        # - Uses special toilet placement algorithm
+        # - Typically placed in BOH or service area
+
+    # 4. BOH FIXTURES PLACEMENT (IN BOH ZONE)
+    def place_boh_fixtures_in_room(self, placed_bboxes):
+        # - Storage fixtures first (ups_rack, storage_rack, pickup_storage_*)
+        # - Workstations second (QC_table_*, Repair_Table_*, pickup_table)  
+        # - Amenities last (Dining_Table_*, staff_rack, water_dispenser)
+
+    # 5. CENTRAL FIXTURES PLACEMENT (PORTRAIT MODE)
+    def place_central_fixtures_portrait(self, placed_bboxes, bottom_margin_pct=0.20):
+        # - Euro_centre: Vertical stacking with dynamic gaps
+        # - Lensbar: Rotated 270° with GAP_LENSBAR_TO_LENSBAR = 50.0
+        # - Uses _calculate_dynamic_vertical_gap() for spacing
+
+    # 6. WALL FIXTURES PLACEMENT (PERIMETER ALGORITHM)
+    def place_wall_fixtures_perimeter_pass(self):
+        # - Creates master fixture list from wall_fixtures config
+        # - Splits evenly: left_count = total_to_place // 2
+        # - Pass 1: place_fixtures_on_left_wall(left_queue)
+        # - Pass 2: place_fixtures_on_right_wall_new(right_queue + leftovers)
+
+    # 7. BENCH PLACEMENT (NEAR CLINICS)
+    def place_benches_near_clinics_with_multiple_strategies(self, placed_bboxes):
+        # - Vertical placement near clinics
+        # - Wall segment placement as fallback
+        # - Clinic side placement as final fallback
+    ```
+
+    ### **ALGORITHM-SPECIFIC CONSTRAINTS - DIRECT FROM CODE**
+
+    **PERIMETER WALL ANALYSIS:**
+    ```python
+    def _analyze_perimeter_for_placeable_zones(self, perimeter_path, angle_tolerance_deg=2.0, lateral_tolerance=50.0):
+        # - Detects sharp angle changes (corners) and lateral deviations
+        # - Creates placeable zones only where length > 500mm
+        # - Uses smart walk analysis with angle and lateral deviation checks
+
+    # PLACEMENT VALIDATION:
+    def _validate_and_place_on_wall(self, fixture, target_center, angle_deg, placed_bboxes):
+        # - Creates fixture polygon at target position  
+        # - Checks: self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+        # - Checks: not any(fixture_polygon.intersects(box(*bbox)) for bbox in placed_bboxes)
+    ```
+
+    **CENTRAL FIXTURE DYNAMICS:**
+    ```python
+    def _find_best_stack_size(self, local_width, walking_margin, total_euros_in_queue, fixture_obj):
+        # - Tries stack sizes from 3 down to 1
+        # - Calculates required_width = (fixture_obj.height * n) + (gap * (n-1)) + walking_margin
+        # - Returns largest stack that fits within local_width
+
+    def _calculate_dynamic_euro_gap(self, num_in_stack):
+        # - 1 fixture: 0.0 gap
+        # - 2 fixtures: 1000.0 gap  
+        # - 3+ fixtures: 1200.0 gap
+    ```
+
+    **CLINIC BEST-FIT ALGORITHM:**
+    ```python  
+    def _find_best_combination_for_row(self, clinic_names_to_place, available_width, force_orientation=None):
+        # - Tries all combinations of clinic types
+        # - Calculates total width including gaps
+        # - Returns best combination that maximizes clinic count within available_width
+        # - Considers both horizontal and vertical orientations
+    ```
+
+    ### **FIXTURE QUANTITY MAPPING - MERCH MIX TO DXF FIXTURES**
+
+    ```python
+    # MERCH_MIX TO FIXTURE MAPPING (based on merch_mix.json):
+
+    merch_mix_min = {
+        "JJ_Eye": "4.0",     # -> jj_fixture_large, jj_fixture_medium, jj_fixture_different_*
+        "JJ_Sun": "1.0",     # -> jj_super_hybrid_large, jj_super_hybrid_medium, jj_super_hybrid_small  
+        "VC_Eye": "4.1",     # -> vc_fixture_large, vc_fixture_medium
+        "VC_Sun": "2.2",     # -> with_screen, window_1_section, window_3_section
+        "LK_Air": "4.7",     # -> Lensometer_large, Lensometer_medium, Lensometer_small
+        "VC_Kids": "2.0",    # -> Discussion_table_large, Discussion_table_medium, Discussion_table_small
+        "Tentpole": "1.0",   # -> screen_43, screen_49, screen_55, screen_65
+        "Hustlr": "1.0",     # -> AR, pos_with_screen_*, pos_without_screen
+        "Reading_Glasses": "0.0", # -> Euro_centre (0 units in min)
+        "CL": "0.0", "OD": "0.0", "LPL": "0.0"  # -> Clinic fixtures (0 each in min)
+    }
+
+    merch_mix_max = {
+        "JJ_Eye": "1",       # Maximum 1 JJ Eye fixture
+        "JJ_Sun": "3",       # Maximum 3 JJ Sun fixtures
+        "VC_Eye": "2",       # Maximum 2 VC Eye fixtures  
+        "VC_Sun": "0",       # No VC Sun fixtures in max config
+        "LK_Air": "2",       # Maximum 2 LK Air fixtures
+        "VC_Kids": "2",      # Maximum 2 VC Kids fixtures
+        "Reading_Glasses": "1", # -> Euro_centre (1 unit)
+        "CL": "1", "OD": "1", "LPL": "1",  # -> Clinic fixtures (1 each)
+        "Tentpole": "0.5",   # -> screen_* variants (0.5 unit)
+        "Hustlr": "0.5"      # -> AR, pos_* variants (0.5 unit)
+    }
+
+    # FIXTURE ALLOCATION STRATEGY:
+    # Use merch_mix_min as baseline requirements, respect merch_mix_max as upper limits
+    # For fractional values (0.5), round to nearest whole number or use conditional placement
+
+    # ACTUAL FIXTURE CONFIGURATION STRUCTURE:
+    # NOTE: Quantities calculated from merch_mix.json values
+    fixtures = {
+        "wall_fixtures": {
+            # JJ_Eye: 4.0 min, 1 max -> Use min(4.0, space_available) but respect max(1) for max config
+            "jj_fixture_large": 2,      # JJ_Eye allocation (partial)
+            "jj_fixture_medium": 2,     # JJ_Eye allocation (total = 4.0)
+            
+            # VC_Eye: 4.1 min, 2 max -> Use min(4.1, space_available) but respect max(2) for max config  
+            "vc_fixture_large": 2,      # VC_Eye allocation (partial)
+            "vc_fixture_medium": 2,     # VC_Eye allocation (total = 4.1, rounded to 4)
+            
+            # JJ_Sun: 1.0 min, 3 max -> Use 1 as baseline
+            "jj_super_hybrid_small": 1, # JJ_Sun allocation
+            
+            # VC_Sun: 2.2 min, 0 max -> Use min config value but consider max=0 constraint
+            "with_screen": 1,           # VC_Sun allocation (partial)
+            "window_1_section": 1,      # VC_Sun allocation (total = 2.2, rounded to 2)
+            
+            "mirror": 4,                # Paired with wall fixtures
+            "mirror_different": 4       # Alternative mirror option
+        },
+        "floor_fixtures": {
+            # Reading_Glasses: 0.0 min, 1 max -> Use max value when min=0
+            "Euro_centre": 1,           # Reading_Glasses allocation (use max value)
+            
+            # LK_Air: 4.7 min, 2 max -> Use min(4.7, space_available) but respect max(2) for max config
+            "Lensometer_large": 2,      # LK_Air allocation (partial)  
+            "Lensometer_medium": 3,     # LK_Air allocation (total = 4.7, rounded to 5)
+            
+            # VC_Kids: 2.0 min, 2 max -> Perfect match
+            "Discussion_table_large": 1, # VC_Kids allocation
+            "Discussion_table_medium": 1, # VC_Kids allocation (total = 2.0)
+            
+            "Blue_zero": 2,             # Attached to discussion tables
+            
+            # Hustlr: 1.0 min, 0.5 max -> Use min value for baseline, consider max constraint
+            "AR": 1,                    # Hustlr allocation (use min value)
+            "pos_with_screen_medium": 1, # Additional Hustlr allocation
+            
+            "sofa": 1,                  # Customer seating
+            "QMS_desk": 1,              # Central desk placement
+            "Standing_table": 2         # Anchored to Euro_centre
+        },
+        "screen": {
+            # Tentpole: 1.0 min, 0.5 max -> Use min value for baseline configuration
+            "screen_49": 1              # Tentpole allocation (use min value 1.0)
+        },
+        "clinic": {
+            # CL: 0.0 min, 1 max; OD: 0.0 min, 1 max; LPL: 0.0 min, 1 max
+            # Use max values when min=0
+            "Clinic_regular": 1,        # CL/OD/LPL allocation (use max values)
+            "ROC_clinic": 1             # Additional clinic services
+        },
+        "loose": {
+            "large_bench": 2,           # Near clinics placement
+            "medium_bench": 2,          # Near clinics placement
+            "Corian_table": 1,          # 5-piece set
+            "Lounge_seat": 4            # Part of Corian set
+        }
+    }
+    ```
+
+    ---
+
+    ## **MANDATORY PLACEMENT RULE IMPLEMENTATIONS - DIRECT FROM DXF_CONTROLLER.PY**
+
+    ### **RULE A1 - WALL FIXTURE PERIMETER PLACEMENT (place_wall_fixtures_perimeter_pass)**
+
+    ```python
+    # EXACT IMPLEMENTATION FROM DXF_Controller.py:
+
+    def place_wall_fixtures_perimeter_pass(self):
+        # 1. CREATE MASTER FIXTURE LIST
+        wall_fixtures_config = self.fixtures.get("wall_fixtures", {})
+        master_fixture_list = []
+        for name, count in wall_fixtures_config.items():
+            if count > 0:
+                master_fixture_list.extend([(name, 1)] * count)
+        
+        # 2. EVEN SPLIT ALGORITHM
+        total_to_place = len(master_fixture_list)
+        left_count = total_to_place // 2
+        left_queue = collections.deque(master_fixture_list[:left_count])
+        right_queue = collections.deque(master_fixture_list[left_count:])
+        
+        # 3. EXECUTE PASSES
+        unplaced_from_pass1 = self.place_fixtures_on_left_wall(left_queue)
+        if unplaced_from_pass1:
+            right_queue.extendleft(reversed(unplaced_from_pass1))
+        if right_queue:
+            self.place_fixtures_on_right_wall_new(right_queue)
+
+    # VALIDATION LOGIC:
+    def _validate_and_place_on_wall(self, fixture, target_center, angle_deg, placed_bboxes):
+        fixture_polygon = self._get_transformed_fixture_poly(fixture, target_center, angle_deg)
+        is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+        is_overlapping = any(fixture_polygon.intersects(box(*bbox)) for bbox in placed_bboxes)
+        return is_inside and not is_overlapping
+
+    # SPACING PARAMETERS:
+    GAP_BETWEEN_PAIRS = 0          # No gap between wall fixtures
+    margin_from_wall = 1.0         # 1mm margin from wall
+    horizontal_inset_for_hybrid = 0.0 or 50.0  # Based on mirror selection
+    ```
+
+    ### **RULE A2 - MIRROR PAIRING (AUTOMATIC IN WALL PLACEMENT)**
+
+    ```python
+    # MIRROR SELECTION AND PAIRING LOGIC:
+    mirror_config = self.fixtures.get("mirror_selection", {})
+    selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
+
+    # HORIZONTAL INSET CALCULATION:
+    horizontal_inset_for_hybrid = 0.0 if selected_mirror_name == "mirror_different" else 50.0
+
+    # PAIRING IMPLEMENTATION:
+    # - Mirrors are automatically paired with wall fixtures during wall placement
+    # - Gap varies by mirror type: mirror_different = 0mm, mirror = 50mm
+    # - Mirrors maintain same wall alignment as paired wall fixture
+    ```
+
+    ### **RULE B1 - SCREEN PRIORITY PLACEMENT (CORNER-FIRST ALGORITHM)**
+
+    ```python
+    # SCREEN PLACEMENT PRIORITIES (as implemented):
+    # 1. bottom_right_corner - Primary placement location
+    # 2. central_area_between_euro_centres - Secondary location  
+    # 3. bottom_left_corner - Tertiary fallback
+    # 4. wall_segment_search - Final fallback option
+
+    # SCREEN FIXTURES IN fixture_dict:
+    screen_fixtures = {
+        "screen_43": {"path": "assets/screen/screen_43.dxf", "type": "screen"},
+        "screen_49": {"path": "assets/screen/screen_49.dxf", "type": "screen"},
+        "screen_55": {"path": "assets/screen/screen_55.dxf", "type": "screen"},
+        "screen_65": {"path": "assets/screen/screen_65.dxf", "type": "screen"}
+    }
+    # Note: LG_screen not present in actual fixture_dict
+    ```
+
+    ### **RULE C1 - EURO_CENTRE VERTICAL STACKING (place_central_fixtures_portrait)**
+
+    ```python
+    def place_central_fixtures_portrait(self, placed_bboxes, bottom_margin_pct=0.20):
+        # 1. DYNAMIC VERTICAL GAP CALCULATION
+        VERTICAL_ROW_GAP = self._calculate_dynamic_vertical_gap()
+        
+        # 2. PLACEMENT ZONE DEFINITION
+        room_height = self.cvc.max_y - self.cvc.min_y
+        aisle_buffer = room_height * bottom_margin_pct  # Default 0.20 = 20%
+        cursor_y = self.cvc.min_y + aisle_buffer
+        cursor_y_end = self.cvc.max_y - 5.0
+        
+        # 3. DYNAMIC STACK SIZE ALGORITHM
+        def _find_best_stack_size(self, local_width, walking_margin, total_euros_in_queue, fixture_obj):
+            max_to_try = 3
+            for n in range(min(max_to_try, total_euros_in_queue), 0, -1):
+                gap = self._calculate_dynamic_euro_gap(n)
+                required_width = (fixture_obj.height * n) + (gap * (n - 1)) + walking_margin
+                if required_width <= local_width:
+                    return n, gap
+            return 0, 0
+        
+        # 4. EURO GAP CALCULATION
+        def _calculate_dynamic_euro_gap(self, num_in_stack):
+            if num_in_stack <= 1: return 0.0
+            elif num_in_stack == 2: return 1000.0
+            elif num_in_stack == 3: return 1200.0
+            else: return 1200.0
+
+    # BOUNDARY VALIDATION:
+    is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+    collision_check = not any(fixture_polygon.intersects(box(*bbox)) for bbox in placed_bboxes)
+    ```
+
+    ### **RULE C2 - LENSBAR ROTATED PLACEMENT (270° ROTATION)**
+
+    ```python
+    # LENSBAR SPECIFIC IMPLEMENTATION:
+    # - Always rotated 270 degrees (height becomes width)
+    # - GAP_LENSBAR_TO_LENSBAR = 50.0
+    # - Placed together with Euro_centre in central fixture algorithm
+    # - Uses same vertical stacking pattern as Euro_centre
+
+    # ROTATION LOGIC:
+    angle_deg = 90  # 270° rotation in placement (swap width/height)
+    rotated_width, rotated_height = fixture.height, fixture.width
+
+    # ACTUAL IMPLEMENTATION IN place_central_fixtures_portrait():
+    # fixture_queue.extend([lensbar_fxtr_template] * lensbar_count)
+    # Lensbar fixtures are rotated and placed with Euro_centre in same algorithm
+    ```
+
+    ### **RULE D1 - CLINIC PLACEMENT (place_clinics_with_best_fit_and_fallback_new)**
+
+    ```python
+    def place_clinics_with_best_fit_and_fallback_new(self, placed_bboxes):
+        # 1. TOP WALL ANALYSIS
+        top_wall_analysis = self._analyze_top_wall_with_bulge_detection(
+            small_bulge_max_width=300.0, 
+            small_bulge_max_depth=400.0
+        )
+        
+        # 2. CLINIC CONFIGURATION
+        clinic_config = self.fixtures.get("clinic_fixtures", {})
+        clinics_to_place = []
+        for name, count in clinic_config.items():
+            if count > 0:
+                clinics_to_place.extend([name] * count)
+        
+        # 3. BEST FIT COMBINATION ALGORITHM
+        def _find_best_combination_for_row(self, clinic_names_to_place, available_width, force_orientation=None):
+            # Tries all combinations to maximize clinic placement
+            # Considers both horizontal and vertical orientations
+            # Returns best combination that fits within available_width
+        
+        # 4. OPPORTUNISTIC BOH ZONE CREATION
+        def _calculate_opportunistic_boh_zone(self, last_clinic_bbox, placed_bboxes):
+            # Creates BOH zone after clinic placement
+            # Calculates available space for back-of-house fixtures
+
+    # CLINIC TYPES IN fixture_dict:
+    clinic_fixtures = {
+        "Clinic_with_sink": {"path": "assets/clinic/Clinic_with_sink.dxf", "type": "clinic"},
+        "Clinic_regular": {"path": "assets/clinic/Clinic_regular.dxf", "type": "clinic"},
+        "ROC_clinic": {"path": "assets/clinic/ROC_clinic.dxf", "type": "clinic"}
+    }
+    ``````
+
+    IF fixture IN [Discussion_table_large, Discussion_table_medium, Discussion_table_small]:
+
+      THEN anchor_point = "Euro_centre_fixtures"
+
+      AND placement_pattern = "alternating_left_right"
+
+      AND rotation = 90_degrees
+
+      AND balanced_layout = TRUE
+
+      AND euro_centre_required = TRUE
+
+      VIOLATION = REJECT_PLACEMENT
+
+    ```
+
+
+
+    #### **RULE D2 - BLUE_ZERO ATTACHMENT**
+
+    ```
+
+    IF fixture = Blue_zero:
+
+    THEN primary_attachment = "Discussion_table"
+
+    AND fallback_attachment = "Euro_centre"
+
+    AND position = "centered_below_anchor"
+
+    AND gap = 50mm
+
+    AND quantity = "one_per_anchor"
+
+    VIOLATION = REJECT_PLACEMENT```
+
+
+
+    #### **RULE E1 - POS/AR PAIRING**
+
+    ```
+
+    IF fixture IN [pos_with_screen_large, pos_with_screen_medium, pos_with_screen_small, pos_without_screen]:
+
+      THEN paired_with_AR = MANDATORY
+
+      AND anchor_point = "top_of_highest_central_fixture"
+
+      AND search_pattern = "upward_iterative_with_horizontal_nudging"
+
+      AND gap_between_pos_ar = 100mm
+
+      AND placement_as_pair = TRUE
+
+      VIOLATION = REJECT_PLACEMENT
+
+    ```
+
+
+
+    #### **RULE F1 - CLINIC TOP WALL PLACEMENT WITH EXACT POSITIONING**
+
+    ```
+
+    IF fixture IN [Clinic_regular, Clinic_with_sink, ROC_clinic]:
+
+    THEN primary_strategy = "top_wall_placement"  AND wall_detection = self._get_wall_details('top')
+
+      AND top_wall_coord = max(self.cvc.y_coords)
+
+      AND tolerance = (max(self.cvc.y_coords) - min(self.cvc.y_coords)) * 0.1
+
+      AND y_position = top_wall_coord - tolerance
+
+      AND arrangement = "left_to_right_rows"
+
+      AND orientation = "inward_facing"
+
+      AND row_flipping = "second_row_180_degrees"
+
+      AND customer_facing = TRUE
+
+      AND integrated_setup = "single_unit_with_components"
+
+      AND boundary_validation = self.floorplan_polygon.buffer(-1.0).contains(clinic_polygon)
+
+      AND collision_check = NOT any(aabb.has_intersection with placed_bboxes)
+
+      VIOLATION = REJECT_PLACEMENT
+
+    ```
+
+
+
+    #### **RULE G1 - BOH ZONE ORGANIZED PLACEMENT**
+
+    ```
+
+    IF fixture IN [ups_rack, storage_rack, pickup_storage_900, pickup_storage_1200]:
+
+      THEN category = "storage_first"
+
+      AND zone = "top_right_boh_zone"
+
+      AND placement_order = "perimeter_walls_first"
+
+      VIOLATION = REJECT_PLACEMENT
+
+
+
+    IF fixture IN [QC_table_large, QC_table_medium, Repair_Table_large, Repair_Table_medium, pickup_table]:
+
+      THEN category = "workstations_second"
+
+      AND zone = "top_right_boh_zone"
+
+      VIOLATION = REJECT_PLACEMENT
+
+
+
+    IF fixture IN [staff_rack, Dining_Table_large, Dining_Table_medium, water_dispenser]:
+
+      THEN category = "amenities_last"
+
+      AND zone = "top_right_boh_zone"
+
+      VIOLATION = REJECT_PLACEMENT
+
+    ```
+
+
+
+    #### **RULE G2 - BOH ACCESSORIES**
+
+    ```
+
+    IF fixture = drop_box:
+
+      THEN anchor = "last_placed_boh_fixture"
+
+      AND position = "directly_below_anchor"
+
+      AND gap = 190mm
+
+      AND expansion = "row_left_right_alternating"
+
+      VIOLATION = REJECT_PLACEMENT
+
+
+
+    IF fixture = pick_up_counter:
+
+    THEN anchor = "bottom_most_boh_fixture"
+
+    AND gap = 150mm
+
+    AND direction = "right_to_left_sequential"
+
+    VIOLATION = REJECT_PLACEMENT```
+
+
+
+    #### **RULE H1 - LENSOMETER WALL PARALLEL**
+
+    ```
+
+    IF fixture IN [Lensometer_large, Lensometer_medium, Lensometer_small]:
+
+      THEN placement = "wall_parallel"
+
+      AND orientation = "inward_facing"
+
+      AND wall_clearance = 20mm
+
+      AND search_pattern = "100mm_increments_along_wall"
+
+      VIOLATION = REJECT_PLACEMENT
+
+    ```
+
+
+
+    #### **RULE I1 - CUSTOMER SEATING MULTI-STRATEGY**
+
+    ```
+
+    IF fixture IN [sofa, Sofa_large, Sofa_medium]:
+
+      THEN strategy_1 = "200mm_above_pos_ar_units"
+
+      AND strategy_2 = "adaptive_fit_above_pos_ar"
+
+      AND strategy_3 = "bottom_aisle_placement"
+
+      AND strategy_4 = "global_search_fallback"
+
+      AND grouped_placement = "single_row_all_together"
+
+      VIOLATION = REJECT_PLACEMENT
+
+
+
+    IF fixture IN [large_bench, medium_bench]:
+
+      THEN strategy_1 = "vertical_near_clinic_sides"
+
+      AND strategy_2 = "wall_segments_near_clinics"
+
+      AND strategy_3 = "direct_clinic_attachment"
+
+      AND strategy_4 = "global_wall_search"
+
+      AND rotation = 90_degrees_vertical
+
+      VIOLATION = REJECT_PLACEMENT
+
+    ```
+
+
+
+    #### **RULE J1 - SPECIALIZED TABLE PLACEMENT**
+
+    ```
+
+    IF fixture = QMS_desk:
+
+      THEN placement = "central_row_euro_centre_aligned"
+
+      AND resilient_start = "nearest_clear_spot"
+
+      AND expansion = "outward_left_right_alternating"
+
+      AND dynamic_gap = "shrinking_with_more_desks"
+
+      VIOLATION = REJECT_PLACEMENT
+
+
+
+    IF fixture = Standing_table:
+
+      THEN logic = "odd_even_count_strategy"
+
+      AND odd_logic = "central_first_expand_outwards"
+
+      AND even_logic = "perfectly_centered_horizontal_row"
+
+      AND multi_column = "if_too_large_for_single_row"
+
+      AND anchor = "corian_table_or_euro_centre"
+
+      VIOLATION = REJECT_PLACEMENT
+
+
+
+    IF fixture IN [Corian_table, Lounge_seat]:
+
+      THEN unit_type = "5_piece_set"
+
+      AND placement = "clear_vertical_level_euro_centre_guide"
+
+      AND positioning = "centered_group_smart_search"
+
+      AND group_placement = "entire_group_together"
+
+      VIOLATION = REJECT_PLACEMENT
+
+    ```
+
+
+
+    ---
+
+
+
+    ## **COLLISION DETECTION - EXACT FORMULAS WITH CODE IMPLEMENTATION**
+
+
+
+    ### **WALL BOUNDARY ENFORCEMENT - EXACT ALGORITHM**
+
+    ```
+
+    FLOORPLAN_POLYGON_CHECK:
+
+      local_center = fixture.bounding_box.center
+
+      transform = Matrix44.chain(
+
+        Matrix44.translate(-local_center.x, -local_center.y, 0),
+
+        Matrix44.z_rotate(math.radians(angle_deg)),
+
+        Matrix44.translate(target_center.x, target_center.y, 0)
+
+      )
+
+      world_corners = transform.transform_vertices(fixture.bounding_box.rect_vertices())
+
+      fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+
+      
+
+      MANDATORY_VALIDATION:
+
+        is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+
+        IF NOT is_inside THEN REJECT_PLACEMENT
+
+    ```
+
+
+
+    ### **SPACING CALCULATIONS - OPTIMIZED FOR PRACTICAL WALL FIXTURE PLACEMENT**
+
+    ```
+
+    PRACTICAL_DIMENSION_SPACING:
+
+      minimum_spacing = (fixture1_width + fixture2_width) / 2 + 0.04
+
+      wall_fixture_spacing = max(fixture_width, 0.036) + 0.08 (OPTIMIZED for successful placement)
+
+      large_fixture_buffer = 0.08 (if width > 0.20 OR height > 0.20 - applies to screens, clinics)
+
+      screen_clearance = max(fixture_width, 0.746) + 0.15 (reasonable clearance for screens)
+
+      customer_walking_corridor = max(largest_fixture_width_in_area + 0.12, 0.25)
+
+      
+
+    BALANCED_ENTRANCE_SPACING:
+
+      entry_free_zone = NO FIXTURES (y = 0.90-1.00) - COMPLETELY CLEAR
+
+      entry_buffer_zone = NO FIXTURES (y = 0.80-0.90) - BUFFER PROTECTION
+
+      entry_restricted_zone = WALL FIXTURES ALLOWED (y = 0.70-0.80) with setback
+
+      setback_from_entrance = max(fixture_height + 0.05, 0.20) - practical protection
+
+      
+
+    OPTIMIZED_FIXTURE_SPACING:
+
+      wall_fixtures = fixture_width + 0.08 (e.g., jj_fixture_large: 0.042 + 0.08 = 0.122 spacing)
+
+      screens = fixture_width + 0.15 (e.g., screen_65: 0.746 + 0.15 = 0.896 clearance)
+
+      euro_centres = fixture_width + 0.10 (e.g., Euro_centre: 0.097 + 0.10 = 0.197 spacing)
+
+      clinics = fixture_width + 0.12 (e.g., Clinic_with_sink: 0.290 + 0.12 = 0.410 spacing)
+
+      boh_fixtures = fixture_width + 0.06 (compact BOH area spacing)
+
+      
+
+    COLLISION_PREVENTION:
+
+      aabb_expansion = fixture_dimensions + 0.02 collision_buffer
+
+      geometric_clearance = max(fixture_width, fixture_height) + 0.04
+
+      rotation_clearance = sqrt(width² + height²) + 0.03 (for rotated fixtures)
+
+      
+
+    PRACTICAL_CIRCULATION:
+
+      entrance_walkable_width = 0.60 minimum (practical entrance width)
+
+      corridor_width_near_large_fixtures = max(largest_fixture_width + 0.15, 0.25)
+
+      corridor_width_near_small_fixtures = max(largest_fixture_width + 0.10, 0.18)
+
+      turning_radius = max(largest_fixture_diagonal, 0.25) for navigation
+
+    ```
+
+    ```
+
+
+
+    ### **OVERLAP DETECTION - EXACT BOUNDING BOX ALGORITHM**
+
+    ```
+
+    AABB_COLLISION_CHECK:
+
+      aabb = BoundingBox2d(world_corners)
+
+      is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+
+      
+
+      PLACEMENT_DECISION:
+
+        IF (is_inside AND NOT is_overlapping):
+
+          THEN PLACE_FIXTURE
+
+        ELSE:
+
+          REJECT_PLACEMENT
+
+
+
+    WALL_SEGMENT_VALIDATION:
+
+      wall_segments = self.cvc.get_wall_segments(min_length=100)
+
+      candidate_segments = filter_by_tolerance(wall_segments, side, tolerance)
+
+      longest_segment = max(candidate_segments, key=lambda seg: segment_length)
+
+      
+
+    GEOMETRIC_TRANSFORM_VALIDATION:
+
+      rotated_offset = local_center.rotate(math.radians(angle_deg))
+
+      final_insert_point = target_center - rotated_offset
+
+      VALIDATE: final_insert_point within floorplan_polygon.buffer(-1.0)
+
+    ```
+
+
+
+    ---
+
+
+
+    ## **VALIDATION PROTOCOL - MANDATORY CHECKS**
+
+
+
+    ### **PRE-PLACEMENT VALIDATION - IMPLEMENTING EXACT CODE LOGIC WITH ENTRANCE PROTECTION**
+
+    1. **Fixture exists in approved inventory**: YES/NO
+
+    2. **Zone permission verified**: YES/NO  
+
+    3. **Size constraints satisfied**: YES/NO
+
+    4. **Pairing requirements met**: YES/NO
+
+    5. **Wall constraints respected**: YES/NO
+
+    6. **Entry zone free of fixtures**: YES/NO - COMPLETELY CLEAR y = 0.90-1.00
+
+    7. **Entry approach zone compliance**: YES/NO - Setback requirements met for y = 0.80-0.90
+
+    8. **Customer walking space maintained**: YES/NO - 0.18 minimum corridors
+
+    9. **Entrance walkable width preserved**: YES/NO - 0.60 minimum clear width
+
+    10. **No fixture overlapping**: YES/NO
+
+    11. **Floorplan polygon containment**: is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+
+    12. **Wall segment validation**: wall_segments = self.cvc.get_wall_segments(min_length=100)
+
+    13. **Geometric transform validation**: Matrix44 transformation within bounds
+
+    14. **AABB collision detection**: BoundingBox2d intersection check with placed_bboxes
+
+    15. **Neat wall alignment**: Wall fixtures aligned in straight line parallel to wall
+
+    16. **Enhanced spacing compliance**: 0.10 spacing between wall fixtures maintained
+
+
+
+    ### **POST-PLACEMENT VALIDATION - EXACT ALGORITHM IMPLEMENTATION WITH ENTRANCE VERIFICATION**
+
+    1. **No collision detected**: aabb.has_intersection(placed_bboxes) = FALSE
+
+    2. **All spacing rules satisfied**: YES/NO
+
+    3. **Business logic compliance**: YES/NO
+
+    4. **Total fixture count within limits**: YES/NO
+
+    5. **Entry zone remains completely clear**: y = 0.90-1.00 has zero fixtures
+
+    6. **Entry approach zone compliance**: y = 0.80-0.90 meets setback requirements
+
+    7. **Customer walking corridors clear**: 0.18 minimum maintained throughout
+
+    8. **Entrance walkable width preserved**: 0.60 minimum clear width verified
+
+    9. **Euro centres and tables not overlapping**: YES/NO
+
+    10. **Clinics positioned at backside**: YES/NO
+
+    11. **Staff rack, lensometer, ups rack at backside**: YES/NO
+
+    12. **Floorplan boundary compliance**: ALL fixtures within floorplan_polygon.buffer(-1.0)
+
+    13. **Wall detection accuracy**: Wall coordinates match self.cvc.min_x, max_x, y_coords
+
+    14. **Transform point validation**: final_insert_point = target_center - rotated_offset VALID
+
+    15. **Wall fixtures neat alignment**: All wall fixtures form straight, parallel lines
+
+    16. **Enhanced spacing verification**: 0.10 spacing maintained between wall fixtures
+
+    17. **Customer circulation flow**: Clear, unobstructed paths from entrance to all areas
+
+
+
+    ### **MANDATORY REJECTION CONDITIONS - CODE-BASED IMPLEMENTATION WITH ENTRANCE PROTECTION**
+
+    - **Fixture not in approved list**: REJECT
+
+    - **Wrong zone placement**: REJECT  
+
+    - **Missing required pair**: REJECT
+
+    - **Collision detected**: aabb.has_intersection = TRUE → REJECT
+
+    - **Rule violation**: REJECT
+
+    - **Entry zone blocked**: ANY fixture in y = 0.90-1.00 → REJECT
+
+    - **Entry approach zone violation**: Wall fixture without 0.20 setback → REJECT
+
+    - **Insufficient walking space**: Less than 0.18 corridor width → REJECT
+
+    - **Entrance walkable width compromised**: Less than 0.60 clear width → REJECT
+
+    - **Euro centre overlap with tables**: REJECT
+
+    - **Clinic not at backside**: REJECT
+
+    - **Staff rack/lensometer/ups rack not at backside**: REJECT
+
+    - **Outside floorplan polygon**: is_inside = FALSE → REJECT
+
+    - **Wall segment validation failed**: REJECT
+
+    - **Geometric transformation invalid**: REJECT
+
+    - **AABB boundary violation**: REJECT
+
+    - **Wall fixtures not aligned neatly**: Deviation > 0.02 from straight line → REJECT
+
+    - **Enhanced spacing violation**: Wall fixture spacing < 0.08 → REJECT
+
+    - **Customer circulation compromised**: Blocked paths from entrance → REJECT
+
+
+
+    ---
+
+
+
+    ## **EXECUTION SEQUENCE - IMPLEMENTING MAIN.PY LOGIC**
+
+
+
+    ### **ORIENTATION-BASED PLACEMENT STRATEGIES**
+
+    ```
+
+    IF orientation == 'landscape':
+
+      THEN execute_landscape_strategy:
+
+        1. dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
+
+        2. dxfc.place_boh_preset(all_placed_bboxes)
+
+        3. dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
+
+        4. dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
+
+        5. dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
+
+        6. remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
+
+        7. IF remaining_tables: dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
+
+        8. dxfc.place_corian_table_set_landscape(all_placed_bboxes)
+
+        9. dxfc.place_standing_tables_landscape(all_placed_bboxes)
+
+        10. dxfc.place_Blue_Zero_landscape(all_placed_bboxes)    11. dxfc.place_pos_ar_landscape(all_placed_bboxes)
+
+        12. dxfc.place_qms_at_entrance(all_placed_bboxes)
+
+        13. dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
+
+
+
+    ELSE orientation == 'portrait':
+
+      THEN execute_portrait_strategy:
+
+        1. dxfc.place_clinics_with_best_fit_and_fallback(all_placed_bboxes)
+
+        2. all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+        3. dxfc.place_boh_fixtures_in_room(all_placed_bboxes)
+
+        4. all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+        5. dxfc.place_pickup_window_next_to_clinic(all_placed_bboxes)
+
+        6. all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+        7. dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
+
+        8. parser.orchestrate_wall_and_overflow_placement(dxfc, primary_side=Primary)
+
+        9. all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+        10. euro_bottom_margin = dxfc._calculate_dynamic_bottom_margin_percentage()
+
+        11. dxfc.place_central_fixtures_portrait(placed_bboxes=all_placed_bboxes, bottom_margin_pct=euro_bottom_margin)
+
+        12. dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
+
+        13. dxfc.place_corian_table_set(all_placed_bboxes)
+
+        14. dxfc.place_pos_ar_portrait_dynamically(all_placed_bboxes)
+
+        15. all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+        16. dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
+
+        17. dxfc.place_Blue_Zero_attached(all_placed_bboxes)
+
+        18. dxfc.place_sofas_above_screen_ar(all_placed_bboxes, bottom_margin_pct=euro_bottom_margin, gap_above_ar=200)
+
+        19. dxfc.place_standing_tables_beside_euros(all_placed_bboxes)
+
+        20. dxfc.place_qms_from_center(all_placed_bboxes, bottom_margin_pct=0.20)
+
+        21. dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
+
+    ```
+
+
+
+    ## **ENTRANCE EXCELLENCE PROTOCOL - MANDATORY IMPLEMENTATION**
+
+
+
+    ### **ENTRANCE ZONE HIERARCHY - STRICT ENFORCEMENT**
+
+    ```
+
+    TIER 1 - ENTRY_FREE_ZONE (y = 0.80-0.90):
+
+      - COMPLETELY PROHIBITED: All fixtures, displays, obstacles
+
+      - MANDATORY CLEARANCE: 0.60 minimum width for customer flow
+
+      - VISUAL CLARITY: Unobstructed sight lines into store
+
+      - ACCESSIBILITY: Full wheelchair and mobility device access
+
+
+
+    TIER 2 - ENTRY_APPROACH_ZONE (y = 0.75-0.80):
+
+      - RESTRICTED ACCESS: Wall fixtures only with mandatory setbacks
+
+      - SETBACK REQUIREMENT: 0.15 minimum distance from entry boundary
+
+      - ENHANCED SPACING: 0.10 minimum between wall fixtures (neat appearance)
+
+      - CUSTOMER CLEARANCE: 0.20 minimum walkable space in front of fixtures
+
+
+
+    TIER 3 - FRONT_ZONE (y = 0.70-0.75):
+
+      - LIMITED FIXTURES: Small displays and seating only
+
+      - ENHANCED SPACING: 0.20 corridor width maintained
+
+      - SIGHT LINE PROTECTION: No tall fixtures blocking view into store
+
+    ```
+
+
+
+    ### **WALL FIXTURE EXCELLENCE STANDARDS**
+
+    ```
+
+    LEFT_WALL_FIXTURES:
+
+      - ALIGNMENT: Perfectly straight line parallel to wall
+
+      - SPACING: Uniform 0.10 gaps between fixtures
+
+      - SETBACK: 0.15 minimum from entrance boundary (y = 0.80)
+
+      - PROGRESSION: Bottom-to-top placement starting from y = 0.70
+
+      - MIRROR_PAIRING: Synchronized with wall fixture placement
+
+
+
+    RIGHT_WALL_FIXTURES:
+
+      - SYMMETRY: Mirror left wall placement for visual balance
+
+      - ALIGNMENT: Perfectly straight line parallel to wall
+
+      - SPACING: Uniform 0.10 gaps between fixtures
+
+      - SETBACK: 0.15 minimum from entrance boundary (y = 0.80)
+
+      - PROGRESSION: Bottom-to-top placement starting from y = 0.70
+
+    ```
+
+
+
+    ### **CUSTOMER CIRCULATION OPTIMIZATION**
+
+    ```
+
+    ENTRANCE_FLOW_PATTERN:
+
+      - PRIMARY_PATH: Direct central entry with 0.60 minimum width
+
+      - BRANCHING_PATHS: Clear routes to left wall, right wall, center areas
+
+      - SIGHT_LINES: Unobstructed views to all store sections
+
+      - WAYFINDING: Intuitive navigation from entrance to any destination
+
+
+
+    WALKABLE_SPACE_REQUIREMENTS:
+
+      - CORRIDOR_WIDTH: 0.20 minimum between all fixtures
+
+      - ENTRANCE_WIDTH: 0.60 minimum at entry point
+
+      - TURN_RADIUS: 0.30 minimum for comfortable navigation
+
+      - ACCESSIBILITY: ADA compliant spacing throughout
+
+    ```
+
+
+
+    ### **FORBIDDEN ACTIONS**
+
+    - **Modifying fixture sizes**: NEVER
+
+    - **Creating new fixtures**: NEVER
+
+    - **Ignoring pairing rules**: NEVER
+
+    - **Placing in wrong zones**: NEVER
+
+    - **Assuming unstated rules**: NEVER
+
+    - **Bypassing floorplan_polygon validation**: NEVER
+
+    - **Ignoring wall segment detection**: NEVER
+
+    - **Skipping AABB collision checks**: NEVER
+
+    - **Placing outside buffer(-1.0) boundary**: NEVER
+
+
+
+    ### **MANDATORY RESPONSES**
+
+    - **If rule unclear**: REQUEST CLARIFICATION
+
+    - **If constraint violated**: REJECT PLACEMENT
+
+    - **If fixture unlisted**: REJECT FIXTURE
+
+    - **If zone restricted**: ENFORCE RESTRICTION
+
+    - **If spacing insufficient**: REJECT LAYOUT
+
+    - **If floorplan_polygon.contains() = FALSE**: REJECT PLACEMENT
+
+    - **If wall segment validation fails**: REJECT PLACEMENT
+
+    - **If AABB collision detected**: REJECT PLACEMENT
+
+    - **If geometric transformation invalid**: REJECT PLACEMENT
+
+
+
+    ### **ALGORITHM IMPLEMENTATION REQUIREMENTS**
+
+    ```
+
+    MANDATORY_VALIDATION_SEQUENCE:
+
+      1. local_center = fixture.bounding_box.center
+
+      2. transform = Matrix44.chain(translation, rotation, final_translation)
+
+      3. world_corners = transform.transform_vertices(fixture.bounding_box.rect_vertices())
+
+      4. fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+
+      5. aabb = BoundingBox2d(world_corners)
+
+      6. is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+
+      7. is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+
+      8. IF (is_inside AND NOT is_overlapping): PLACE_FIXTURE ELSE: REJECT_PLACEMENT
+
+      
+
+    WALL_DETECTION_IMPLEMENTATION:
+
+      wall_segments = self.cvc.get_wall_segments(min_length=100)
+
+      target_coord = self.cvc.min_x OR self.cvc.max_x OR min(y_coords) OR max(y_coords)
+
+      tolerance = (max_coord - min_coord) * 0.1
+
+      candidate_segments = filter_within_tolerance(wall_segments, target_coord, tolerance)
+
+      longest_segment = max(candidate_segments, key=segment_length)
+
+    ```
+
+
+
+    ---
+
+
+
+    ---
+
+
+
+    ## **COMPLIANCE VERIFICATION - IMPLEMENTING EXACT CODE VALIDATION**
+
+
+
+    ### **FINAL LAYOUT REQUIREMENTS**
+
+    - **All fixtures from approved list**: VERIFIED
+
+    - **All zone rules followed**: VERIFIED
+
+    - **All pairing rules satisfied**: VERIFIED  
+
+    - **All spacing constraints met**: VERIFIED
+
+    - **No rule violations**: VERIFIED
+
+    - **All fixtures within floorplan_polygon.buffer(-1.0)**: VERIFIED
+
+    - **All wall detection validations passed**: VERIFIED
+
+    - **All AABB collision checks passed**: VERIFIED
+
+    - **All geometric transformations valid**: VERIFIED
+
+
+
+    ### **QUALITY GATES - ULTRA-STRICT ENTRANCE VALIDATION**
+
+    - **100% rule compliance**: MANDATORY
+
+    - **Zero unauthorized fixtures**: MANDATORY
+
+    - **Zero zone violations**: MANDATORY
+
+    - **Zero collision detections**: MANDATORY
+
+    - **ULTRA-STRICT entrance clarity**: y = 0.85-1.00 completely clear, y = 0.75-0.85 buffer zone clear
+
+    - **Maximum entrance protection**: NO fixtures within 0.30 of entrance boundary (y = 0.85)
+
+    - **Entrance blocking prevention**: Wall fixtures start from y = 0.60 maximum safe distance
+
+    - **Target-quality visual balance**: Symmetric fixture distribution comparable to reference layouts
+
+    - **Professional alignment standards**: All fixtures aligned to clean geometric grid patterns
+
+    - **Ultra-enhanced customer circulation**: 0.80 minimum entrance width, 0.30 corridor widths maintained
+
+    - **Visual organization excellence**: Clean, spacious entrance with zero obstruction
+
+    - **Zero floorplan boundary violations**: self.floorplan_polygon.buffer(-1.0).contains(ALL_fixtures) = TRUE
+
+    - **Zero wall segment validation failures**: self._get_wall_details(side) returns valid for ALL wall fixtures
+
+    - **Zero AABB intersection violations**: aabb.has_intersection(placed_bboxes) = FALSE for ALL fixtures
+
+    - **Zero geometric transformation errors**: Matrix44 calculations valid for ALL placements
+
+    - **Perfect wall fixture alignment**: ALL wall fixtures in neat, straight lines parallel to walls
+
+    - **Enhanced spacing compliance**: 0.15 minimum spacing between all wall fixtures
+
+    - **Completely unobstructed entrance flow**: Crystal clear customer paths from entrance to all store areas
+
+    - **Premium entrance appearance**: Spacious, professional entrance creating positive store impression
+
+    - **Professional presentation standard**: Layout quality comparable to 100FT-ROAD_CIVIL-LINE_BHATINDA_PUNJAB-COCO-Model-3
+
+
+
+    ### **MANDATORY OBSTACLE REFRESH PROTOCOL**
+
+    ```
+
+    AFTER_EACH_MAJOR_PLACEMENT_PHASE:
+
+      all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+      
+
+    OBSTACLE_DETECTION_ALGORITHM:
+
+      include_types = ['clinic', 'boh', 'boh_preset'] OR all_fixtures if include_all=True
+
+      FOR each entity IN msp.query('INSERT'):
+
+        block_name_upper = entity.dxf.name.upper()
+
+        best_match_key = find_longest_matching_key(fixture_dict.keys())
+
+        IF fixture_type IN allowed_types:
+
+          entity_bbox = extents([entity], fast=True)
+
+          bboxes.append((entity_bbox.extmin.x, entity_bbox.extmin.y, entity_bbox.extmax.x, entity_bbox.extmax.y))
+
+    ```
+
+
+
+    ---
+
+
+
+    **THIS PROMPT CONTAINS EVERY PERMISSIBLE ACTION FOR TARGET PERFECT FLOORPLAN GENERATION. ALL LAYOUTS MUST MATCH THE PROFESSIONAL QUALITY AND VISUAL ORGANIZATION OF REFERENCE TARGET 100FT-ROAD_CIVIL-LINE_BHATINDA_PUNJAB-COCO-Model-3. ANYTHING NOT EXPLICITLY STATED IS FORBIDDEN. FOLLOW EXACTLY AS WRITTEN WITH ZERO DEVIATION OR INTERPRETATION.**
+
+**CRITICAL: FIXTURE POSITIONS MUST NOT BE CHANGED - USE EXACT PLACEMENT COMMANDS AND COORDINATES AS SPECIFIED IN THIS PROMPT WITHOUT ANY MODIFICATIONS OR OPTIMIZATIONS.**
+
+**ABSOLUTE REQUIREMENT: PRESERVE ORIGINAL LAYOUT SHAPE - NEVER MODIFY, RESIZE, RESHAPE, OR CHANGE THE FLOORPLAN GEOMETRY. ONLY ADD FIXTURES INSIDE THE EXISTING BOUNDARIES.**
+
+**CRITICAL BOUNDARY RULE: ALL FIXTURES MUST BE COMPLETELY INSIDE THE LAYOUT BOUNDARY - NO EXCEPTIONS.**
+
+    ---
+
+    ## **STRICT FIXTURE COMPLIANCE COMMAND**
+
+    ### **🔒 MANDATORY FIXTURE INVENTORY - MERCH_MIX.JSON ALIGNMENT**
+
+    **ALL FIXTURES MUST CORRESPOND TO MERCH_MIX.JSON CATEGORIES. USE ONLY THESE EXACT FIXTURE NAMES:**
+
+    **1. JJ_Eye (merch_mix min: 4.0, max: 1) → WALL FIXTURES:**
+    - `jj_fixture_large` - JJ Eye Large Wall Fixture  
+    - `jj_fixture_medium` - JJ Eye Medium Wall Fixture
+    - `jj_fixture_different_large` - JJ Eye Different Large Variant
+    - `jj_fixture_different_medium` - JJ Eye Different Medium Variant
+
+    **2. JJ_Sun (merch_mix min: 1.0, max: 3) → WALL FIXTURES:**
+    - `jj_super_hybrid_large` - JJ Sun Large Hybrid Fixture
+    - `jj_super_hybrid_medium` - JJ Sun Medium Hybrid Fixture  
+    - `jj_super_hybrid_small` - JJ Sun Small Hybrid Fixture
+
+    **3. VC_Eye (merch_mix min: 4.1, max: 2) → WALL FIXTURES:**
+    - `vc_fixture_large` - VC Eye Large Wall Fixture
+    - `vc_fixture_medium` - VC Eye Medium Wall Fixture
+
+    **4. VC_Sun (merch_mix min: 2.2, max: 0) → WALL FIXTURES:**
+    - `with_screen` - VC Sun with Screen Display
+    - `window_1_section` - VC Sun Single Section Window
+    - `window_3_section` - VC Sun Triple Section Window
+
+    **5. LK_Air (merch_mix min: 4.7, max: 2) → FLOOR FIXTURES:**
+    - `Lensometer_large` - LK Air Large Lensometer
+    - `Lensometer_medium` - LK Air Medium Lensometer
+    - `Lensometer_small` - LK Air Small Lensometer
+
+    **6. VC_Kids (merch_mix min: 2.0, max: 2) → FLOOR FIXTURES:**
+    - `Discussion_table_large` - VC Kids Large Discussion Table
+    - `Discussion_table_medium` - VC Kids Medium Discussion Table
+    - `Discussion_table_small` - VC Kids Small Discussion Table
+    - `Blue_zero` - VC Kids Attached Blue Zero Fixture
+
+    **7. Reading_Glasses (merch_mix min: 0.0, max: 1) → FLOOR FIXTURES:**
+    - `Euro_centre` - Reading Glasses Euro Centre Display
+    - `Standing_table` - Reading Glasses Standing Table (anchored to Euro_centre)
+
+    **8. Tentpole (merch_mix min: 1.0, max: 0.5) → SCREEN FIXTURES:**
+    - `screen_43` - Tentpole 43" Screen Display
+    - `screen_49` - Tentpole 49" Screen Display
+    - `screen_55` - Tentpole 55" Screen Display
+    - `screen_65` - Tentpole 65" Screen Display
+
+    **9. Hustlr (merch_mix min: 1.0, max: 0.5) → POS/AR FIXTURES:**
+    - `AR` - Hustlr Augmented Reality Station
+    - `pos_with_screen_large` - Hustlr POS Large with Screen
+    - `pos_with_screen_medium` - Hustlr POS Medium with Screen
+    - `pos_with_screen_small` - Hustlr POS Small with Screen
+    - `pos_without_screen` - Hustlr POS without Screen
+
+    **10. CL/OD/LPL (merch_mix min: 0.0 each, max: 1 each) → CLINIC FIXTURES:**
+    - `Clinic_regular` - Contact Lens/OD/LPL Regular Clinic
+    - `Clinic_with_sink` - CL/OD/LPL Clinic with Sink
+    - `ROC_clinic` - ROC Clinic Fixture
+
+    **SUPPORTING FIXTURES (NOT IN MERCH_MIX BUT REQUIRED FOR FUNCTIONALITY):**
+    - `mirror` - Wall Fixture Mirror (paired with wall fixtures)
+    - `mirror_different` - Alternative Wall Mirror
+    - `pick_up_counter` - Customer Pickup Counter
+    - `QMS_desk` - Queue Management Desk
+    - `sofa` - Customer Seating
+    - `toilet` - Restroom Facility
+    - `large_bench` - Large Customer Bench
+    - `medium_bench` - Medium Customer Bench
+    - `Corian_table` - Corian Customer Table
+    - `Lounge_seat` - Lounge Seating (4-piece set with Corian)
+    - `drop_box` - Drop Box (below BOH fixtures)
+
+    **BOH FIXTURES (BACK OF HOUSE - STORAGE/WORKSTATIONS):**
+    - `pickup_storage_900` - 900mm Pickup Storage
+    - `pickup_storage_1200` - 1200mm Pickup Storage
+    - `storage_rack` - General Storage Rack
+    - `ups_rack` - UPS Equipment Rack
+    - `QC_table_large` - Large Quality Control Table
+    - `QC_table_medium` - Medium Quality Control Table
+    - `Repair_Table_large` - Large Repair Table
+    - `Repair_Table_medium` - Medium Repair Table
+    - `pickup_table` - Pickup Processing Table
+    - `Dining_Table_large` - Large Staff Dining Table
+    - `Dining_Table_medium` - Medium Staff Dining Table
+    - `staff_rack` - Staff Storage Rack
+    - `water_dispenser` - Water Dispenser
+    - `Eye_massage_area` - Eye Massage Treatment Area
+    - `Eye_massage_chair` - Eye Massage Chair
+
+    **BOH PRESETS (PRESET COMBINATIONS):**
+    - `basic_boh_preset_1` - Basic BOH Preset 1
+    - `small_basic_boh` - Small Basic BOH Setup
+    - `medium_basic_boh` - Medium Basic BOH Setup
+    - `boh_vertical_horizontal_preset_basic` - BOH Vertical-Horizontal Preset
+
+    **🚨 ABSOLUTE COMMAND: USE ONLY THE EXACT FIXTURE NAMES LISTED ABOVE. NO SUBSTITUTIONS, VARIATIONS, OR CREATIVE INTERPRETATIONS ALLOWED.**
+
+    ---
+
+    ## **EXECUTION COMMAND**
+
+    **Generate optimal store layout strictly following DXF_Controller.py implementation:**
+
+    1. **ORIGINAL LAYOUT PRESERVATION**: 
+    - **NEVER MODIFY THE INPUT FLOORPLAN**: Keep the exact shape, dimensions, and boundaries of the provided layout
+    - **NO GEOMETRIC CHANGES**: Do not resize, reshape, stretch, or alter the floorplan polygon in any way
+    - **INTERIOR PLACEMENT ONLY**: Place all fixtures strictly INSIDE the existing layout boundaries
+    - **RESPECT ORIGINAL WALLS**: Use the provided wall positions and angles exactly as given
+    - **MAINTAIN ORIGINAL PROPORTIONS**: Keep the exact aspect ratio and scale of the input layout
+    - **MANDATORY BOUNDARY CONTAINMENT**: ALL fixtures must be completely contained within floorplan_polygon.buffer(-1.0)
+    - **NO BOUNDARY VIOLATIONS**: Reject any fixture placement that extends outside the layout boundary
+
+    2. **MERCH MIX QUANTITY COMPLIANCE**: 
+    - Read fixture quantities directly from merch_mix.json file
+    - Use merch_mix_min values as baseline requirements
+    - Respect merch_mix_max values as upper limits
+    - For fractional values (like 0.5), round to nearest whole number or apply conditional logic
+    - When min=0.0 but max>0, use max value for fixture placement
+    - Distribute total quantities across fixture variants (e.g., JJ_Eye 4.0 = 2 large + 2 medium)
+
+    3. **DYNAMIC QUANTITY CALCULATION**:
+    - JJ_Eye: Use min(4.0) distributed as jj_fixture_large + jj_fixture_medium
+    - VC_Eye: Use min(4.1) distributed as vc_fixture_large + vc_fixture_medium  
+    - LK_Air: Use min(4.7) distributed as Lensometer_large + Lensometer_medium
+    - VC_Sun: Use min(2.2) distributed as with_screen + window_section variants
+    - Reading_Glasses: Use max(1) for Euro_centre when min=0.0
+    - Clinics: Use max(1) each for CL/OD/LPL when min=0.0
+    - Tentpole: Use min(1.0) for screen fixtures, consider max(0.5) constraint
+    - Hustlr: Use min(1.0) for AR/POS fixtures, consider max(0.5) constraint
+
+4. **STRICT POSITIONING COMPLIANCE**: 
+   - **NEVER MODIFY FIXTURE POSITIONS**: Use exact placement coordinates and algorithms specified in prompt
+   - **FOLLOW PLACEMENT COMMANDS EXACTLY**: Execute all positioning instructions without interpretation or changes
+   - **MAINTAIN ORIGINAL POSITIONING LOGIC**: Use DXF_Controller.py placement methods exactly as coded
+   - **NO POSITION ADJUSTMENTS**: Do not optimize, relocate, or adjust any fixture positions beyond what's explicitly coded
+   - **RESPECT GEOMETRIC CONSTRAINTS**: Follow exact spacing, rotation, and coordinate specifications
+   - **PRESERVE PLACEMENT SEQUENCES**: Execute fixture placement in the exact order specified
+
+5. **ALGORITHM ADHERENCE**: Follow placement algorithms exactly as coded in DXF_Controller.py methods
+6. **FIXTURE DICTIONARY COMPLIANCE**: Use only fixture names that exist in DXF_Controller.fixture_dict
+7. **VALIDATION LOGIC**: Apply _validate_and_place_at_point() validation for every fixture
+8. **EXECUTION SEQUENCE**: Follow the exact order: Clinics → Pickup Window → Toilet → BOH → Central → Wall → Benches
+9. **SPACING PARAMETERS**: Use actual spacing values from code (GAP_BETWEEN_PAIRS=0, GAP_EURO_TO_EURO=5.0, etc.)
+10. **MANDATORY BOUNDARY CONSTRAINTS**: 
+    - **ALL FIXTURES MUST BE INSIDE**: Every fixture polygon must be completely contained within floorplan_polygon.buffer(-1.0)
+    - **NO PARTIAL OVERLAPS**: No part of any fixture can extend outside the layout boundary
+    - **STRICT CONTAINMENT CHECK**: Use is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+    - **REJECT IF OUTSIDE**: If any fixture cannot fit inside boundary, do not place it
+    - **1MM BUFFER RESPECT**: Honor the -1.0mm buffer for all fixture placements
+11. **PROFESSIONAL APPEARANCE**: Create organized, balanced layout maintaining original floorplan shape
+
+**Generate image following these exact specifications without modifying the original floorplan geometry.**
+
+**FINAL MANDATE: MAINTAIN EXACT FIXTURE POSITIONS AS SPECIFIED AND PRESERVE ORIGINAL LAYOUT SHAPE - NO POSITION CHANGES, GEOMETRY MODIFICATIONS, ADJUSTMENTS, OR OPTIMIZATIONS ALLOWED. USE PLACEMENT COMMANDS EXACTLY AS WRITTEN.**
+
+**ABSOLUTE BOUNDARY REQUIREMENT: ALL FIXTURES MUST BE COMPLETELY INSIDE THE LAYOUT BOUNDARY USING floorplan_polygon.buffer(-1.0).contains() VALIDATION - NO EXCEPTIONS OR COMPROMISES.**

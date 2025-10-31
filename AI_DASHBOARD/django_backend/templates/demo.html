@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPACE APP Pro | Project Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Architecture Professional Color Palette */
+  --arch-navy: #0A1628;
+  --arch-dark: #12202F;
+  --arch-blue: #1E3A5F;
+  --arch-accent: #2DD4BF;
+  --arch-gold: #F59E0B;
+  --arch-slate: #1E293B;
+  --arch-border: #334155;
+  
+  /* Gradients */
+  --gradient-main: linear-gradient(135deg, #0A1628 0%, #1E3A5F 100%);
+  --gradient-accent: linear-gradient(135deg, #2DD4BF 0%, #14B8A6 100%);
+  --gradient-gold: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+  
+  /* Text */
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+}
+
+body {
+  font-family: 'Sora', sans-serif;
+  background: var(--arch-navy);
+  min-height: 100vh;
+  color: var(--text-primary);
+  position: relative;
+  overflow-x: hidden;
+  padding: 20px;
+}
+
+/* Architectural Grid Background */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    linear-gradient(rgba(46, 212, 191, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 212, 191, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Blueprint decoration */
+body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(46, 212, 191, 0.08) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* Header Section */
+.page-header {
+  background: rgba(18, 32, 47, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--arch-border);
+  border-radius: 16px;
+  padding: 32px;
+  margin-bottom: 24px;
+  text-align: center;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.page-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--gradient-accent);
+}
+
+.logo-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.logo-icon {
+  font-size: 3em;
+  filter: drop-shadow(0 4px 12px rgba(46, 212, 191, 0.3));
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+h1 {
+  font-size: 2.5em;
+  font-weight: 800;
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+  letter-spacing: -0.5px;
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: 1em;
+  font-weight: 500;
+}
+
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(46, 212, 191, 0.15);
+  border: 1px solid rgba(46, 212, 191, 0.3);
+  padding: 8px 16px;
+  border-radius: 24px;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--arch-accent);
+  margin-top: 12px;
+}
+
+/* Card Styles */
+.card {
+  background: rgba(18, 32, 47, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--arch-border);
+  border-radius: 16px;
+  padding: 28px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 32px rgba(46, 212, 191, 0.15);
+}
+
+.card h3 {
+  color: var(--arch-accent);
+  font-size: 1.4em;
+  margin-bottom: 20px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.card h3::before {
+  content: '📊';
+  font-size: 1.2em;
+}
+
+/* Form Elements */
+label {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  font-weight: 600;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+select, button, textarea {
+  width: 100%;
+  padding: 16px;
+  margin: 10px 0;
+  background: rgba(30, 58, 95, 0.3);
+  color: var(--text-primary);
+  border: 2px solid var(--arch-border);
+  border-radius: 12px;
+  box-sizing: border-box;
+  font-family: 'Sora', sans-serif;
+  font-size: 1em;
+  transition: all 0.3s;
+}
+
+select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%232DD4BF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 20px;
+  padding-right: 45px;
+}
+
+select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--arch-accent);
+  background: rgba(30, 58, 95, 0.5);
+  box-shadow: 0 0 0 4px rgba(46, 212, 191, 0.1);
+}
+
+button {
+  background: var(--gradient-accent);
+  border: none;
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 20px rgba(46, 212, 191, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+button:hover::before {
+  left: 100%;
+}
+
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(46, 212, 191, 0.5);
+}
+
+button:disabled {
+  background: rgba(100, 116, 139, 0.3);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+button:disabled::before {
+  display: none;
+}
+
+/* Button Icons */
+#generate-math-btn::before {
+  content: '🔢 ';
+}
+
+#generate-ai-btn::before {
+  content: '🤖 ';
+}
+
+#generate-btn::before {
+  content: '✨ ';
+}
+
+#back-btn::before {
+  content: '← ';
+}
+
+/* File Info */
+#file-info {
+  padding: 16px;
+  background: rgba(46, 212, 191, 0.1);
+  border-left: 4px solid var(--arch-accent);
+  border-radius: 8px;
+  margin: 16px 0;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Log Container */
+.log {
+  background: rgba(10, 22, 40, 0.8);
+  border: 1px solid var(--arch-border);
+  border-radius: 12px;
+  padding: 16px;
+  height: 200px;
+  overflow-y: auto;
+  margin-top: 16px;
+  font-size: 0.9em;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-secondary);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.log::-webkit-scrollbar {
+  width: 8px;
+}
+
+.log::-webkit-scrollbar-track {
+  background: rgba(30, 58, 95, 0.2);
+  border-radius: 4px;
+}
+
+.log::-webkit-scrollbar-thumb {
+  background: var(--arch-accent);
+  border-radius: 4px;
+}
+
+.log::-webkit-scrollbar-thumb:hover {
+  background: #14B8A6;
+}
+
+/* Log Entry Styles */
+.log div {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.log div:last-child {
+  border-bottom: none;
+}
+
+/* Status Classes */
+.success {
+  color: #10B981 !important;
+  font-weight: 600;
+}
+
+.success::before {
+  content: '✅ ';
+}
+
+.error {
+  color: #EF4444 !important;
+  font-weight: 600;
+}
+
+.error::before {
+  content: '❌ ';
+}
+
+.info {
+  color: var(--arch-accent) !important;
+}
+
+.info::before {
+  content: 'ℹ️ ';
+}
+
+.warning {
+  color: var(--arch-gold) !important;
+  font-weight: 600;
+}
+
+.warning::before {
+  content: '⚠️ ';
+}
+
+/* Links */
+a {
+  color: var(--arch-accent);
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.3s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+a::after {
+  content: '→';
+  transition: transform 0.3s;
+}
+
+a:hover {
+  color: #14B8A6;
+  transform: translateX(4px);
+}
+
+a:hover::after {
+  transform: translateX(4px);
+}
+
+/* Results Container */
+#results {
+  background: rgba(16, 185, 129, 0.1);
+  border: 2px solid rgba(16, 185, 129, 0.3);
+}
+
+#results h3 {
+  color: #10B981;
+}
+
+#results h3::before {
+  content: '🎉';
+}
+
+/* Loading State */
+.loading {
+  opacity: 0.6;
+  pointer-events: none;
+  position: relative;
+}
+
+.loading::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(46, 212, 191, 0.3);
+  border-top-color: var(--arch-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes spin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* Hidden State */
+.hidden {
+  display: none !important;
+}
+
+/* Textarea Specific */
+textarea {
+  resize: vertical;
+  min-height: 120px;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.6;
+}
+
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* LLM Page Specific */
+#llm-page .card {
+  background: rgba(30, 58, 95, 0.2);
+  border: 2px solid rgba(245, 158, 11, 0.3);
+}
+
+#llm-page h1 {
+  background: var(--gradient-gold);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+#llm-info {
+  padding: 14px;
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 4px solid var(--arch-gold);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  h1 {
+    font-size: 1.8em;
+  }
+  
+  .page-header {
+    padding: 24px 20px;
+  }
+  
+  .card {
+    padding: 20px;
+  }
+  
+  select, button, textarea {
+    padding: 14px;
+  }
+}
+
+/* Tooltip for disabled buttons */
+button:disabled {
+  position: relative;
+}
+
+button:disabled:hover::after {
+  content: 'Select a project first';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10, 22, 40, 0.95);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.75em;
+  white-space: nowrap;
+  border: 1px solid var(--arch-border);
+  margin-bottom: 8px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="logo-container">
+      <div class="logo-icon">🏗️</div>
+    </div>
+    <h1>Spazeapp Dashboard</h1>
+    <p class="subtitle">Interior Design Automation Platform</p>
+    <div class="ai-badge">
+      ✨ Powered by thinkneural.ai
+    </div>
+  </div>
+
+  <!-- Project Selection Card -->
+  <div class="card">
+    <h3>Project Workspace</h3>
+    <label for="project-select">Select Active Project:</label>
+    <select id="project-select" disabled>
+      <option>Loading projects...</option>
+    </select>
+    <p id="file-info"></p>
+    <button id="generate-math-btn" disabled>Generate with Math</button>
+    <button id="generate-ai-btn" disabled>Generate with AI</button>
+  </div>
+
+  <!-- Activity Logs Card -->
+  <div class="card">
+    <h3>Activity Logs</h3>
+    <div id="log-container" class="log"></div>
+  </div>
+
+  <!-- Results Card -->
+  <div id="results" class="card hidden"></div>
+</div>
+
+<!-- LLM Page (hidden by default) -->
+<div id="llm-page" class="container hidden">
+  <!-- LLM Page Header -->
+  <div class="page-header">
+    <div class="logo-container">
+      <div class="logo-icon">🤖</div>
+    </div>
+    <h1>AI Prompt Refinement</h1>
+    <p class="subtitle">Customize Your AI Generation Parameters</p>
+    <div class="ai-badge">
+      ✨ Powered by Google Gemini AI
+    </div>
+  </div>
+
+  <!-- LLM Configuration Card -->
+  <div class="card">
+    <h3>AI Generation Settings</h3>
+    <p id="llm-info"></p>
+    <label for="prompt">AI Generation Prompt:</label>
+    <textarea id="prompt" placeholder="Edit your AI generation prompt here..." rows="6">You are an expert store layout designer for optical retail stores. 
+Generate an optimal layout that maximizes customer flow, product visibility, and operational efficiency.
+Consider proper spacing for walkways, strategic placement of high-value items, and accessibility requirements.</textarea>
+    <button id="generate-btn">Generate with AI</button>
+    <button id="back-btn">Back to Projects</button>
+    <h3 style="margin-top: 24px;">AI Processing Logs</h3>
+    <div id="ai-log" class="log"></div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const projectSelect = document.getElementById("project-select");
+  const fileInfo = document.getElementById("file-info");
+  const generateMathBtn = document.getElementById("generate-math-btn");
+  const generateAiBtn = document.getElementById("generate-ai-btn");
+  const logContainer = document.getElementById("log-container");
+  const resultsContainer = document.getElementById("results");
+  
+  // LLM page elements
+  const llmPage = document.getElementById("llm-page");
+  const llmInfo = document.getElementById("llm-info");
+  const promptTextarea = document.getElementById("prompt");
+  const generateBtn = document.getElementById("generate-btn");
+  const backBtn = document.getElementById("back-btn");
+  const aiLog = document.getElementById("ai-log");
+
+  let currentProject = null;
+  let processableFileId = null;
+  let generatedDxfPath = null; // Store the generated DXF file path from Math processing
+
+  function logMessage(msg, type = "info") {
+    const entry = document.createElement("div");
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    entry.className = type;
+    logContainer.appendChild(entry);
+    logContainer.scrollTop = logContainer.scrollHeight;
+  }
+
+  function aiLogMessage(msg, type = "info") {
+    const entry = document.createElement("div");
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    entry.className = type;
+    aiLog.appendChild(entry);
+    aiLog.scrollTop = aiLog.scrollHeight;
+  }
+
+  function showMainPage() {
+    document.querySelector(".container").classList.remove("hidden");
+    llmPage.classList.add("hidden");
+  }
+
+  function showLLMPage() {
+    document.querySelector(".container").classList.add("hidden");
+    llmPage.classList.remove("hidden");
+    llmInfo.textContent = `Project: ${currentProject?.name || "Unknown"} | File ID: ${processableFileId || "Unknown"}`;
+  }
+
+  async function loadProjects() {
+    try {
+      logMessage("Loading projects from backend...");
+      const response = await fetch('/demo/api/projects/');
+      const data = await response.json();
+      
+      projectSelect.innerHTML = '<option value="">-- Select a Project --</option>';
+      
+      if (data.projects && data.projects.length > 0) {
+        data.projects.forEach(project => {
+          const option = document.createElement("option");
+          option.value = project.id;
+          option.textContent = project.name;
+          projectSelect.appendChild(option);
+        });
+        logMessage(`Loaded ${data.projects.length} projects successfully.`, "success");
+      } else {
+        logMessage("No projects found.", "error");
+      }
+      
+      projectSelect.disabled = false;
+    } catch (error) {
+      logMessage(`Error loading projects: ${error.message}`, "error");
+      projectSelect.innerHTML = '<option>Error loading projects</option>';
+    }
+  }
+
+  async function loadProjectData(projectId) {
+    try {
+      const response = await fetch('/demo/api/projects/');
+      const data = await response.json();
+      
+      currentProject = data.projects.find(p => p.id === projectId);
+      if (!currentProject) {
+        logMessage("Project not found.", "error");
+        return;
+      }
+
+      const images = currentProject.files.filter(f => ["png", "jpg", "jpeg"].includes(f.file_type));
+      if (images.length > 0) {
+        processableFileId = images[0].id;
+        fileInfo.textContent = `Selected image: ${images[0].filename}`;
+        generateMathBtn.disabled = false;
+        generateAiBtn.disabled = false;
+        logMessage(`Ready to process project "${currentProject.name}"`, "success");
+      } else {
+        fileInfo.textContent = "No image file found.";
+        generateMathBtn.disabled = true;
+        generateAiBtn.disabled = true;
+        processableFileId = null;
+        logMessage("No processable image file found.", "error");
+      }
+    } catch (error) {
+      logMessage(`Error loading project data: ${error.message}`, "error");
+    }
+  }
+
+  async function processFloorplan(mode) {
+    if (!processableFileId) {
+      logMessage("No file selected for processing.", "error");
+      return;
+    }
+
+    const button = mode === 'math' ? generateMathBtn : generateAiBtn;
+    const originalText = button.textContent;
+    
+    try {
+      button.disabled = true;
+      button.textContent = "Processing...";
+      logMessage(`Starting ${mode} flow processing...`);
+
+      const response = await fetch('/demo/api/process/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          file_id: processableFileId,
+          mode: mode
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        logMessage(`${mode} processing completed successfully!`, "success");
+        
+        // Store the generated DXF path for AI processing
+        if (mode === 'math' && result.download_url) {
+          generatedDxfPath = result.download_url;
+          logMessage("✅ DXF file ready for AI enhancement!", "success");
+        }
+        
+        resultsContainer.innerHTML = `
+          <h3>Processing Complete</h3>
+          <p>${result.message}</p>
+          <a href="${result.download_url}" target="_blank">Download DXF Output</a>
+        `;
+        resultsContainer.classList.remove("hidden");
+      } else {
+        // Check if error message contains a file path (database constraint error with file path)
+        if (result.error && result.error.includes('project_files/')) {
+          const pathMatch = result.error.match(/project_files\/[\w\/\-\.]+\.dxf/);
+          if (pathMatch) {
+            generatedDxfPath = '/media/' + pathMatch[0];
+            logMessage(`${mode} processing completed! DXF file generated.`, "success");
+            logMessage("✅ DXF file ready for AI enhancement!", "success");
+            resultsContainer.innerHTML = `
+              <h3>Processing Complete</h3>
+              <p>DXF file has been generated successfully!</p>
+              <a href="${generatedDxfPath}" target="_blank">Download DXF Output</a>
+            `;
+            resultsContainer.classList.remove("hidden");
+          } else {
+            logMessage(`Processing failed: ${result.error}`, "error");
+          }
+        } else {
+          logMessage(`Processing failed: ${result.error}`, "error");
+        }
+      }
+    } catch (error) {
+      logMessage(`Error during processing: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+
+  async function processWithAI() {
+    if (!processableFileId) {
+      aiLogMessage("No file selected for processing.", "error");
+      return;
+    }
+
+    const originalText = generateBtn.textContent;
+    
+    try {
+      generateBtn.disabled = true;
+      generateBtn.textContent = "Processing with AI...";
+      aiLogMessage("🧠 Starting AI generation process...");
+
+      const response = await fetch('/demo/api/process/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          file_id: processableFileId,
+          mode: 'ai',
+          prompt: promptTextarea.value
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        aiLogMessage("✅ AI processing completed successfully!", "success");
+        const downloadLink = document.createElement("a");
+        downloadLink.href = result.download_url;
+        downloadLink.textContent = "Download AI Generated DXF";
+        downloadLink.target = "_blank";
+        downloadLink.style.display = "block";
+        downloadLink.style.marginTop = "10px";
+        aiLog.appendChild(downloadLink);
+      } else {
+        aiLogMessage(`❌ AI processing failed: ${result.error}`, "error");
+      }
+    } catch (error) {
+      aiLogMessage(`❌ Error during AI processing: ${error.message}`, "error");
+    } finally {
+      generateBtn.disabled = false;
+      generateBtn.textContent = originalText;
+    }
+  }
+
+  // Event listeners
+  projectSelect.addEventListener("change", e => {
+    if (e.target.value) {
+      loadProjectData(e.target.value);
+    } else {
+      currentProject = null;
+      processableFileId = null;
+      fileInfo.textContent = "";
+      generateMathBtn.disabled = true;
+      generateAiBtn.disabled = true;
+      resultsContainer.classList.add("hidden");
+    }
+  });
+
+  generateMathBtn.addEventListener("click", () => processFloorplan('math'));
+  
+  generateAiBtn.addEventListener("click", async () => {
+    if (currentProject && processableFileId) {
+      logMessage("Opening AI DXF Fixture Mover app...", "success");
+      
+      // Build URL with file path if we have a generated DXF
+      let aiAppUrl = 'http://localhost:5000';
+      if (generatedDxfPath) {
+        // Pass the file path as URL parameter
+        const fullPath = window.location.origin + generatedDxfPath;
+        aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
+        logMessage("📎 Auto-loading generated DXF file into AI app...", "info");
+      }
+      
+      // Check if Flask app is running
+      try {
+        const checkResponse = await fetch('http://localhost:5000/', { mode: 'no-cors' });
+        // Open Flask app in new window with file parameter
+        window.open(aiAppUrl, '_blank');
+        logMessage("AI app opened in new window at http://localhost:5000", "success");
+      } catch (error) {
+        logMessage("⚠️ AI app may not be running. Opening anyway...", "warning");
+        logMessage("Start the AI app with: cd /home/athul/json/lenskart_backend/AI_DXF && python3 web_app.py", "info");
+        // Try to open anyway
+        window.open(aiAppUrl, '_blank');
+      }
+    } else {
+      logMessage("Select a valid project before AI generation.", "error");
+    }
+  });
+
+  generateBtn.addEventListener("click", processWithAI);
+  backBtn.addEventListener("click", showMainPage);
+
+  // Initialize
+  loadProjects();
+});
+</script>
+</body>
+</html>
