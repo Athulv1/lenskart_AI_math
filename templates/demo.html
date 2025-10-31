@@ -602,6 +602,8 @@ Consider proper spacing for walkways, strategic placement of high-value items, a
   </div>
 </div>
 
+<!-- API Configuration - Auto-detects local vs production -->
+<script src="/static/js/config.js"></script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const projectSelect = document.getElementById("project-select");
@@ -846,7 +848,7 @@ document.addEventListener("DOMContentLoaded", () => {
       logMessage("Opening AI DXF Fixture Mover app...", "success");
       
       // Build URL with file path if we have a generated DXF
-      let aiAppUrl = 'http://localhost:5000';
+      let aiAppUrl = API_CONFIG.BASE_URL;
       if (generatedDxfPath) {
         // Pass the file path as URL parameter
         const fullPath = window.location.origin + generatedDxfPath;
@@ -856,10 +858,10 @@ document.addEventListener("DOMContentLoaded", () => {
       
       // Check if Flask app is running
       try {
-        const checkResponse = await fetch('http://localhost:5000/', { mode: 'no-cors' });
+        const checkResponse = await fetch(API_CONFIG.BASE_URL + '/', { mode: 'no-cors' });
         // Open Flask app in new window with file parameter
         window.open(aiAppUrl, '_blank');
-        logMessage("AI app opened in new window at http://localhost:5000", "success");
+        logMessage(`AI app opened in new window at ${API_CONFIG.BASE_URL}`, "success");
       } catch (error) {
         logMessage("⚠️ AI app may not be running. Opening anyway...", "warning");
         logMessage("Start the AI app with: cd /home/athul/json/lenskart_backend/AI_DXF && python3 web_app.py", "info");
