@@ -7,6 +7,7 @@ import subprocess
 import sys
 from django.conf import settings
 from typing import List, Tuple, Dict, Any
+import json
 
 
 Seg2D = Tuple[float, float, float, float]        # (x1, y1, x2, y2) mm
@@ -198,7 +199,7 @@ class CV_Controller:
     def get_corners(self, fp_json):
         # Call worker.py and capture stdout
         result = subprocess.run(
-            ["python", "app/layout.py", fp_json],  # changed from "python3" to "python"
+            ["python", "app/layout.py", json.dumps(fp_json)],  # changed from "python3" to "python"
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True  # to get output as string instead of bytes
@@ -746,7 +747,7 @@ class CV_Controller:
 
 
 
-    def get_internal_wall_partitions(self, max_length=200.0, thickness= 200.0) -> List[Tuple[float, float, float, float]]:
+    def get_internal_wall_partitions(self, min_length = 50.0 ,max_length=200.0, thickness= 200.0) -> List[Tuple[float, float, float, float]]:
         """
         Identifies small, internal wall segments that act as partitions or columns.
         It returns a list of their bounding boxes to be used as obstacles.
@@ -771,7 +772,7 @@ class CV_Controller:
             length = p1.distance(p2)
 
             # A segment is considered a partition if it's shorter than the max_length
-            if 50.0 < length < max_length:
+            if min_length < length < max_length:
                 # Create a bounding box for the wall segment
                 min_x = min(p1.x, p2.x) - (thickness / 2)
                 max_x = max(p1.x, p2.x) + (thickness / 2)

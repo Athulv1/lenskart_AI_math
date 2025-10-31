@@ -133,6 +133,10 @@ pip install flask flask-cors google-generativeai werkzeug
 ```
 
 ### 4️⃣ Configure Environment Variables
+=======
+5. Create the `.env` file:** Copy the example file `env.example` (if you have one) or create `.env` from scratch. Fill in your local PostgreSQL details.
+Dotenv
+# .env file
 
 Create `.env` file in project root:
 
@@ -171,10 +175,42 @@ python manage.py migrate
 ### 6️⃣ Create Superuser (Optional)
 
 ```bash
+=======
+6. The project uses a `.env` file for settings and a `local_settings.py` for development-specific overrides.
+
+**Create the `local_settings.py` file:** In the `backend/` directory, create a file named `local_settings.py` with the following content. This file is ignored by Git and is for your machine only.
+    ```python
+    # backend/local_settings.py
+    DEBUG = True
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+    ```
+
+7.  **Set up PostgreSQL:** Run the automated setup script. This will read your `.env` file and create the database and user for you. You will be prompted for your system's `sudo` password.
+    ```bash
+    ./setup_postgres.sh
+    ```
+
+8. Run Database Migrations
+This command will create the necessary tables in your local database.
+code
+python manage.py migrate
+
+9. Create a Superuser
+You will need a superuser account to access the Django Admin panel.
+>>>>>>> dev
 python manage.py createsuperuser
 ```
 
 ### 7️⃣ Run Applications
+=======
+10. Run the Development Server
+You are now ready to run the project.
+code
+Bash
+python manage.py runserver
+The server will start, typically at http://127.0.0.1:8000/.
+The Django Admin will be available at http://127.0.0.1:8000/admin/.
+The API documentation will be available at http://127.0.0.1:8000/api/app1/docs.
 
 **Terminal 1 - Django Backend:**
 ```bash

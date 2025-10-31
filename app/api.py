@@ -25,26 +25,20 @@ from django.db import transaction
 
 from django.contrib.auth import authenticate
 from ninja_jwt.tokens import RefreshToken # type: ignore
-from .schema import ErrorSchema # Make sure you have this ErrorSchema defined
+from .schema import ErrorSchema 
 from ninja_jwt.authentication import JWTAuth # type: ignore # Import the authentication handler
 from django.db.models import Q
 
-
-# Import the new FreeCAD path setup module
-from . import freecad_paths
-
 logger = logging.getLogger("app")
-
-# Setup FreeCAD environment first before any imports
-freecad_paths.setup_freecad_environment()
 
 # Global references to modules
 cvc = None
+dxf_c = None
 Fixture = None
 
 def initialize_modules():
     """Initialize FreeCAD and related modules"""
-    global cvc, Fixture
+    global cvc, dxf_c, Fixture
     
     try:
         # Detailed logging for debugging
@@ -52,14 +46,15 @@ def initialize_modules():
         
         # Now import project modules
         from . import CV_Controller as cv_module
+        from . import DXF_Controller as dxf_module
         from . import Fixture as fixture_module
         
         # Store references
         cvc = cv_module
+        dxf_c = dxf_module
         Fixture = fixture_module
         
         print("All modules initialized successfully")
-        FREECAD_INITIALIZED = True
         return True
     except ImportError as e:
         logger.error(f"Failed to import FreeCAD modules: {e}")
@@ -72,6 +67,22 @@ def initialize_modules():
 
 # Try to initialize FreeCAD at module load time
 initialize_modules()
+def is_test_mode():
+    """Check if Django is running in test mode"""
+    import sys
+    import os
+    return any([
+        'test' in sys.argv,
+        'pytest' in sys.modules,
+        os.environ.get('DB_NAME', '').startswith('test_'),
+        os.environ.get('TESTING') == 'true',
+    ])
+
+if not is_test_mode():
+    initialize_modules()
+else:
+    print("⚠️  Skipping module initialization - running in test mode")
+
 
 
 api = NinjaAPI(version='3.0.0', urls_namespace='floorplan_api_unique')
@@ -565,9 +576,24 @@ def process_floorplan(request, file_id: uuid.UUID):
             return 400, {"message": "Only image files (PNG, JPG, JPEG) can be processed"}
         
         # Get the project and its fixtures configuration
+        merch_mix_file = "app/merch_mix.json"
         project = project_file.project
+        room_measurements_from_db = project.room_measurements or {}
+        if 'rotation' not in room_measurements_from_db:
+            room_measurements_from_db['rotation'] = 0.0
+
         project_id = project.id
+        project_name = project.name
         room_measurements_dir = os.path.join(settings.MEDIA_ROOT, 'room_measurements')
+
+        safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')
+        json_filename = f"{safe_project_name}_{project.id}_room_measurements.json"
+        measurement_file_path = os.path.join(room_measurements_dir, json_filename)
+
+        # Check if the file actually exists. If not, use an empty string.
+        if not os.path.exists(measurement_file_path):
+            logger.warning(f"Measurement JSON not found at {measurement_file_path}. Proceeding without it.")
+            measurement_file_path = ""
         
         # Check if project has fixtures configuration
         if not project.fixtures:
@@ -603,17 +629,192 @@ def process_floorplan(request, file_id: uuid.UUID):
         output_dir = os.path.join(settings.BASE_DIR, f"{consistent_project_name}_output")
         os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
 
-        master_dxf_path = os.path.join(output_dir, "master.dxf")
         final_export_dxf_path = os.path.join(output_dir, "output.dxf")
-        image_metadata_path = os.path.join(output_dir, "image_metadata.json")
-        lisp_path = os.path.join(output_dir, "attach_and_group.lsp")
-        zip_file_path = os.path.join(output_dir, "package.zip")
-        output_fcstd_path = os.path.join(output_dir, f"{consistent_project_name}.FCStd")
 
         try:
             # Setup processing parameters
             overlay_output = os.path.join(settings.MEDIA_ROOT, "overlay_output.png")
-            scale = 30  # mm per pixel
+            
+            try:
+                # 1. Find the project by its exact name.
+                # Use .first() in case there are multiple projects with the same name.
+                # This will get the first one it finds.
+                project = Project.objects.filter(name=project_name).first()
+                
+                if project:
+                    merch_mix_data = project.__dict__['merch_mix_max']
+                    room_measurements = project.__dict__['room_measurements']
+                    # for k, v in project.__dict__.items():
+                    #     print(k)
+                    # room_measurements["rotation"] = project.__dict__['rotation']
+                    
+                    if room_measurements is None:
+                        logger.info(f"Project '{project.name}' found, but 'room_measurements' is not set.")
+                        raise Exception("room_measurements not found")
+                    elif merch_mix_data is None:
+                        logger.info(f"Project '{project.name}' found, but 'merch_mix_max' is not set.")
+                        raise Exception("merch mix not found")
+                    else:
+                        logger.info(f"Successfully retrieved merch_mix_max for project: {project.name}")
+                        logger.info(f"merch_mix: {merch_mix_data}")
+                        logger.info(f"room: {room_measurements}")
+                else:
+                    logger.error(f"Error: No project found with the name '{project_name}'.")
+                    return {}
+                
+            except Exception as e:
+                logger.error(f"An unexpected error occurred retrieving the merch mix and room_measurements: {e}")
+                raise e
+
+                # try:
+                #     with open(merch_mix_file, 'r') as f:
+                #         merch_json_data = json.load(f)
+                #     # Extract the 'merch_mix_max' object, which contains the final counts
+                #     merch_mix_data = merch_json_data['merch_mix_max']
+                #     if merch_mix_data is None:
+                #         logger.info(f"File found, but 'merch_mix_max' is not set.")
+                #         return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+
+                #     logger.info("--- ✅ Successfully loaded backup merch mix data. ---")
+                # except (FileNotFoundError, KeyError) as e:
+                #     logger.error(f"--- 🚨 ERROR: Could not load or parse {merch_mix_file}. Error: {e} ---")
+                #     return 400, {"message": f"Could not load merch mix from DB or file {merch_mix_file}"}
+                
+            # rotation = 42  # REPLACE WITH VALUE FROM DB
+            # json_path = f"/home/ubuntu/lenskart-backend/media/room_measurements/{project.name}_{project.id}_room_measurements.json"
+            #json_path = f"/home/ubuntu/lenskart_backend/app/test.json"
+
+            static_fixtures = {
+                "mirror_selection": { "mirror_different" : 1, "mirror": 0 },
+            
+                "Bench_fixtures":{ "large_bench" : 0, "AR": 1 ,"medium_bench" : 1 },
+                
+                "lensometer_fixtures":{ "Lensometer_medium": 0, "Lensometer_small": 0, "Lensometer_large": 0 },
+                
+                "boh_fixtures": {
+                    "water_dispenser": 1, "ups_rack": 1, "staff_rack": 1, "pickup_storage_900": 0,
+                    "storage_rack": 1, "pickup_storage_1200": 0, "Dining_Table_large": 0,
+                    "QC_table_large": 0, "Dining_Table_medium": 1, "QC_table_medium": 0,
+                    "Repair_Table_large": 0, "Repair_Table_medium": 0, 
+                    "drop_box": 0, "pick_up_counter": 0
+                },
+
+                # "clinic_fixtures": { "ROC_clinic": 3,"Clinic_regular": 1, "Clinic_with_sink": 1,  "Eye_massage_area": 0 },
+
+                "boh_presets": { "medium_basic_boh": 1, "basic_boh_preset_1": 0 ,"small_basic_boh": 0,"boh_vertical_horizontal_preset_basic": 0 },
+
+                "pickup_window": { "Pick_up_window": 1 , "pickup_table": 1},
+
+                "Eye_massage_area": { "Eye_massage_area": 0 },
+                
+                "Corian_table_set":{ "Corian_table" : 0, "Lounge_seat" : 0 },
+                
+                "loose_furniture": { "sofa": 0, "Sofa_large": 0, "Sofa_medium": 0 },
+                
+                "toilet_fixtures": { "toilet": 0 },
+                
+                "screen_fixtures": { "screen_43": 0, "screen_49": 0, "screen_55": 0, "screen_65": 0 },
+                
+                "POS": { "pos_with_screen_large": 0, "pos_with_screen_medium": 0, "pos_with_screen_small": 0, "pos_without_screen": 0 },
+                
+                "discussion_table_attached":{ "Blue_zero" : 1 },
+                
+                "table_fixtures": { "QMS_desk" : 1, 
+                                #    "Standing_table" : 3
+                                    },
+                
+                "lensbar_and_dropbox": { "Lensbar": 0 },
+                
+                "floor_fixtures_table": { "Discussion_table_small": 0, "Discussion_table_medium": 0, "Discussion_table_large": 0 }
+            }
+            
+            dxfc = dxf_c.DXF_Controller(input_path, final_export_dxf_path, overlay_output, room_measurements_from_db, {})
+
+            dxfc.create_floorplan()
+            dxfc.cvc.get_metadata()
+            dxfc.cvc.reorder_bot_left()
+            DRAW_SEPARATOR_LINE = True 
+
+            # 4. NEW: Call the single setup and calculation function
+            dxfc.merch_mix_cal(merch_mix_data, static_fixtures) # type: ignore
+
+            # --- PLACEMENT PHASE ---
+            all_placed_bboxes = dxfc.get_existing_nonwall_bboxes()
+            floor_area = dxfc.calculate_area_sqft()
+            orientation = dxfc.cvc.orientation
+            Primary = "right"
+            print("Primary side for the floorplan is ", Primary)
+
+
+            if orientation == 'landscape':
+                print("--- Applying LANDSCAPE placement strategy---")
+                # dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
+                # dxfc.place_boh_intelligently(all_placed_bboxes)
+                # dxfc.place_boh_preset(all_placed_bboxes)
+                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
+                dxfc.place_boh_fixtures(all_placed_bboxes)
+                dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
+                dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
+                dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
+                remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
+                if remaining_tables:
+                    dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
+                dxfc.place_corian_table_set_landscape(all_placed_bboxes)
+                dxfc.place_standing_tables_landscape(all_placed_bboxes)
+                dxfc.place_blue_zero_landscape(all_placed_bboxes)
+                dxfc.place_pos_ar_landscape(all_placed_bboxes)
+                dxfc.place_qms_at_entrance(all_placed_bboxes)
+                dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
+
+            else: # Default to portrait
+                print("---Applying PORTRAIT placement strategy---")
+                # ***** ADD THE NEW FUNCTION CALL HERE *****
+                
+                
+                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
+                
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_boh_fixtures(all_placed_bboxes)
+
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_benches_under_separation_line(all_placed_bboxes) 
+                # dxfc.place_ar_under_separation_line(all_placed_bboxes)
+                dxfc.place_qms_at_entrance_center(all_placed_bboxes)
+                dxfc.place_standing_tables(all_placed_bboxes)
+                # ------------------------------------
+                # ------------------------------------
+                # --- Orchestrate wall fixtures ---
+                remaining_wall_fixtures, display_calcs = dxfc.plan_and_place_wall_fixtures(
+                    all_placed_bboxes=all_placed_bboxes,
+                    primary_side=Primary,
+                    draw_debug=False  # Set to False to hide debug drawings
+                )
+
+                # --- Orchestrate Euro Center fixtures ---
+                dxfc.plan_and_place_euro_fixtures(
+                    all_placed_bboxes=all_placed_bboxes,
+                    remaining_wall_fixtures=remaining_wall_fixtures,
+                    display_calcs=display_calcs,
+                    draw_debug=False # Set to False to hide debug drawings
+                )
+                
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                
+                dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
+                dxfc.place_corian_table_set(all_placed_bboxes)
+                # dxfc.place_pos_ar_portrait_dynamically(all_placed_bboxes)
+                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)    
+                # dxfc.place_sofas_above_screen_ar(all_placed_bboxes, bottom_margin_pct=euro_bottom_margin, gap_above_ar=200)
+                dxfc.place_Blue_Zero_attached(all_placed_bboxes)
+                dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
+
+            dxfc.place_door(Primary)
+            dxfc.place_lensometer()
+
+            # --- Save and close ---
+            dxfc.close_plan()
             
             
             # ==================== DXF PROCESSING STARTS HERE ============================
