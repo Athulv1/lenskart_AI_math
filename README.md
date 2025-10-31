@@ -18,7 +18,7 @@ A comprehensive floor planning solution for Lenskart retail stores, combining:
 - **Google Gemini AI** - Intelligent fixture placement and space optimization
 - **Computer Vision** - Automated floor plan analysis and fixture detection
 
-**Live Demo:** `https://lenskart.thinkneural.ai`
+
 
 ---
 
@@ -29,7 +29,7 @@ A comprehensive floor planning solution for Lenskart retail stores, combining:
 - **70+ fixture types** with high-quality PNG rendering (clinic units, screens, tables, seating, etc.)
 - **Pan & Zoom controls** - Mouse wheel zoom, Ctrl+drag pan mode
 - **Multi-select support** - Ctrl+click for batch operations
-- **Professional UI** - Navy/teal architecture theme with glassmorphism effects
+
 
 ### 🤖 **AI-Powered Optimization**
 - **Google Gemini 1.5 Pro** integration for intelligent fixture rearrangement
@@ -63,8 +63,7 @@ A comprehensive floor planning solution for Lenskart retail stores, combining:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Production Server                         │
-│                  13.201.224.32 (AWS)                        │
+│               server                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────────────┐      ┌──────────────────────┐   │
@@ -134,6 +133,10 @@ pip install flask flask-cors google-generativeai werkzeug
 ```
 
 ### 4️⃣ Configure Environment Variables
+=======
+5. Create the `.env` file:** Copy the example file `env.example` (if you have one) or create `.env` from scratch. Fill in your local PostgreSQL details.
+Dotenv
+# .env file
 
 Create `.env` file in project root:
 
@@ -172,10 +175,42 @@ python manage.py migrate
 ### 6️⃣ Create Superuser (Optional)
 
 ```bash
+=======
+6. The project uses a `.env` file for settings and a `local_settings.py` for development-specific overrides.
+
+**Create the `local_settings.py` file:** In the `backend/` directory, create a file named `local_settings.py` with the following content. This file is ignored by Git and is for your machine only.
+    ```python
+    # backend/local_settings.py
+    DEBUG = True
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+    ```
+
+7.  **Set up PostgreSQL:** Run the automated setup script. This will read your `.env` file and create the database and user for you. You will be prompted for your system's `sudo` password.
+    ```bash
+    ./setup_postgres.sh
+    ```
+
+8. Run Database Migrations
+This command will create the necessary tables in your local database.
+code
+python manage.py migrate
+
+9. Create a Superuser
+You will need a superuser account to access the Django Admin panel.
+>>>>>>> dev
 python manage.py createsuperuser
 ```
 
 ### 7️⃣ Run Applications
+=======
+10. Run the Development Server
+You are now ready to run the project.
+code
+Bash
+python manage.py runserver
+The server will start, typically at http://127.0.0.1:8000/.
+The Django Admin will be available at http://127.0.0.1:8000/admin/.
+The API documentation will be available at http://127.0.0.1:8000/api/app1/docs.
 
 **Terminal 1 - Django Backend:**
 ```bash
@@ -618,53 +653,5 @@ python -c "import google.generativeai as genai; genai.configure(api_key='YOUR_KE
 ls AI_DASHBOARD/static/images/*.png | wc -l
 # Should show 70+
 
-# Verify file permissions
-chmod 644 AI_DASHBOARD/static/images/*.png
-```
 
----
-
-## 🤝 Contributing
-
-This is a proprietary project for Lenskart. For internal contributions:
-
-1. Create a feature branch from `feature/ai-model`
-2. Make your changes
-3. Test thoroughly (Django + Flask)
-4. Submit a pull request with detailed description
-
----
-
-## 📝 License
-
-Proprietary - © 2025 ThinkNeural AI. All rights reserved.
-
----
-
-## 👥 Team
-
-- **Backend Development** - Django API, Database, DXF Processing
-- **AI Development** - Gemini Integration, Optimization Algorithms
-- **Frontend Development** - Canvas Editor, UI/UX
-- **DevOps** - Deployment, CI/CD, Infrastructure
-
----
-
-## 📞 Support
-
-For issues or questions:
-- **Email:** support@thinkneural.ai
-- **GitHub Issues:** [Create an issue](https://github.com/ThinkNeuralAi/lenskart_backend/issues)
-
----
-
-## 🎉 Acknowledgments
-
-- Google Gemini AI for intelligent optimization
-- AutoCAD for DXF format specification
-- Open source community for amazing libraries
-
----
-
-**Built with ❤️ by ThinkNeural AI**
 

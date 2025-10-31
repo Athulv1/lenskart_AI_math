@@ -4,8 +4,8 @@ import os
 import logging
 import traceback
 from typing import List, Dict, Any, Optional, Tuple
-import Fixture
-import CV_Controller as cvCon
+from . import Fixture
+from . import CV_Controller as cvCon
 from typing import List, Tuple
 import uuid 
 import ezdxf # type: ignore
@@ -343,6 +343,16 @@ class DXF_Controller:
         },
 
         # Loose Furniture
+        "Door_Left" : {
+            "name": "Door_Left",
+            "path": "assets/loose/Door_Left.dxf",
+            "type": "loose"
+        },
+        "Door_Right" : {
+            "name": "Door_Right",
+            "path": "assets/loose/Door_Right.dxf",
+            "type": "loose"
+        },
         "Corian_table" : {
             "name": "Corian_table",
             "path": "assets/loose/Corian_table.dxf",
@@ -426,6 +436,7 @@ class DXF_Controller:
 
         self.sofa_placed = False
         self.fixture_counter = {}
+        self.back_room_location = None
         
         self.safe_types = {
             "LINE", "LWPOLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT",
@@ -511,330 +522,397 @@ class DXF_Controller:
         }
     
     
+    def calculate_greeter_to_standing_table_zone(self) -> Optional[Polygon]:
+        """
+        Calculates the usable area between the bottom of the standing tables and the top of the QMS/greeter desks.
 
-    # The rest of the DossierParser class (_create_size_prioritized_queue, 
-    # orchestrate_wall_and_overflow_placement, etc.) remains unchanged as its
-    # internal logic is still valid.
-    def _create_size_prioritized_queue(self) -> list:
+        This function identifies the collective bounding boxes of both fixture groups,
+        creates a slicing box representing the vertical space between them, and intersects
+        it with the main floorplan polygon to find the actual area.
+
+        Returns:
+            A Shapely Polygon representing the valid placement zone, or None if the zone
+            cannot be calculated (e.g., fixtures are missing or space is invalid).
         """
-        Creates a single list of fixture names, heavily prioritizing
-        larger sizes to fill the queue first. This list is then passed to the
-        placement engine to be placed in a single, continuous pass.
+        from ezdxf.bbox import extents
+        from shapely.geometry import box
+
+        print("\n--- 📐 Calculating Zone Between Greeter and Standing Tables ---")
+
+        # --- 1. Find Anchor Fixtures ---
+        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
+        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
+
+        if not standing_table_entities:
+            print("  -> ⚠️ FAILED: Could not find any 'Standing Table' fixtures to define the top boundary.")
+            return None
+        if not qms_entities:
+            print("  -> ⚠️ FAILED: Could not find any 'QMS Desk' fixtures to define the bottom boundary.")
+            return None
+
+        # --- 2. Define Vertical Boundaries ---
+        # The top of our zone is the lowest y-coordinate of the standing table group.
+        standing_tables_bbox = extents(standing_table_entities)
+        top_boundary_y = standing_tables_bbox.extmin.y
+
+        # The bottom of our zone is the highest y-coordinate of the QMS/greeter group.
+        qms_bbox = extents(qms_entities)
+        bottom_boundary_y = qms_bbox.extmax.y
+        
+        # Validate that there is positive space between the two groups.
+        if bottom_boundary_y >= top_boundary_y:
+            print("  -> ⚠️ FAILED: The zone is invalid because the QMS desks are above or overlapping the standing tables.")
+            return None
+            
+        print(f"  -> Zone boundaries defined: Top at y={top_boundary_y:.0f}, Bottom at y={bottom_boundary_y:.0f}")
+
+        # --- 3. Create Slicing Box and Intersect with Floorplan ---
+        # The horizontal boundaries are simply the extents of the entire room.
+        slicing_box = box(self.cvc.min_x, bottom_boundary_y, self.cvc.max_x, top_boundary_y)
+        
+        # Intersecting the slicing box with the floorplan gives us the actual, usable area.
+        zone_polygon = self.floorplan_polygon.intersection(slicing_box)
+
+        if zone_polygon.is_empty:
+            print("  -> ⚠️ FAILED: The calculated zone resulted in an empty area.")
+            return None
+        
+        print(f"  -> ✅ Successfully calculated the placement zone. Area: {zone_polygon.area:,.0f} mm²")
+        return zone_polygon
+
+
+    def draw_greeter_to_standing_table_zone(self):
         """
+        Calculates and then draws the boundary of the zone between the greeter
+        and standing tables for visual debugging.
+
+        The outline is drawn on a dedicated 'DEBUG' layer with a bright color.
+        """
+        print("\n--- 🎨 Drawing Greeter-to-Standing-Table Zone for Validation ---")
+        
+        # 1. Call the calculation function to get the polygon
+        zone_polygon = self.calculate_greeter_to_standing_table_zone()
+
+        # 2. Check if a valid polygon was returned
+        if zone_polygon and not zone_polygon.is_empty:
+            
+            # 3. Define a new layer for the debug drawing
+            layer_name = "DEBUG_GREET_TO_STAND_ZONE"
+            if layer_name not in self.doc.layers:
+                self.doc.layers.add(
+                    name=layer_name,
+                    color=2  # ACI color 2 is Yellow, which is highly visible
+                )
+
+            # 4. Get the coordinates of the polygon's boundary
+            zone_boundary_coords = list(zone_polygon.exterior.coords)
+
+            # 5. Add the polygon outline to the modelspace
+            self.msp.add_lwpolyline(
+                zone_boundary_coords,
+                close=True,
+                dxfattribs={"layer": layer_name, "lineweight": 35} # Make the line slightly thicker for visibility
+            )
+            
+            print(f"  -> ✅ Zone boundary drawn on layer '{layer_name}'.")
+        
+        else:
+            print("  -> ⚠️ SKIPPED DRAWING: The placement zone could not be calculated.")
+
+
+    def display_count_calc(self, floor_area: float, wall_length: float, display_count: int) -> dict:
+        """
+        Calculates the optimal mix of floor and wall fixtures based on available space.
+
+        This function takes the total floor area, available retail wall length, and the
+        total number of displays required, then iteratively adjusts the counts of
+        different fixture types (Euro centers, large/medium wall displays, mirrors)
+        to find a valid layout that fits within the given constraints.
+
+        Args:
+            floor_area (float): The total available floor area in square millimeters.
+            wall_length (float): The total available retail wall length in millimeters.
+            display_count (int): The total number of display fixtures required.
+
+        Returns:
+            dict: A dictionary containing the calculated counts for each fixture type,
+                  e.g., {'floor_fixtures': 3, 'large_wall_fixtures': 7,
+                         'medium_wall_fixtures': 2, 'mirrors': 9, 'valid': True}
+        """
+
+        # --- DYNAMIC INITIALIZATION (Values are now calculated inside) ---
+        print("\n--- Dynamically calculating inputs for fixture mix analysis ---")
+        
+        # 1. Get Floor Area in mm^2
+        # MODIFIED: Calculate the area of the zone between the greeter and standing tables.
+        zone_polygon = self.calculate_greeter_to_standing_table_zone()
+        if zone_polygon and not zone_polygon.is_empty:
+            floor_area = zone_polygon.area
+            print("  -> Using the specific area between greeter and standing tables for calculation.")
+        else:
+            print("  -> ⚠️ WARNING: Could not calculate greeter-to-standing-table zone. Falling back to total floorplan area.")
+            floor_area = self.floorplan_polygon.area
+
+        print(f"  -> Floor Area for Calculation: {floor_area:,.0f} mm^2")
+
+        # # 2. Get Wall Length
+        # left_wall_data = self.get_retail_wall_data(side='left')
+        # right_wall_data = self.get_retail_wall_data(side='right')
+        # left_wall_length = left_wall_data["total_length"]
+        # right_wall_length = right_wall_data["total_length"]
+        # wall_length = left_wall_length + right_wall_length
+        # print(f"  -> Total Retail Wall Length: {wall_length:.0f} mm")
+
+        # 3. Get Display Count
+        display_categories = [
+            "Branded Eye", "Branded Sun", "JJ Eye", "JJ Sun", "OD", "LPL",
+            "VC Eye", "VC Sun", "VC Kids", "LK Air", "Reading Glasses", "CL",
+            "Tentpole", "Hustlr"
+        ]
+        display_count = sum(self.parsed_counts.get(cat, 0) for cat in display_categories)
+
+        print(f"  -> Total Display Count: {display_count}")
+        # --- END OF INITIALIZATION ---
+
+
+        # --- Constants (gaps and fixture dimensions in mm) ---
+        single_shopping = 1050
+        display_large_length = 1200
+        display_medium_length = 1010
+        display_width = 250
+        euro_length = 1175
+        euro_width = 1040
+        mirror_length = 300
+        
+        # --- Initial Calculation based on 3:1 Wall-to-Floor Ratio ---
+        ratio_parts = 4
+        floor_count = int(display_count / ratio_parts)
+        wall_count = display_count - floor_count
+        mirror_count = wall_count
+        
+        # Initialize the mix of large/medium wall fixtures
+        num_large_wall = wall_count
+        num_medium_wall = 0
+
+        valid = False
+        attempts = 0
+        prev_action = -1  # -1: init, 0: both fail, 1: wall fail, 2: floor fail
+
+        while not valid:
+            # Sync the large/medium counts with the current total wall_count
+            current_total_wall_fixtures = num_large_wall + num_medium_wall
+            if current_total_wall_fixtures != wall_count:
+                if wall_count > current_total_wall_fixtures:
+                    num_large_wall += (wall_count - current_total_wall_fixtures)
+                else:
+                    to_remove = current_total_wall_fixtures - wall_count
+                    removed_medium = min(to_remove, num_medium_wall)
+                    num_medium_wall -= removed_medium
+                    removed_large = min(to_remove - removed_medium, num_large_wall)
+                    num_large_wall -= removed_large
+
+            # --- Calculate Space Requirements for the Current Configuration ---
+            wall_space_needed = (num_large_wall * display_large_length) + \
+                                (num_medium_wall * display_medium_length) + \
+                                (mirror_count * mirror_length)
+            
+            wall_fixture_area = wall_space_needed * (display_width + single_shopping)
+            floor_fixture_area = (euro_length + 2000) * euro_width * floor_count
+            remaining_floor_area = floor_area - wall_fixture_area - floor_fixture_area
+
+            # --- Validation and Adjustment Logic ---
+            if wall_space_needed <= wall_length and remaining_floor_area > 0:
+                print("Valid floor/wall/mirror counts found.")
+                valid = True
+                
+            elif wall_space_needed > wall_length:
+                if remaining_floor_area <= 0: # Both wall and floor fail
+                    prev_action = 0
+                    print("ACTION: Insufficient space on BOTH floor and wall. Downsizing wall fixtures.")
+                    if num_large_wall > 0:
+                        num_large_wall -= 1
+                        num_medium_wall += 1
+                    elif mirror_count > wall_count / 2:
+                        mirror_count -= 1
+                    else:
+                        break # No more options
+                else: # Only wall fails
+                    if prev_action == 2: # Flip-flop detected
+                        print("DEAD END: Detected flip-flop (floor -> wall). Forcing downsize.")
+                        if num_large_wall > 0:
+                            num_large_wall -= 1
+                            num_medium_wall += 1
+                        elif mirror_count > wall_count / 2:
+                            mirror_count -= 1
+                        prev_action = -1 # Reset state
+                    else:
+                        prev_action = 1
+                        print("ACTION: Not enough wall space. Trading wall fixture for floor fixture.")
+                        wall_count -= 1
+                        floor_count += 1
+                        mirror_count -= 1
+                
+            elif remaining_floor_area <= 0: # Only floor fails
+                if prev_action == 1: # Flip-flop detected
+                    print("DEAD END: Detected flip-flop (wall -> floor). Forcing downsize.")
+                    if num_large_wall > 0:
+                        num_large_wall -= 1
+                        num_medium_wall += 1
+                    elif mirror_count > wall_count / 2:
+                        mirror_count -= 1
+                    prev_action = -1 # Reset state
+                else:
+                    prev_action = 2
+                    print("ACTION: Not enough floor space. Trading floor fixture for wall fixture.")
+                    floor_count -= 1
+                    wall_count += 1
+                    mirror_count += 1
+
+            # --- Status Printout and Exit Conditions ---
+            print(f"\n--- Attempt #{attempts + 1} ---")
+            print(f"  Config: [Floor: {floor_count}, Wall: {wall_count} ({num_large_wall}L/{num_medium_wall}M), Mirror: {mirror_count}]")
+            print(f"  Wall space needed: {wall_space_needed:.0f} (Available: {wall_length:.0f})")
+            print(f"  Remaining floor area: {remaining_floor_area:.0f}")
+            
+            attempts += 1
+            if attempts > 50: # Safety break
+                print("STOPPING: Exceeded maximum attempts.")
+                break
+            
+            if not valid and mirror_count <= (wall_count / 2) and wall_count > 0:
+                print("STOPPING: Reached minimum mirror ratio without a solution.")
+                break
+            
+            if floor_count < 0 or wall_count < 0:
+                print("STOPPING: A valid configuration is not possible.")
+                break
+
+        # --- Final Result ---
+        if valid:
+            result = {
+                'valid': True,
+                'floor_fixtures': floor_count,
+                'large_wall_fixtures': num_large_wall,
+                'medium_wall_fixtures': num_medium_wall,
+                'total_wall_fixtures': num_large_wall + num_medium_wall,
+                'mirrors': mirror_count
+            }
+            print("\n--- Final Valid Layout ---")
+            print(result)
+            return result
+        else:
+            result = {
+                'valid': False,
+                'floor_fixtures': floor_count,
+                'large_wall_fixtures': num_large_wall,
+                'medium_wall_fixtures': num_medium_wall,
+                'total_wall_fixtures': num_large_wall + num_medium_wall,
+                'mirrors': mirror_count
+            }
+            print("\n--- Could not find a valid layout. Returning last attempted state. ---")
+            print(result)
+            return result
+
+    def generate_specific_fixture_list_simplified_dp(self, planner_output: dict, family_totals: dict) -> list:
+        """
+        A simplified bridge function that distributes generic 'large' and 'medium' counts
+        across specific fixture families based on a priority order.
+        """
+        print("\n--- Distributing Fixture Counts ---")
+        
+        # Define mappings and priority
         size_mapping = {
             "jj_fixture_family": ["jj_fixture_large", "jj_fixture_medium"],
             "vc_fixture_family": ["vc_fixture_large", "vc_fixture_medium"],
-            "jj_super_hybrid_family": ["jj_super_hybrid_large", "jj_super_hybrid_medium", "jj_super_hybrid_small"],
-            "window_family": ["window_3_section", "window_1_section"],
+            "jj_super_hybrid_family": ["jj_super_hybrid_large", "jj_super_hybrid_medium"],
         }
-        placement_queue = []
+        family_priority = ["jj_fixture_family", "jj_super_hybrid_family", "vc_fixture_family"]
 
-        family_processing_order = ["jj_fixture_family", "jj_super_hybrid_family", "vc_fixture_family", "window_family"]
-
-
-        # First, build the queue family by family to keep them sequential
-        for family_name in family_processing_order:
-            total_count = self.family_totals.get(family_name, 0)
-            if total_count > 0 and family_name in size_mapping:
-                available_sizes = size_mapping[family_name]
-                remaining_count = total_count
-                num_large = math.ceil(remaining_count * 0.9)
-                for _ in range(int(num_large)):
-                    if remaining_count > 0:
-                        placement_queue.append((available_sizes[0], 1))
-                        remaining_count -= 1
-                if remaining_count > 0 and len(available_sizes) > 1:
-                    for _ in range(int(remaining_count)):
-                        placement_queue.append((available_sizes[1], 1))
-        print(f"  -> Generated a size-prioritized queue with {len(placement_queue)} fixtures.")
-        return placement_queue
-
-    # In DXF_Controller.py, add this new function inside the DXF_Controller class.
-
-    def plan_optimal_wall_fixture_mix(self, family_totals: Dict[str, int], total_wall_length: float) -> collections.deque:
-        """
-        [NEW PLANNING FUNCTION]
-        Analyzes the total required fixture capacity and the available wall length to
-        determine the most efficient mix of large, medium, and small fixtures.
-
-        It uses a greedy algorithm, prioritizing larger fixtures to maximize display
-        space and accounts for a shared mirror after every two wall fixtures.
-
-        Returns:
-            A deque (list) of fixture names representing the optimal placement queue.
-        """
-        print("\n--- 🧠 Running New Optimal Wall Fixture Planner ---")
+        # Get the "budgets" for large and medium fixtures
+        large_budget = planner_output.get('large_wall_fixtures', 0)
+        medium_budget = planner_output.get('medium_wall_fixtures', 0)
         
-        from Fixture import Fixture
-        import math
-        import collections
+        remaining_needs = family_totals.copy()
+        final_fixture_list = []
 
-        # --- Define the new mirror rule ---
-        MIRRORS_PER_WALL_FIXTURE = 0.5  # Average of 1 mirror per 2 fixtures
-
-        # --- Load dimensions for all potential fixtures ---
-        try:
-            mirror_config = self.fixtures.get("mirror_selection", {})
-            selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
-            mirror_fxtr = Fixture(selected_mirror_name, self.fixture_dict[selected_mirror_name]["path"])
-            avg_mirror_width_cost = mirror_fxtr.width * MIRRORS_PER_WALL_FIXTURE
-            
-            # Create a dictionary of all possible wall fixture objects for easy access
-            size_mapping = {
-                "jj_fixture_family": ["jj_fixture_large", "jj_fixture_medium"],
-                "vc_fixture_family": ["vc_fixture_large", "vc_fixture_medium"],
-                "jj_super_hybrid_family": ["jj_super_hybrid_large", "jj_super_hybrid_medium", "jj_super_hybrid_small"],
-                "window_family": ["jj_fixture_large", "jj_fixture_medium"], # Windows use same sizes as jj_fixture
-            }
-            all_fixture_objects = {
-                name: Fixture(name, self.fixture_dict[name]["path"])
-                for family in size_mapping.values() for name in family
-            }
-        except Exception as e:
-            print(f"  -> 🔥 Could not load fixture dimensions for planning. Aborting. Error: {e}")
-            return collections.deque()
-
-        # --- Greedy Algorithm to Determine the Mix ---
-        final_placement_queue = collections.deque()
-        remaining_wall_length = total_wall_length
-        
-        # Process families in a specific order for better layout consistency
-        family_processing_order = ["jj_fixture_family", "jj_super_hybrid_family", "vc_fixture_family", "window_family"]
-
-        for family_name in family_processing_order:
-            if family_name not in family_totals:
+        # Process each family in order of priority
+        for family in family_priority:
+            if family not in remaining_needs or remaining_needs[family] == 0:
                 continue
 
-            needed_count = family_totals[family_name]
-            placed_count = 0
+            # 1. Assign LARGE fixtures for this family
+            num_to_assign_large = min(large_budget, remaining_needs[family])
+            if num_to_assign_large > 0:
+                large_name = size_mapping[family][0]
+                final_fixture_list.extend([large_name] * num_to_assign_large)
+                large_budget -= num_to_assign_large
+                remaining_needs[family] -= num_to_assign_large
+                print(f"  -> Assigned {num_to_assign_large} of '{large_name}'")
+                
+            # 2. Assign MEDIUM fixtures for this family's *remaining* need
+            num_to_assign_medium = min(medium_budget, remaining_needs[family])
+            if num_to_assign_medium > 0:
+                medium_name = size_mapping[family][1]
+                final_fixture_list.extend([medium_name] * num_to_assign_medium)
+                medium_budget -= num_to_assign_medium
+                remaining_needs[family] -= num_to_assign_medium
+                print(f"  -> Assigned {num_to_assign_medium} of '{medium_name}'")
+
+        print("--- ✅ Distribution complete. ---")
+        return final_fixture_list
+
+    #---------------------validating get partition funtion now ------------------
+    #---------------------validating get partition funtion now ------------------
+
+    def draw_internal_wall_partitions_for_validation(self, min_length: float, max_length: float, thickness: float, layer_name: str, color: int):
+            """
+            Visually draws the bounding boxes identified by get_internal_wall_partitions for debugging.
+
+            Args:
+                max_length (float): The 'max_length' to pass to the target function.
+                thickness (float): The 'thickness' to pass to the target function.
+                layer_name (str): The name for the new DXF layer.
+                color (int): The ACI color index for the new layer.
+            """
+            print(f"\n--- 🎨 Visualizing Internal Partitions (max_length={max_length}, thickness={thickness}) ---")
             
-            # Get the available fixture sizes for this family, largest first
-            available_sizes = size_mapping.get(family_name, [])
+            # 1. Call the original function to get the list of partition bounding boxes
+            partitions = self.cvc.get_internal_wall_partitions(min_length=min_length, max_length=max_length, thickness=thickness)
             
-            # Prioritize filling with the largest available size
-            for fixture_size_name in available_sizes:
-                fixture_obj = all_fixture_objects[fixture_size_name]
-                space_per_unit = fixture_obj.width + avg_mirror_width_cost
+            if not partitions:
+                print(f"  -> No partitions found with the given parameters.")
+                return
 
-                while placed_count < needed_count and remaining_wall_length >= space_per_unit:
-                    final_placement_queue.append((fixture_size_name, 1)) # The format our existing functions expect
-                    remaining_wall_length -= space_per_unit
-                    placed_count += 1
-        
-        print(f"  -> ✅ Planning complete. Generated a queue of {len(final_placement_queue)} fixtures.")
-        print(f"  -> Estimated remaining wall length after planning: {remaining_wall_length:.0f}mm")
-        
-        return final_placement_queue
+            # 2. Create a dedicated layer in the DXF document for the visualization
+            if layer_name not in self.doc.layers:
+                self.doc.layers.add(name=layer_name, color=color)
+            
+            # 3. Loop through the found partitions and draw each bounding box
+            for i, (min_x, min_y, max_x, max_y) in enumerate(partitions):
+                # Define the 4 corners of the rectangular bounding box
+                points = [
+                    (min_x, min_y),
+                    (max_x, min_y),
+                    (max_x, max_y),
+                    (min_x, max_y)
+                ]
+                # Add the rectangle to the modelspace on the specified layer
+                self.msp.add_lwpolyline(points, close=True, dxfattribs={"layer": layer_name})
 
-    def get_wall_fixture_needs(self) -> Dict[str, int]:
-        """
-        Returns a dictionary of the total counts needed for each wall fixture family.
-        This serves as a "shopping list" for the placement engine.
-        """
-        print("  -> Generating wall fixture needs dictionary.")
-        # self.family_totals is already calculated in the __init__ method
-        return self.family_totals.copy()
+            print(f"  -> ✅ Drew {len(partitions)} partition boxes on layer '{layer_name}'.")
 
-    def orchestrate_wall_and_overflow_placement(self, total_retail_wall_length: float, floor_area: float, primary_side: str = "left"):
-        """
-        [UPGRADED] Main orchestration method. Now includes the dynamic ratio calculation
-        to determine the optimal number of wall vs. floor fixtures before placement.
-        """
-        from Fixture import Fixture
-        print(f"\n--- 🧠 Orchestrating Wall Fixtures (Primary Side: {primary_side.upper()}) ---")
-        
-        initial_fixture_list = self._create_size_prioritized_queue()
-        if not initial_fixture_list:
-            print("  -> SKIPPED: No wall fixtures specified for placement.")
-            return
+            
+    #---------------------validating get partition funtion now ------------------
+    #---------------------validating get partition funtion now ------------------
 
-        all_fixture_objects = []
-        for name, _ in initial_fixture_list:
-            try:
-                all_fixture_objects.append(Fixture(name, self.fixture_dict[name]["path"]))
-            except (KeyError, ValueError) as e:
-                print(f"  -> WARNING: Could not load fixture '{name}' for dimension calculation. It will be skipped. Error: {e}")
-                continue
-        
-        mirror_config = self.fixtures.get("mirror_selection", {})
-        selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
-        try:
-            mirror_fixture = Fixture(selected_mirror_name, self.fixture_dict[selected_mirror_name]["path"])
-            mirror_height = mirror_fixture.height
-        except (KeyError, ValueError):
-            mirror_height = 300.0
 
-        print("  -> Running dynamic ratio calculation with REAL fixture dimensions...")
-        display_count = len(all_fixture_objects)
-        ratio_parts = 4
-        initial_floor_count = int(display_count / ratio_parts)
-        initial_wall_count = display_count - initial_floor_count
-        wall_count = initial_wall_count
-        valid = False
-        attempts = 0
-        MAX_ATTEMPTS = 20
+    
+    
 
-        while not valid and attempts < MAX_ATTEMPTS:
-            fixtures_on_wall = all_fixture_objects[:wall_count]
-            wall_space_needed = sum(f.height for f in fixtures_on_wall) + (len(fixtures_on_wall) * mirror_height)
-            if wall_space_needed <= total_retail_wall_length:
-                valid = True
-            else:
-                wall_count -= 1
-            attempts += 1
-
-        final_wall_count = wall_count
-        overflow_count = display_count - final_wall_count
-        
-        if overflow_count > 0:
-            overflow_fixtures = initial_fixture_list[final_wall_count:]
-            self._calculate_and_add_overflow_euros(overflow_fixtures)
-        else:
-            print("  -> No overflow fixtures. No extra Euro_centre(s) needed.")
-        
-        master_fixture_list = initial_fixture_list[:final_wall_count]
-        if not master_fixture_list:
-            print("  -> No wall fixtures to place after dynamic calculation.")
-            return
-
-        total_to_place = len(master_fixture_list)
-        primary_count = int(math.ceil(total_to_place / 2.0))
-        primary_list = master_fixture_list[:primary_count]
-        secondary_list = master_fixture_list[primary_count:]
-        primary_queue = collections.deque(primary_list)
-        secondary_queue = collections.deque(secondary_list)
-        
-        if primary_side == "right":
-            print(f"  -> PASS 1 (Primary): Placing {len(primary_queue)} fixtures on RIGHT wall(s).")
-            self.place_fixtures_on_right_wall_new(primary_queue)
-            unplaced_from_primary = list(primary_queue)
-            if unplaced_from_primary:
-                print(f"  -> {len(unplaced_from_primary)} fixtures unplaced. Moving to secondary (LEFT) queue.")
-                secondary_queue.extendleft(reversed(unplaced_from_primary))
-            if secondary_queue:
-                print(f"  -> PASS 2 (Secondary): Placing {len(secondary_queue)} fixtures on LEFT wall(s).")
-                self.place_fixtures_on_left_wall(secondary_queue)
-        else:
-            print(f"  -> PASS 1 (Primary): Placing {len(primary_queue)} fixtures on LEFT wall(s).")
-            unplaced_from_primary = self.place_fixtures_on_left_wall(primary_queue)
-            if unplaced_from_primary:
-                secondary_queue.extendleft(reversed(unplaced_from_primary))
-            if secondary_queue:
-                self.place_fixtures_on_right_wall_new(secondary_queue)
-
-    # In DXF_Controller.py, replace the existing 'orchestrate_wall_and_overflow_placement' function with this modified version.
-
-    def orchestrate_wall_and_overflow_placement_new_not_usefull(self, total_retail_wall_length: float, floor_area: float, primary_side: str = "left"):
-        """
-        [UPGRADED] Main orchestration method.
-        - NOW calls the new `plan_optimal_wall_fixture_mix` to get a smart fixture list.
-        - The dynamic ratio calculation to handle overflow remains.
-        - The final placement functions will now use the new shared mirror logic.
-        """
-        from Fixture import Fixture
-        print(f"\n--- 🧠 Orchestrating Wall Fixtures (Primary Side: {primary_side.upper()}) ---")
-        
-        # --- MODIFICATION START ---
-        # REMOVED: The old call to _create_size_prioritized_queue() is gone.
-        # NEW: Call the new planning function to get the optimal fixture list.
-        initial_fixture_list = self.plan_optimal_wall_fixture_mix(self.family_totals, total_retail_wall_length)
-        # --- MODIFICATION END ---
-
-        if not initial_fixture_list:
-            print("  -> SKIPPED: The planner returned no wall fixtures for placement.")
-            return
-
-        # The rest of this function (dynamic ratio, overflow calculation, splitting queues)
-        # remains the same as it operates on the generated `initial_fixture_list`.
-
-        all_fixture_objects = []
-        for name, _ in initial_fixture_list:
-            try:
-                all_fixture_objects.append(Fixture(name, self.fixture_dict[name]["path"]))
-            except (KeyError, ValueError) as e:
-                print(f"  -> WARNING: Could not load fixture '{name}' for dimension calculation. It will be skipped. Error: {e}")
-                continue
-        
-        mirror_config = self.fixtures.get("mirror_selection", {})
-        selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
-        try:
-            mirror_fixture = Fixture(selected_mirror_name, self.fixture_dict[selected_mirror_name]["path"])
-            mirror_width = mirror_fixture.width # Use width for horizontal placement
-        except (KeyError, ValueError):
-            mirror_width = 300.0
-
-        print("  -> Running dynamic ratio calculation with REAL fixture dimensions...")
-        display_count = len(all_fixture_objects)
-        ratio_parts = 4
-        initial_floor_count = int(display_count / ratio_parts)
-        initial_wall_count = display_count - initial_floor_count
-        wall_count = initial_wall_count
-        valid = False
-        attempts = 0
-        MAX_ATTEMPTS = 20
-
-        while not valid and attempts < MAX_ATTEMPTS:
-            fixtures_on_wall = all_fixture_objects[:wall_count]
-            # MODIFIED: Use the new mirror spacing for a more accurate calculation
-            wall_space_needed = sum(f.width for f in fixtures_on_wall) + (math.ceil(len(fixtures_on_wall) / 2) * mirror_width)
-            if wall_space_needed <= total_retail_wall_length:
-                valid = True
-            else:
-                wall_count -= 1
-            attempts += 1
-
-        final_wall_count = wall_count
-        overflow_count = display_count - final_wall_count
-        
-        if overflow_count > 0:
-            overflow_fixtures = list(initial_fixture_list)[final_wall_count:] # Convert deque to list for slicing
-            self._calculate_and_add_overflow_euros(overflow_fixtures)
-        else:
-            print("  -> No overflow fixtures. No extra Euro_centre(s) needed.")
-        
-        master_fixture_list = collections.deque(list(initial_fixture_list)[:final_wall_count])
-        if not master_fixture_list:
-            print("  -> No wall fixtures to place after dynamic calculation.")
-            return
-
-        total_to_place = len(master_fixture_list)
-        primary_count = int(math.ceil(total_to_place / 2.0))
-        primary_list = collections.deque(list(master_fixture_list)[:primary_count])
-        secondary_list = collections.deque(list(master_fixture_list)[primary_count:])
-        
-        # The final placement calls are unchanged, but the functions they call will be updated next.
-        if primary_side == "right":
-            print(f"  -> PASS 1 (Primary): Placing {len(primary_list)} fixtures on RIGHT wall(s).")
-            unplaced_from_primary = self.place_fixtures_on_right_wall_new(primary_list)
-            if unplaced_from_primary:
-                print(f"  -> {len(unplaced_from_primary)} fixtures unplaced. Moving to secondary (LEFT) queue.")
-                secondary_list.extendleft(reversed(unplaced_from_primary))
-            if secondary_list:
-                print(f"  -> PASS 2 (Secondary): Placing {len(secondary_list)} fixtures on LEFT wall(s).")
-                self.place_fixtures_on_left_wall(secondary_list)
-        else:
-            print(f"  -> PASS 1 (Primary): Placing {len(primary_list)} fixtures on LEFT wall(s).")
-            unplaced_from_primary = self.place_fixtures_on_left_wall(primary_list)
-            if unplaced_from_primary:
-                secondary_list.extendleft(reversed(unplaced_from_primary))
-            if secondary_list:
-                print(f"  -> PASS 2 (Secondary): Placing {len(secondary_list)} fixtures on RIGHT wall(s).")
-                self.place_fixtures_on_right_wall_new(secondary_list)
-
-    def _calculate_and_add_overflow_euros(self, unplaced_list: List[Tuple[str, int]]):
-        """
-        Calculates the number of extra Euro Centres needed for overflow.
-        """
-        overflow_candidates = [name for name, _ in unplaced_list if "vc_fixture" in name]
-
-        if not overflow_candidates:
-            print("  -> No overflow candidates of the required type (VC Family) found.")
-            return
-        extra_euros_needed = math.ceil(len(overflow_candidates) / 1.0)
-        if extra_euros_needed > 0:
-            self.fixtures["floor_fixtures"]["Euro_centre"] += int(extra_euros_needed)
-            print(f"  -> Adding {int(extra_euros_needed)} EXTRA Euro_centre(s) for overflow.")
-
+    #--------------------------------------------------------------------------------------------------------------------
+    #--------------------------------------------------------------------------------------------------------------------
+    #--------------------------------------------------------------------------------------------------------------------
+    
     def _calculate_standing_tables(self) -> int:
         """
         Calculates the number of standing tables based on the 'proto' value.
@@ -870,17 +948,14 @@ class DXF_Controller:
             proto_value = float(proto_str.replace('L', ''))
             print(f"  -> Proto value for clinic calculation is {proto_value}L.")
 
-            if proto_value <= 8:
-                clinic_counts["Clinic_with_sink"] = 1
-
-            elif proto_value <= 12:
-                # clinic_counts["ROC_clinic"] = 1
-                clinic_counts["Clinic_regular"] = 1
-                clinic_counts["Clinic_with_sink"] = 1
-
-            elif 12 <= proto_value <= 15:
-                clinic_counts["Clinic_with_sink"] = 1
+            if proto_value <= 12:
                 clinic_counts["ROC_clinic"] = 1
+                # clinic_counts["Clinic_regular"] = 1
+                clinic_counts["Clinic_with_sink"] = 1
+
+            elif 12 < proto_value <= 15:
+                clinic_counts["ROC_clinic"] = 1
+                clinic_counts["Clinic_with_sink"] = 1
                 clinic_counts["Clinic_regular"] = 1
             
             else:
@@ -1391,7 +1466,7 @@ class DXF_Controller:
         return placeable_segments
     
 
-    def _get_accurate_obstacle_bboxes(self, include_all=False):
+    def _get_accurate_obstacle_bboxes(self, include_all=False, debug=False):
         """
         Returns accurate bounding boxes for fixtures.
         If include_all is False, it returns only 'clinic', 'boh', 'boh_preset', and 'Eye_massage_area' types.
@@ -1415,8 +1490,9 @@ class DXF_Controller:
             
             if best_match_key:
                 fixture_type = self.fixture_dict[best_match_key].get("type")
-                
-                if include_all or fixture_type in ['clinic', 'boh', 'boh_preset'] or best_match_key == "Eye_massage_area":
+                # if debug:
+                #     print(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&fixture_type: {fixture_type}, best_match_key: {best_match_key}")
+                if include_all or fixture_type in ['clinic', 'boh', 'boh_preset', 'pickup_window'] or best_match_key in ["Eye_massage_area", 'medium_bench', "large_bench"]:
                     try:
                         entity_bbox = extents([entity], fast=True)
                         minx, miny, minz = entity_bbox.extmin
@@ -1452,6 +1528,7 @@ class DXF_Controller:
         print(f"✅ Found {len(bboxes)} obstacles to avoid.")
         return bboxes
     
+
     def _validate_and_place_at_point(self, fixture, target_center, angle_deg, placed_bboxes):
         """
         A robust helper to validate if a fixture can be placed at a specific
@@ -1547,14 +1624,6 @@ class DXF_Controller:
             "vector": wall_vector
         }
 
-        # return {
-        #     "start_point": p1,
-        #     "end_point": p2,
-        #     "angle_deg": math.degrees(wall_vector.angle),
-        #     "length": wall_vector.magnitude,
-        #     "vector": wall_vector,
-        #     "side": side  # <-- This is the only line that has been added
-        # }
 
 
 
@@ -1783,13 +1852,18 @@ class DXF_Controller:
             if best_match_key and self.fixture_dict[best_match_key].get("type") in back_side_types:
                 print(f"checking {block_name_upper}")
                 bbox = extents(entity.virtual_entities())
+                print("bbox:", bbox.extmin, bbox.extmax)
                 if bbox.has_data:
                     minx, miny, minz = bbox.extmin
                     maxx, maxy, maxz = bbox.extmax
                     area = (maxx-minx)*(maxy-miny)
-                    if area < (2600*1700)+1000: # max clinic size + buffer
-                        back_side_entities.append(entity)
-                        print(f"\tadding {block_name_upper}")
+                    # print("area:", area)
+                    # print("max area:", (2600*1700) + 1000)
+                    # if area < (2600*1700)+1000: # max clinic size + buffer
+
+                    back_side_entities.append(entity)
+                    # print("  -> included",back_side_entities)
+                    print(f"\tadding {block_name_upper}")
 
         if not back_side_entities:
             print("  -> ⚠️ SKIPPED: No back-side fixtures found to define the separation line.")
@@ -1797,6 +1871,7 @@ class DXF_Controller:
 
         # --- 2. Calculate the combined bounding box and find the bottom edge ---
         combined_bbox = extents(back_side_entities)
+        print("combined_bbox:", combined_bbox.extmin, combined_bbox.extmax)
         separation_y = combined_bbox.extmin.y - margin
         print(f"  -> Back-side fixture cluster ends at y={combined_bbox.extmin.y:.0f}. Placing line at y={separation_y:.0f} (with margin).")
 
@@ -1846,6 +1921,7 @@ class DXF_Controller:
         # --- 5. Add a thin bounding box to act as an obstacle for validation ---
         # This makes the "invisible line" a real object for collision detection
         line_obstacle_bbox = (min_x, separation_y - 1, max_x, separation_y + 1)
+        print("box:", line_obstacle_bbox)
         placed_bboxes.append(line_obstacle_bbox)
         print("  -> Added line as a validation obstacle.")
 
@@ -1928,76 +2004,7 @@ class DXF_Controller:
     
 
     ##--new-test--with---greedy method-- strategy -----space for boh
-    ##--new-test--with---greedy method-- strategy -----space for boh
-    
-    def _find_best_combination_for_row_og(self, clinic_names_to_place: list, available_width: float, force_orientation: Optional[str] = None) -> Optional[dict]:
-        """
-        Universal "Puzzle Solver" for clinic placement in a single row.
-        - TUNED: Can now be forced to only consider a specific orientation (e.g., 'V').
-        """
-        from itertools import product
-        from Fixture import Fixture
-
-        V_V_GAP = 800.0
-        H_GAP = 50.0     
-        
-        best_layout = {'score': -1}
-
-        orientations_to_test = ['H', 'V']
-        if force_orientation == 'V':
-            orientations_to_test = ['V']
-        elif force_orientation == 'H':
-            orientations_to_test = ['H']
-
-        for n in range(len(clinic_names_to_place), 0, -1):
-            try:
-                current_fixtures = [Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"]) for name in clinic_names_to_place[:n]]
-            except (KeyError, ValueError):
-                continue
-            
-            orientations = list(product(orientations_to_test, repeat=n))
-
-            for combo in orientations:
-                required_width = 0
-                gaps = []
-                
-                for i in range(n):
-                    orient = combo[i]
-                    fxtr = current_fixtures[i]
-                    w = fxtr.width if orient == 'H' else fxtr.height
-                    required_width += w
-                    
-                    if i < n - 1:
-                        next_orient = combo[i+1]
-                        gap = V_V_GAP if (orient == 'V' and next_orient == 'V') else H_GAP
-                        required_width += gap
-                        gaps.append(gap)
-                gaps.append(0)
-
-                # --- NEW LOGIC: Calculate total required space including side margins ---
-                start_margin = 800.0 if combo[0] == 'V' else 50.0
-                end_margin = 800.0 if combo[-1] == 'V' else 50.0
-                total_required_space = start_margin + required_width + end_margin
-                # --- END OF NEW LOGIC ---
-
-                # --- MODIFIED: Check against total required space ---
-                if total_required_space <= available_width:
-                    score = (n * 10000) + required_width
-                    if score > best_layout['score']:
-                        best_layout = {
-                            'score': score,
-                            'combo': combo,
-                            'gaps': gaps,
-                            'fixtures_for_row': current_fixtures,
-                            'start_margin': start_margin, # --- ADDED: Store the margin
-                            'remaining_fixtures_names': clinic_names_to_place[n:]
-                        }
-
-            if best_layout['score'] > -1:
-                return best_layout
-
-        return None
-    
+    ##--new-test--with---greedy method-- strategy -----space for boh    
 
     def _find_best_combination_for_row(self, clinic_names_to_place: list, available_width: float, force_orientation: Optional[str] = None) -> List[dict]:
         """
@@ -2005,10 +2012,11 @@ class DXF_Controller:
         Universal "Puzzle Solver" for clinic placement in a single row.
         """
         from itertools import product
-        from Fixture import Fixture
+        # from Fixture import Fixture
 
         V_V_GAP = 800.0
-        H_GAP = 50.0
+        # H_GAP = 50.0
+        H_GAP = -100.0
 
         # --- MODIFIED: Initialize a list to hold all valid layouts ---
         valid_layouts = []
@@ -2021,7 +2029,7 @@ class DXF_Controller:
 
         for n in range(len(clinic_names_to_place), 0, -1):
             try:
-                current_fixtures = [Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"]) for name in clinic_names_to_place[:n]]
+                current_fixtures = [Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"]) for name in clinic_names_to_place[:n]]
             except (KeyError, ValueError):
                 continue
             
@@ -2117,11 +2125,17 @@ class DXF_Controller:
         aabb = BoundingBox2d(world_corners)
 
         # --- Step 3: Perform Validation Checks ---
-        # Check 1: Is the entire fixture polygon safely inside the main floorplan?
-        # is_inside = self.floorplan_polygon.contains(fixture_polygon)
-        is_inside = self.validation_hull_polygon.contains(fixture_polygon)
+        # --- MODIFICATION: Allow clinics to ignore wall boundaries ---
+        is_inside = True # Assume it's valid by default
+        if "CLINIC" not in fixture.name.upper():
+            # Only check for wall containment if the fixture is NOT a clinic
+            is_inside = self.validation_hull_polygon.contains(fixture_polygon)
+        # --- END OF MODIFICATION ---
         # Check 2: Does the fixture's bounding box overlap with any previously placed objects?
-        is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+        is_overlapping = False
+        if "CLINIC" not in fixture.name.upper():
+            is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+        
 
         # --- Step 4: Place the Fixture if Valid ---
         if is_inside and not is_overlapping:
@@ -2147,7 +2161,7 @@ class DXF_Controller:
             
         return None # Return None on failure.
     
-    def _validate_and_place_in_open_space(self, fixture, target_center, angle_deg, placed_bboxes, xscale=1.0, yscale=1.0):
+    def _validate_and_place_in_open_space(self, fixture, target_center, angle_deg, placed_bboxes, rotated, xscale=1.0, yscale=1.0):
         """
         ### MIRROR LOGIC ADDED ###
         Now accepts xscale and yscale to validate and place mirrored fixtures.
@@ -2158,13 +2172,16 @@ class DXF_Controller:
 
         # --- Step 1: Calculate the Transformation Matrix ---
         local_center = fixture.bounding_box.center
+        angle = angle_deg
+        if rotated:
+            angle += 90
         transform = Matrix44.chain(
             # 1. Move fixture's center to origin (0,0).
             Matrix44.translate(-local_center.x, -local_center.y, 0),
             # 2. Apply mirroring.
             Matrix44.scale(xscale, yscale, 1.0),
             # 3. Rotate around origin.
-            Matrix44.z_rotate(math.radians(angle_deg)),
+            Matrix44.z_rotate(math.radians(angle)),
             # 4. Move to final target position.
             Matrix44.translate(target_center.x, target_center.y, 0)
         )
@@ -2174,77 +2191,77 @@ class DXF_Controller:
         fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
         aabb = BoundingBox2d(world_corners)
 
+        # # --- Step 3: Perform Validation Checks ---
+        # is_inside = self.floorplan_polygon.contains(fixture_polygon)
+        # is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+
         # --- Step 3: Perform Validation Checks ---
-        is_inside = self.floorplan_polygon.contains(fixture_polygon)
-        is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+        # --- MODIFICATION: Allow clinics to ignore wall and overlap checks ---
+        is_inside = True # Assume it's valid by default
+        is_overlapping = False # Assume it's not overlapping by default
+
+        if "CLINIC" not in fixture.name.upper():
+            # Only perform checks if the fixture is NOT a clinic
+            is_inside = self.floorplan_polygon.contains(fixture_polygon)
+            is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+        # --- END OF MODIFICATION ---
 
         # --- Step 4: Place the Fixture if Valid ---
         if is_inside and not is_overlapping:
             # Correct the insertion point to account for the offset between the fixture's center and its file's origin (0,0).
             local_center_scaled = Vec2(local_center.x * xscale, local_center.y * yscale)
+            # print(f"_____________________local_center_scaled: {local_center_scaled}_____________________")
             rotated_offset = local_center_scaled.rotate(math.radians(angle_deg))
+            # print(f"_____________________rotated_offset: {rotated_offset}_____________________")
+            translation = rotated_offset - local_center_scaled
+            # print(f"_____________________translation: {translation}_____________________")
+            if rotated:
+                rotated_offset = rotated_offset.rotate(math.radians(90))
+                angle_deg += 90
+                # print(f"_____________________rotated_offset2: {rotated_offset}_____________________")
             final_insert_point = target_center - rotated_offset
+            # print(f"_____________________final_insert_point: {final_insert_point}_____________________")
+            final_insert_point = final_insert_point - translation
+            # print(f"_____________________final_insert_point: {final_insert_point}_____________________")
+            # if rotated:
+            #     final_insert_point = Vec2(final_insert_point.x + fixture.height/2, final_insert_point.y - fixture.width/2)
+            # else:
+            #     final_insert_point = Vec2(final_insert_point.x + fixture.width/2, final_insert_point.y - fixture.height/2)
+            # print(f"_____________________final_insert_point: {final_insert_point}_____________________")
             
             # Actually draw the fixture in the DXF file.
+            print("wall_angle_deg for placement:", angle_deg)
+
+            if angle_deg <= 50:
+                # Ensure these variables are defined or passed to the function
+                if hasattr(self, 'clinics_queue') and hasattr(self, 'placed_clinics_on_top_wall') and hasattr(self, 'first_row_orientation'):
+                    self._place_clinics_fallback_row_by_row(
+                        self.clinics_queue,
+                        placed_bboxes,
+                        self.placed_clinics_on_top_wall,
+                        self.first_row_orientation
+                    )
+                return
             self.place_fixture(fixture, (final_insert_point.x, final_insert_point.y, 0), angle_deg, True, xscale=xscale, yscale=yscale)
             
             # Add the new fixture's bounding box to the master list of obstacles.
             new_bbox_tuple = (aabb.extmin.x, aabb.extmin.y, aabb.extmax.x, aabb.extmax.y)
+            
+            # print("Bounding box placed:", new_bbox_tuple)
             placed_bboxes.append(new_bbox_tuple) 
             
             return new_bbox_tuple # Return the coordinates on success.
             
         return None # Return None on failure.
 
-    def _create_boh_room_from_zone_og(self, boh_zone_poly: Polygon, wall_thickness: float = 50.0, layer_name: str = "BOH_WALL", hatch_color: int = 252):
-        """
-        Takes a Shapely Polygon and draws it as a proper, hatched wall with a given thickness.
-        NOW includes explicit wall outlines.
-        """
-        if not boh_zone_poly or boh_zone_poly.is_empty:
-            return
 
-        # 1. Create the inner boundary by offsetting inwards
-        inner_boundary = boh_zone_poly.buffer(-wall_thickness)
+    #------------new edit_foor wall_thickness for boh zone -----------------------------
+    #------------new edit_foor wall_thickness for boh zone -----------------------------
+    #------------new edit_foor wall_thickness for boh zone -----------------------------
 
-        # 2. Create a new hatch object for the wall fill
-        hatch = self.msp.add_hatch(color=hatch_color)
-        hatch.dxf.layer = layer_name
-        
-        # 3. Add the outer boundary as the first path for the hatch
-        outer_path = hatch.paths.add_edge_path()
-        outer_coords = list(boh_zone_poly.exterior.coords)
-        for i in range(len(outer_coords) - 1):
-            outer_path.add_line(outer_coords[i], outer_coords[i+1])
-
-        # 4. Add the inner boundary as a "hole" in the hatch
-        if not inner_boundary.is_empty:
-            inner_path = hatch.paths.add_edge_path()
-            inner_coords = list(inner_boundary.exterior.coords)
-            for i in range(len(inner_coords) - 1):
-                inner_path.add_line(inner_coords[i], inner_coords[i+1])
-
-        # 5. Set the visual style of the hatch pattern
-        hatch.set_pattern_fill('ANSI32', scale=10)
-        hatch.dxf.pattern_angle = 90
-
-        # --- NEW: Add Explicit Wall Outlines ---
-        # Draw the outer wall line
-        self.msp.add_lwpolyline(
-            outer_coords, 
-            close=True, 
-            dxfattribs={"layer": f"{layer_name}_OUTLINE", "color": 251, "lineweight": 25}
-        )
-        # Draw the inner wall line
-        if not inner_boundary.is_empty:
-            self.msp.add_lwpolyline(
-                list(inner_boundary.exterior.coords), 
-                close=True, 
-                dxfattribs={"layer": f"{layer_name}_OUTLINE", "color": 251, "lineweight": 25}
-            )
-        # --- END OF NEW CODE ---
-        
-        print(f"  -> ✅ Drew BOH zone as a {wall_thickness}mm thick wall on layer '{layer_name}'.")
+    #------------new edit_foor wall_thickness for boh zone -----------------------------
+    #------------new edit_foor wall_thickness for boh zone -----------------------------
+    #------------new edit_foor wall_thickness for boh zone -----------------------------
 
     def _create_boh_room_from_zone(self, boh_zone_poly: Polygon, wall_thickness: float = 50.0, layer_name: str = "BOH_WALL", hatch_color: int = 252):
         """
@@ -2274,7 +2291,8 @@ class DXF_Controller:
                 continue
 
             # 1. Create the inner boundary for the current polygon
-            inner_boundary = poly.buffer(-wall_thickness)
+            # inner_boundary = poly.buffer(-wall_thickness)
+            outer_boundary = poly.buffer(wall_thickness)
 
             # 2. Create a new hatch object for this polygon's wall fill
             hatch = self.msp.add_hatch(color=hatch_color)
@@ -2287,9 +2305,9 @@ class DXF_Controller:
                 outer_path.add_line(outer_coords[i], outer_coords[i+1])
 
             # 4. Add the inner boundary as a "hole" if it exists
-            if not inner_boundary.is_empty:
+            if not outer_boundary.is_empty:
                 inner_path = hatch.paths.add_edge_path()
-                inner_coords = list(inner_boundary.exterior.coords)
+                inner_coords = list(outer_boundary.exterior.coords)
                 for i in range(len(inner_coords) - 1):
                     inner_path.add_line(inner_coords[i], inner_coords[i+1])
 
@@ -2303,9 +2321,9 @@ class DXF_Controller:
                 close=True, 
                 dxfattribs={"layer": f"{layer_name}_OUTLINE", "color": 251, "lineweight": 25}
             )
-            if not inner_boundary.is_empty:
+            if not outer_boundary.is_empty:
                 self.msp.add_lwpolyline(
-                    list(inner_boundary.exterior.coords), 
+                    list(outer_boundary.exterior.coords), 
                     close=True, 
                     dxfattribs={"layer": f"{layer_name}_OUTLINE", "color": 251, "lineweight": 25}
                 )
@@ -2347,7 +2365,7 @@ class DXF_Controller:
             if not self.floorplan_polygon.contains(Point(segment_start + (segment_vector * 10) + inward_normal)):
                 inward_normal = -inward_normal
 
-            cursor, margin_from_wall, gap_between_clinics = 50.0, 50.0, 100.0
+            cursor, margin_from_wall, gap_between_clinics = 4500.0, 50.0, 500.0
 
             while clinics_queue:
                 next_clinic = clinics_queue[0]
@@ -2401,113 +2419,61 @@ class DXF_Controller:
         return list(clinics_queue)
       
     
-    # In DXF_Controller.py
 
-    def _calculate_opportunistic_boh_zone_og(self, last_clinic_bbox: tuple, placed_bboxes: List[tuple], last_clinic_orientation: str) -> Tuple[Optional[Polygon], float]:
+
+    def _expand_boh_zone_downwards_if_needed(self, initial_boh_poly: Polygon, initial_slicer_box: box, floorplan: Polygon) -> Polygon:
         """
-        # --- MODIFIED: Now accepts 'last_clinic_orientation' to add a dynamic gap. ---
-        Calculates a potential BOH zone by creating an L-shaped polygon.
+        Checks if the initial BOH polygon meets a minimum area requirement.
+        If not, it iteratively expands the polygon DOWNWARDS until it meets a
+        target area or can no longer expand.
         """
-        from shapely.geometry import box, Polygon
-        
-        lc_min_x, lc_min_y, lc_max_x, lc_max_y = last_clinic_bbox
-        fp_min_x, fp_min_y, fp_max_x, fp_max_y = self.floorplan_polygon.bounds
-        
-        # --- NEW: Add a horizontal gap for vertically placed clinics ---
-        start_x_for_box = lc_max_x
-        if last_clinic_orientation == 'V':
-            print("    -> 💡 Applying architectural rule: Adding 800mm horizontal gap for vertical clinic.")
-            start_x_for_box += 800.0
-        # --- END OF NEW LOGIC ---
-
-        # Use the new starting X-coordinate for the slicing box
-        slicing_box = box(start_x_for_box, lc_min_y, fp_max_x + 100, fp_max_y + 100)
-
-        boh_zone_poly = self.floorplan_polygon.intersection(slicing_box)
-
-        if any(boh_zone_poly.intersects(box(*b)) for b in placed_bboxes):
-            return None, 0.0
-
-        area_in_sqmm = boh_zone_poly.area
+        # --- 1. Define Constants ---
+        MIN_BOH_SQFT = 80.0
+        TARGET_BOH_SQFT = 60.0
         SQMM_PER_SQFT = 92903.04
-        area_in_sqft = area_in_sqmm / SQMM_PER_SQFT
-        
-        return boh_zone_poly, area_in_sqft
+        NUDGE_MM = 100.0
+        MAX_ITERATIONS = 50 # Safety break
 
+        # --- 2. Calculate Initial Area ---
+        initial_area_sqft = initial_boh_poly.area / SQMM_PER_SQFT
+        print(f"  -> Initial BOH zone area is {initial_area_sqft:.2f} sq. ft.")
 
-    def create_boh_zone_from_last_clinic_og(self, placed_clinics_on_top_wall: list, placed_bboxes: list):
-        """
-        [DEFINITIVE BOH STRATEGY V5] Creates the BOH zone.
-        - Stops at the first partition that is both to the right AND within the
-          same horizontal Y-range as the BOH itself.
-        - Applies conditional 800mm gap for odd-numbered vertical clinics.
-        """
-        from shapely.geometry import box
-        print("\n--- 🏛️  Creating BOH Zone Based on Final Clinic Position ---")
-
-        if not placed_clinics_on_top_wall:
-            print("  -> SKIPPED: No clinics were placed on the top wall to anchor the BOH.")
-            return
-
-        # 1. & 2. Find the anchor clinic and its details (Unchanged)
-        anchor_clinic = max(placed_clinics_on_top_wall, key=lambda c: c['bbox'][2])
-        anchor_bbox = anchor_clinic['bbox']
-        anchor_orientation = anchor_clinic['orient']
-        anchor_point_x = anchor_bbox[2]
-        anchor_point_y = anchor_bbox[1]
-        
-        print(f"  -> Anchoring to '{anchor_clinic['fxtr'].name}' (Orientation: {anchor_orientation}).")
-
-        # Conditional Gap Logic (Unchanged)
-        total_vertical_clinics = sum(1 for clinic in placed_clinics_on_top_wall if clinic['orient'] == 'V')
-        print(f"  -> Total vertical clinics on top wall: {total_vertical_clinics}")
-        start_x = anchor_point_x
-        if anchor_orientation == 'V' and total_vertical_clinics % 2 != 0:
-            start_x += 800.0
-            print(f"  -> Applying 800mm gap: Anchor is vertical and total V-count ({total_vertical_clinics}) is odd.")
-        else:
-            print(f"  -> SKIPPING 800mm gap: Condition not met (Anchor orient: {anchor_orientation}, V-count: {total_vertical_clinics}).")
-
-        # ######################################################################
-        # ########## NEW, MORE PRECISE PARTITION FILTERING LOGIC START #########
-        # ######################################################################
-
-        print("  -> Checking for internal partitions within the BOH's Y-range...")
-        boh_max_x = self.cvc.max_x + 1000 
-        internal_partitions = self.cvc.get_internal_wall_partitions(20.0, 200.0)
-        
-        # Define the BOH's vertical "lane" or Y-range.
-        boh_min_y = anchor_point_y
-        boh_max_y = self.cvc.max_y
-
-        # A partition is relevant only if it's to the right AND its Y-range overlaps with the BOH's Y-range.
-        relevant_partitions = [
-            p for p in internal_partitions 
-            if p[0] > start_x and (boh_min_y < p[3] and p[1] < boh_max_y) # p[1]=min_y, p[3]=max_y
-        ]
-        
-        if relevant_partitions:
-            first_partition = min(relevant_partitions, key=lambda p: p[0])
-            boh_max_x = first_partition[0]
-            print(f"    -> ✅ Found partition in path at x={boh_max_x:.0f}. BOH zone will stop here.")
-        else:
-            print("    -> No blocking partitions found in path. BOH will extend to the room's natural edge.")
-
-        # ####################################################################
-        # ########### NEW, MORE PRECISE PARTITION FILTERING LOGIC END ##########
-        # ####################################################################
-
-        # 4. Create and draw the BOH zone (Unchanged)
-        boh_box = box(start_x, anchor_point_y, boh_max_x, self.cvc.max_y + 1000)
-        final_boh_poly = self.floorplan_polygon.intersection(boh_box)
-
-        if final_boh_poly.is_empty:
-            print("  -> ⚠️ FAILED: The calculated BOH zone resulted in an empty area.")
-            return
+        # --- 3. Check Condition and Start Expansion Loop ---
+        if initial_area_sqft < MIN_BOH_SQFT:
+            print(f"  -> Area is less than {MIN_BOH_SQFT} sq. ft. Attempting to expand downwards to at least {TARGET_BOH_SQFT} sq. ft.")
             
-        self._create_boh_room_from_zone(final_boh_poly, layer_name="BOH_WALL_VALID")
-        placed_bboxes.append(final_boh_poly.bounds)
+            current_poly = initial_boh_poly
+            current_slicer = initial_slicer_box
+            iterations = 0
 
+            while (current_poly.area / SQMM_PER_SQFT) < TARGET_BOH_SQFT and iterations < MAX_ITERATIONS:
+                iterations += 1
+                
+                min_x, min_y, max_x, max_y = current_slicer.bounds
+
+                # ***** KEY CHANGE IS HERE *****
+                # Expand the slicer box DOWNWARDS by subtracting from its min_y
+                expanded_slicer_box = box(min_x, min_y - NUDGE_MM, max_x, max_y)
+                
+                new_poly = floorplan.intersection(expanded_slicer_box)
+
+                if new_poly.is_empty or new_poly.area <= current_poly.area:
+                    print(f"    -> Iteration {iterations}: Downward expansion failed to increase area. Stopping.")
+                    break
+                
+                current_poly = new_poly
+                current_slicer = expanded_slicer_box
+                print(f"    -> Iteration {iterations}: Nudged bottom wall by {NUDGE_MM}mm. New area: {current_poly.area / SQMM_PER_SQFT:.2f} sq. ft.")
+
+            # --- 4. Return the Final Polygon ---
+            if (current_poly.area / SQMM_PER_SQFT) >= TARGET_BOH_SQFT:
+                print(f"  -> ✅ Successfully expanded BOH zone to {current_poly.area / SQMM_PER_SQFT:.2f} sq. ft.")
+                return current_poly
+            else:
+                print(f"  -> ⚠️ WARNING: Could not expand BOH to target area. Using last valid size of {current_poly.area / SQMM_PER_SQFT:.2f} sq. ft.")
+                return current_poly
+        
+        return initial_boh_poly
     
 
     def create_boh_zone_from_last_clinic( self, placed_clinics_on_top_wall: list, placed_bboxes: list, big_partition_threshold_mm: float = 800.0):
@@ -2517,11 +2483,10 @@ class DXF_Controller:
           same horizontal Y-range as the BOH itself.
         - Applies conditional 800mm gap for odd-numbered vertical clinics.
         """
-        # --- ADD THIS BLOCK AT THE TOP ---
+        
         debug_layer_name = "DEBUG_STOPPER_PARTITIONS"
         if debug_layer_name not in self.doc.layers:
             self.doc.layers.add(name=debug_layer_name, color=1) # Color 1 is Red
-        # --- END OF NEW BLOCK ---
         print(f"DEBUG: BOH zone is using a 'big_partition_threshold_mm' of {big_partition_threshold_mm}")
 
         print(f"  -> Checking for 'big' partitions (> {big_partition_threshold_mm}mm) to act as a hard boundary...")
@@ -2552,25 +2517,19 @@ class DXF_Controller:
             print(f"  -> SKIPPING 800mm gap: Condition not met (Anchor orient: {anchor_orientation}, V-count: {total_vertical_clinics}).")
 
     
-        # ######################################################################
+        
 
         print("  -> Checking for internal partitions within the BOH's Y-range...")
         boh_max_x = self.cvc.max_x + 1000 
-        # stopper_partitions = self.cvc.get_internal_wall_partitions(max_length=big_partition_threshold_mm, thickness=0)
-        # In create_boh_zone_from_last_clinic() around line 2030
-        # --- THIS IS THE NEW, CORRECTED CALL ---
-        # stopper_partitions = self.cvc.get_internal_wall_partitions_boh(min_length_mm=big_partition_threshold_mm, thickness=0)
         stopper_partitions = self.cvc.get_internal_wall_partitions_boh(
             min_length_mm=big_partition_threshold_mm, 
             thickness=0,
-            msp_debug=None #self.msp 
+            msp_debug=None #self.msp  
         )
-        # ####################################################################
-       
-
+              
 
         print("  -> Filtering for partitions that are connected AND vertical...")
-        proximity_threshold = 50.0
+        proximity_threshold = 1.0
         verticality_ratio = 2.0  # Wall must be twice as tall as it is wide
         perimeter_stoppers = []
         perimeter_corners = [Vec2(c) for c in self.cvc.corners]
@@ -2598,22 +2557,13 @@ class DXF_Controller:
                 print(f"    -> Discarding internal partition at x={p1.x:.0f}")
 
         print(f"    -> Kept {len(perimeter_stoppers)} partitions that are connected AND vertical.")
-        # ####################################################################
-        # ########################## END OF NEW BLOCK ##########################
-        # ####################################################################
-
-
-        # internal_partitions = self.cvc.get_internal_wall_partitions(20.0, 200.0)
         
-        # Define the BOH's vertical "lane" or Y-range.
+
+        
         boh_min_y = anchor_point_y
         boh_max_y = self.cvc.max_y
 
-        # A partition is relevant only if it's to the right AND its Y-range overlaps with the BOH's Y-range.
-        # relevant_partitions = [
-        #     p for p in stopper_partitions 
-        #     if p[0] > start_x and (boh_min_y < p[3] and p[1] < boh_max_y) # p[1]=min_y, p[3]=max_y
-        # ]
+        
         relevant_partitions = [
             p for p in perimeter_stoppers 
             if p[0] > start_x and (boh_min_y < p[3] and p[1] < boh_max_y)
@@ -2626,17 +2576,16 @@ class DXF_Controller:
         else:
             print("    -> No blocking partitions found in path. BOH will extend to the room's natural edge.")
 
-        # ####################################################################
-        # ########### NEW, MORE PRECISE PARTITION FILTERING LOGIC END ##########
-        # ####################################################################
+        
 
         # 4. Create and draw the BOH zone (Unchanged)
         boh_box = box(start_x, anchor_point_y, boh_max_x, self.cvc.max_y + 1000)
-        # final_boh_poly = self.floorplan_polygon.intersection(boh_box)
-        # final_boh_poly = self.floorplan_polygon.convex_hull.intersection(boh_box)
-        # AFTER (Correct):
+        
         final_boh_poly = self.floorplan_polygon.intersection(boh_box)
 
+        
+        final_boh_poly = self._expand_boh_zone_downwards_if_needed(final_boh_poly, boh_box, self.floorplan_polygon)
+        
         if final_boh_poly.is_empty:
             print("  -> ⚠️ FAILED: The calculated BOH zone resulted in an empty area.")
             return
@@ -2681,323 +2630,60 @@ class DXF_Controller:
         area_in_sqft = area_in_sqmm / SQMM_PER_SQFT
         
         return boh_zone_poly, area_in_sqft
-    
 
-    def place_clinics_with_best_fit_and_fallback_og(self, placed_bboxes: List[tuple]):
+    def _calculate_opportunistic_boh_zone_real_one_need_to_use_future_for_arekere_adjustment_we_do_dont_use_it_now(self, last_clinic_bbox: tuple, placed_bboxes: List[tuple], last_clinic_orientation: str, big_partition_threshold_mm: float = 800.0) -> Tuple[Optional[Polygon], float]:
         """
-        Master function for clinic placement using the final, fully-featured
-        "Opportunistic BOH Reservation" strategy with a custom, corner-filling zone.
-        - FINAL VERSION: Now draws a visual boundary for the BOH zone in all cases.
+        [ROBUST VERSION 3 - PARTITION AWARE] Calculates the BOH zone by subtracting the retail area
+        from the entire floorplan, AND now stops at the first major internal partition.
         """
-        from Fixture import Fixture
-        from shapely.geometry import Polygon
-        print("\n--- 🧠 Executing Final Clinic & BOH Placement Strategy ---")
+        from shapely.geometry import box, Polygon
 
-        # --- Setup: Load a list of all clinic NAMES ---
-        clinic_config = self.fixtures.get("clinic_fixtures", {})
-        clinic_names_queue = collections.deque([name for name, count in clinic_config.items() if count > 0 for _ in range(count)])
+        lc_min_x, lc_min_y, lc_max_x, lc_max_y = last_clinic_bbox
+        fp_min_x, fp_min_y, fp_max_x, fp_max_y = self.floorplan_polygon.bounds
         
-        if not clinic_names_queue:
-            print("  -> SKIPPED: No clinics to place.")
-            return
+        # Add a horizontal gap for vertically placed clinics
+        start_x_for_boh = lc_max_x
+        if last_clinic_orientation == 'V':
+            print("    -> (Verification) Applying architectural rule: Adding 800mm horizontal gap for vertical clinic.")
+            start_x_for_boh += 800.0
 
-        # --- Plan A: The Row-by-Row Placement Engine ---
-        print("\n  -> Plan A: Initiating Row-by-Row Placement Engine...")
-        placed_count_plan_a = 0
-        is_first_row = True
-        y_cursor = 0
-        last_row_details = {}
+        # --- NEW: PARTITION DETECTION LOGIC (Mirrors create_boh_zone_from_last_clinic) ---
+        boh_max_x = self.cvc.max_x + 1000 
+        stopper_partitions = self.cvc.get_internal_wall_partitions_boh(
+            min_length_mm=big_partition_threshold_mm, 
+            thickness=0,
+            msp_debug=None
+        )
         
-        while clinic_names_queue:
-            available_width, anchor_details = 0, {}
-            force_orientation_for_row = None
+        boh_min_y_for_check = lc_min_y
+        boh_max_y_for_check = self.cvc.max_y
 
-            if is_first_row:
-                ordered_corners = self._get_reordered_corners_top_left()
-                perimeter_path = []
-                if ordered_corners:
-                    for i in range(len(ordered_corners)):
-                        p1, p2 = Vec2(ordered_corners[i]), Vec2(ordered_corners[(i + 1) % len(ordered_corners)])
-                        if p1.distance(p2) > 100: perimeter_path.append((p1, p2))
-                if not perimeter_path: break
-                
-                p1_top, p2_top = perimeter_path[0]
-                available_width = p1_top.distance(p2_top)
-                anchor_details = { "type": "wall", "segment": (p1_top, p2_top) }
-            else:
-                # Logic for subsequent rows (unchanged and correct)
-                intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, y_cursor), (self.cvc.max_x + 100, y_cursor)]))
-                if not isinstance(intersection, LineString) or intersection.is_empty:
-                    print("      -> ⚠️ No more vertical space available."); break
-                local_bounds = intersection.bounds
-                available_width = local_bounds[2] - local_bounds[0]
-                anchor_details = { "type": "open_space", "bounds": local_bounds }
-                if last_row_details.get("orientation") == 'H':
-                    force_orientation_for_row = 'V'
-                    print("    -> Last row was horizontal, forcing this row to be vertical.")
-
-            best_layout = self._find_best_combination_for_row(list(clinic_names_queue), available_width, force_orientation=force_orientation_for_row)
-            # =========================================================================
-            # =========== NEW LOGIC TO REMOVE GAP BEFORE LAST VERTICAL CLINIC ===========
-            # =========================================================================
-            if best_layout:
-                combo = best_layout['combo']
-                gaps = best_layout['gaps']
-                
-                # This is the new rule: If the last two clinics in the planned row are
-                # both vertical, remove the gap between them to create a solid block.
-                if len(combo) > 1 and combo[-1] == 'V' and combo[-2] == 'V':
-                    print("    -> 💡 Applying special rule: Removing gap between the last two vertical clinics.")
-                    # The gap list has one less item than the combo list. The gap between
-                    # the second-to-last and last fixture is the second-to-last item in the gaps list.
-                    gaps[-2] = 800.0 # Set the gap to 0
-                    best_layout['gaps'] = gaps # IMPORTANT: Update the dictionary with the new gaps
-            # =========================================================================
-            # ======================== END OF NEW LOGIC ===============================
-            # =========================================================================
-            if not best_layout:
-                if is_first_row: placed_count_plan_a = 0
-                break
-
-            print(f"    -> Best layout for this row: {best_layout['combo']}")
-            
-            if is_first_row:
-                row_fixtures = best_layout['fixtures_for_row']
-                row_combo = best_layout['combo']
-                row_gaps = best_layout['gaps']
-                
-                start_margin = best_layout.get('start_margin', 50.0) # Default to 50 if not found
-                placement_details, current_x = [], anchor_details["segment"][0].x + start_margin
-
-                vertical_clinic_count = 0
-                for i in range(len(row_fixtures)):
-                    fxtr, orient = row_fixtures[i], row_combo[i]
-                    w = fxtr.width if orient == 'H' else fxtr.height
-                    xscale, yscale = (-1.0 if orient == 'H' else 1.0), 1.0
-                    if orient == 'V':
-                        vertical_clinic_count += 1
-                        if vertical_clinic_count % 2 == 0: yscale = -1.0
-                    
-                    p1, p2 = anchor_details["segment"]
-                    wall_vector, wall_angle_deg = (p2 - p1).normalize(), math.degrees((p2 - p1).angle)
-                    inward_normal = wall_vector.orthogonal().normalize()
-                    if not self.floorplan_polygon.contains(Point(p1 + inward_normal)): inward_normal *= -1
-                    
-                    center_on_wall = p1 + wall_vector * (current_x - p1.x + w / 2)
-                    target_center = center_on_wall + inward_normal * (50.0 + (fxtr.height if orient == 'H' else fxtr.width) / 2)
-                    rotation = wall_angle_deg if orient == 'H' else wall_angle_deg + 90
-
-                    placement_details.append({'fxtr': fxtr, 'center': target_center, 'rot': rotation, 'xscale': xscale, 'yscale': yscale})
-                    current_x += w + row_gaps[i]
-                # --- B: Place all clinics EXCEPT the last one unconditionally ---
-                placed_bboxes_in_this_row = []
-                for details in placement_details[:-1]:
-                    new_bbox = self._validate_and_place_on_wall(details['fxtr'], details['center'], details['rot'], placed_bboxes, xscale=details['xscale'], yscale=details['yscale'])
-                    if new_bbox:
-                        placed_bboxes_in_this_row.append(new_bbox)
-                        placed_count_plan_a += 1
-                        clinic_names_queue.popleft()
-                
-                # --- C: Perform the "what-if" check for the LAST clinic ---
-                if placement_details:
-                    last_clinic_details = placement_details[-1]
-                    hypothetical_bbox = self._validate_and_place_on_wall(
-                        last_clinic_details['fxtr'], last_clinic_details['center'], last_clinic_details['rot'], 
-                        placed_bboxes, xscale=last_clinic_details['xscale'], yscale=last_clinic_details['yscale'], 
-                        place_actually=False
-                    )
-                    
-                    if hypothetical_bbox:
-                        boh_zone_poly, boh_area_sqft = self._calculate_opportunistic_boh_zone(hypothetical_bbox, placed_bboxes)
-                        print(f"    -> What-If Check: Placing last clinic leaves a {boh_area_sqft:.2f} sq. ft. zone for BOH.")
-
-                        if boh_area_sqft >= 40.0:
-                            print("    -> ✅ Success: Committing clinic and creating BOH zone.")
-                            final_bbox = self._validate_and_place_on_wall(
-                                last_clinic_details['fxtr'], last_clinic_details['center'], last_clinic_details['rot'], 
-                                placed_bboxes, xscale=last_clinic_details['xscale'], yscale=last_clinic_details['yscale'],
-                                place_actually=True
-                            )
-                            if final_bbox:
-                                placed_bboxes_in_this_row.append(final_bbox)
-                                placed_count_plan_a += 1
-                                clinic_names_queue.popleft()
-                                # --- REPLACED CODE STARTS HERE ---
-                                # Draw the valid BOH zone as a proper wall
-                                if boh_zone_poly and not boh_zone_poly.is_empty:
-                                    self._create_boh_room_from_zone(boh_zone_poly, wall_thickness=50.0, layer_name="BOH_WALL_VALID", hatch_color=150) # Blue-ish hatch
-                                    placed_bboxes.append(boh_zone_poly.bounds)
-                                # --- REPLACED CODE ENDS HERE ---
-                        else:
-                            print("    -> ⚠️ BOH space would be too small. Deferring last clinic to the next row.")
-                            last_placed_bbox = placed_bboxes_in_this_row[-1] if placed_bboxes_in_this_row else None
-                            if last_placed_bbox:
-                                undersized_boh_poly, undersized_area_sqft = self._calculate_opportunistic_boh_zone(last_placed_bbox, [])
-                                print(f"    -> The undersized BOH area is {undersized_area_sqft:.2f} sq. ft.")
-                                # --- REPLACED CODE STARTS HERE ---
-                                if undersized_boh_poly and not undersized_boh_poly.is_empty:
-                                    # Draw the undersized BOH zone as a different colored wall
-                                    # self._create_boh_room_from_zone(undersized_boh_poly, wall_thickness=50.0, layer_name="BOH_WALL_OVERSIZED", hatch_color=252) # Gray hatch
-                                    self._create_boh_room_from_zone(undersized_boh_poly, wall_thickness=50.0, layer_name="BOH_WALL_VALID", hatch_color=252) # Gray hatch
-                                # --- REPLACED CODE ENDS HERE ---
-                    else:
-                        print("    -> ⚠️ Last clinic in row is blocked. Deferring to next row.")
-            
-            # --- Standard placement for subsequent rows (2nd, 3rd, etc.) ---
-            else:
-                row_fixtures = best_layout['fixtures_for_row']
-                total_row_width = sum((f.width if o == 'H' else f.height) for f, o in zip(row_fixtures, best_layout['combo'])) + sum(best_layout['gaps'])
-                LEFT_NUDGE = 0.0
-                row_start_x = last_row_details.get("bbox", [anchor_details["bounds"][0]])[0] + LEFT_NUDGE
-                placed_bboxes_in_this_row = []
-                vertical_clinic_count_in_row = 0
-                for i, (orient, fxtr) in enumerate(zip(best_layout['combo'], row_fixtures)):
-                    w, h, gap = (fxtr.width if orient == 'H' else fxtr.height), (fxtr.height if orient == 'H' else fxtr.width), best_layout['gaps'][i]
-                    xscale, yscale = (-1.0 if orient == 'H' else 1.0), 1.0
-                    if orient == 'V':
-                        vertical_clinic_count_in_row += 1
-                        if vertical_clinic_count_in_row % 2 == 0: yscale = -1.0
-                    
-                    target_y = y_cursor - h
-                    target_center = Vec2(row_start_x + w/2, target_y + h/2)
-                    rotation = 0 if orient == 'H' else 90
-                    new_bbox = self._validate_and_place_in_open_space(fxtr, target_center, rotation, placed_bboxes, xscale=xscale, yscale=yscale)
-                    if new_bbox:
-                        placed_bboxes_in_this_row.append(new_bbox)
-                        placed_count_plan_a += 1
-                        clinic_names_queue.popleft()
-                        row_start_x += w + gap
-                    else:
-                        print(f"      -> ⚠️ Could not place '{fxtr.name}'. Halting row placement.")
-                        clinic_names_queue.clear(); break
-            
-            # --- Update state for the next row ---
-            if placed_bboxes_in_this_row:
-                min_x = min(b[0] for b in placed_bboxes_in_this_row); min_y = min(b[1] for b in placed_bboxes_in_this_row)
-                max_x = max(b[2] for b in placed_bboxes_in_this_row); max_y = max(b[3] for b in placed_bboxes_in_this_row)
-                combined_row_bbox = (min_x, min_y, max_x, max_y)
-                h_count = best_layout['combo'].count('H'); v_count = best_layout['combo'].count('V')
-                dominant_orientation = 'H' if h_count >= v_count else 'V'
-                last_row_details = {"bbox": combined_row_bbox, "orientation": dominant_orientation}
-                VERTICAL_ROW_GAP = 10.0
-                y_cursor = combined_row_bbox[1] - VERTICAL_ROW_GAP
-                if is_first_row: is_first_row = False
-            else: 
-                # If nothing was placed in the row, we must advance the state to avoid an infinite loop
-                if is_first_row: is_first_row = False
-                y_cursor -= 500 # Nudge y_cursor down to try a new area
+        relevant_partitions = [
+            p['bbox'] for p in stopper_partitions 
+            if p['bbox'][0] > start_x_for_boh and (boh_min_y_for_check < p['bbox'][3] and p['bbox'][1] < boh_max_y_for_check)
+        ]
         
-        # --- Plan B Fallback ---
-        if placed_count_plan_a == 0 and [name for name, count in clinic_config.items() if count > 0]:
-             print("\n  -> Plan A failed to place any clinics. Activating Fallback...")
-             clinics_to_place_obj = [Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"]) for name, count in clinic_config.items() if count > 0 for _ in range(count)]
-             remaining = self.place_clinics_by_perimeter_walk(clinics_to_place_obj, placed_bboxes)
-             if remaining: print(f"    -> ⚠️ Fallback finished with {len(remaining)} unplaced clinics.")
+        if relevant_partitions:
+            first_partition = min(relevant_partitions, key=lambda p: p[0])
+            boh_max_x = first_partition[0]
+            print(f"    -> (Verification) Found partition in path at x={boh_max_x:.0f}. Potential BOH zone will stop here.")
         else:
-             print(f"\n✅ Plan A Succeeded. Placed {placed_count_plan_a} clinics.")
+            print("    -> (Verification) No blocking partitions found. Potential BOH will extend to room's natural edge.")
+        # --- END OF NEW LOGIC ---
 
+        # Create a box representing the potential BOH area, respecting the partition stop.
+        boh_zone_box = box(start_x_for_boh, lc_min_y, boh_max_x, fp_max_y + 1000)
+        boh_zone_poly = self.floorplan_polygon.intersection(boh_zone_box)
 
+        # Safety check for overlaps (this logic remains the same)
+        if any(boh_zone_poly.intersects(box(*b)) for b in placed_bboxes):
+            return None, 0.0
 
-    def _find_and_place_row_in_zone_og(self, zone, layouts_ranked: list, clinics_queue, placed_bboxes, placed_clinics_on_top_wall,start_vertical_count: int = 0):
-        """
-        [DEFINITIVE VERSION] Finds the single best placement for a row of clinics within
-        an entire zone without creating the BOH. It is no longer "eager" and will
-        search all positions to find the optimal spot for the best layout.
-        """
-        from shapely.geometry import Point
-        from ezdxf.math import Vec2
-
-        if not layouts_ranked:
-            return 0
-
-        p1, p2 = zone['start'], zone['end']
-        wall_vector = (p2 - p1).normalize()
-        wall_angle_deg = math.degrees(wall_vector.angle)
-        inward_normal = wall_vector.orthogonal().normalize()
-        if not self.floorplan_polygon.contains(Point(p1 + inward_normal)): inward_normal *= -1
-
-        # --- 1. Find the best possible placement WITHOUT drawing anything yet ---
+        area_in_sqmm = boh_zone_poly.area
+        SQMM_PER_SQFT = 92903.04
+        area_in_sqft = area_in_sqmm / SQMM_PER_SQFT
         
-        # This variable will store our final choice after searching the whole zone.
-        best_placement_details = None
-        final_vertical_count_state = start_vertical_count
-
-        # Loop through every possible start position in the zone.
-        search_cursor = 50.0
-        while search_cursor < zone['length'] - 50.0:
-            # Loop through every ranked layout, from best to worst.
-            for layout in layouts_ranked:
-                row_fixtures = layout['fixtures_for_row']
-                total_row_width = sum((f.width if o == 'H' else f.height) for f, o in zip(row_fixtures, layout['combo'])) + sum(layout['gaps'])
-                if search_cursor + total_row_width > zone['length'] - 50.0:
-                    continue
-
-                is_entire_row_valid = True
-                hypothetical_placements = []
-                validation_cursor = search_cursor
-                vertical_clinic_count = start_vertical_count
-                for i in range(len(row_fixtures)):
-                    fxtr, orient = row_fixtures[i], layout['combo'][i]
-                    w = fxtr.width if orient == 'H' else fxtr.height
-                    center_on_wall = p1 + wall_vector * (validation_cursor + w / 2)
-                    target_center = center_on_wall + inward_normal * (50.0 + (fxtr.height if orient == 'H' else fxtr.width) / 2)
-                    snapped_angle_deg = round(wall_angle_deg / 90.0) * 90.0
-                    # rotation = wall_angle_deg + 90 if orient == 'V' else wall_angle_deg
-                    rotation = snapped_angle_deg if orient == 'H' else snapped_angle_deg + 90
-                    # xscale, yscale = (-1.0 if orient == 'H' else 1.0), 1.0
-                    # if orient == 'V':
-                    #     vertical_clinic_count += 1
-                    #     if vertical_clinic_count % 2 == 0: yscale = -1.0
-                    # --- CORRECTED MIRRORING LOGIC ---
-                    if orient == 'H':
-                        # Horizontal clinics are mirrored horizontally
-                        xscale, yscale = -1.0, 1.0
-                    else:  # This handles the case where orient == 'V'
-                        # Vertical clinics are mirrored horizontally by default
-                        xscale, yscale = -1.0, 1.0
-                        
-                        # We keep the alternating vertical flip for creating symmetrical pairs
-                        vertical_clinic_count += 1
-                        if vertical_clinic_count % 2 == 0:
-                            yscale = -1.0
-                    # --- END OF CORRECTION ---
-                    
-                    hypothetical_bbox = self._validate_and_place_on_wall(fxtr, target_center, rotation, placed_bboxes, xscale=xscale, yscale=yscale, place_actually=False)
-                    if not hypothetical_bbox:
-                        is_entire_row_valid = False
-                        break
-                    
-                    hypothetical_placements.append({'fxtr': fxtr, 'orient': orient, 'center': target_center, 'rot': rotation, 'bbox': hypothetical_bbox, 'xscale': xscale, 'yscale': yscale})
-                    validation_cursor += w + layout['gaps'][i]
-
-                # If the entire row was valid at this spot...
-                if is_entire_row_valid:
-                    # ...we've found the best possible solution for the whole zone because
-                    # we check the best layouts first at the earliest positions.
-                    best_placement_details = hypothetical_placements
-                    # Break the inner 'for' loop since we've found the best layout for this spot.
-                    break 
-            
-            # If we stored a choice in the inner loop, we can also break the outer 'while' loop.
-            if best_placement_details is not None:
-                break
-            
-            # If we haven't found a placement yet, nudge the main cursor forward.
-            search_cursor += 100
-
-        # --- 2. If a best placement was found, COMMIT it now ---
-        if best_placement_details:
-            print(f"    -> ✅ Best spot found. Committing {len(best_placement_details)} clinics to the wall.")
-            for details in best_placement_details:
-                if details['orient'] == 'V':
-                    final_vertical_count_state += 1
-                self._validate_and_place_on_wall(details['fxtr'], details['center'], details['rot'], placed_bboxes, xscale=details['xscale'], yscale=details['yscale'], place_actually=True)
-                placed_clinics_on_top_wall.append(details)
-                clinics_queue.popleft()
-            return len(best_placement_details), final_vertical_count_state
-
-        # If the loops finish and no placement was found
-        return 0, start_vertical_count
+        return boh_zone_poly, area_in_sqft
     
 
     def _find_and_place_row_in_zone(self, zone, layouts_ranked: list, clinics_queue, placed_bboxes, placed_clinics_on_top_wall,start_vertical_count: int = 0):
@@ -3015,6 +2701,7 @@ class DXF_Controller:
         p1, p2 = zone['start'], zone['end']
         wall_vector = (p2 - p1).normalize()
         wall_angle_deg = math.degrees(wall_vector.angle)
+        print("wall angle deg:", wall_angle_deg)
         inward_normal = wall_vector.orthogonal().normalize()
         if not self.floorplan_polygon.contains(Point(p1 + inward_normal)): inward_normal *= -1
 
@@ -3041,22 +2728,28 @@ class DXF_Controller:
                 for i in range(len(row_fixtures)):
                     fxtr, orient = row_fixtures[i], layout['combo'][i]
                     w = fxtr.width if orient == 'H' else fxtr.height
-                    center_on_wall = p1 + wall_vector * (validation_cursor + w / 2)
-                    target_center = center_on_wall + inward_normal * (50.0 + (fxtr.height if orient == 'H' else fxtr.width) / 2)
-                    snapped_angle_deg = round(wall_angle_deg / 90.0) * 90.0
-                    # rotation = wall_angle_deg + 90 if orient == 'V' else wall_angle_deg
-                    rotation = snapped_angle_deg if orient == 'H' else snapped_angle_deg + 90
-                    # xscale, yscale = (-1.0 if orient == 'H' else 1.0), 1.0
-                    # if orient == 'V':
-                    #     vertical_clinic_count += 1
-                    #     if vertical_clinic_count % 2 == 0: yscale = -1.0
+                    center_on_wall = p1  + wall_vector * (validation_cursor + w / 2)
+                    # target_center = center_on_wall + inward_normal * (50.0 + (fxtr.height if orient == 'H' else fxtr.width) / 2)
+                    # target_center = center_on_wall + inward_normal * (-100.0 + (fxtr.height if orient == 'H' else fxtr.width) / 2)
+                    # --- MODIFICATION: Add a leftward push for wall overlap ---
+                    # Calculate the standard inward position
+                    inward_position = center_on_wall + inward_normal * (-100.0 + (fxtr.height if orient == 'H' else fxtr.width) / 2)
+                    # Add a constant vector pushing the fixture to the left
+                    leftward_push_vector = Vec2(-100, 0) # Push 100mm to the left
+                    target_center = inward_position + leftward_push_vector
+                    # --- END OF MODIFICATION ---
+
+
+                    # snapped_angle_deg = round(wall_angle_deg / 90.0) * 90.0
+                    rotation = wall_angle_deg + 90 if orient == 'V' else wall_angle_deg
+                    # rotation = snapped_angle_deg if orient == 'H' else snapped_angle_deg + 90
                     # --- CORRECTED MIRRORING LOGIC ---
                     if orient == 'H':
                         # Horizontal clinics are mirrored horizontally
                         xscale, yscale = -1.0, 1.0
                     else:  # This handles the case where orient == 'V'
                         # Vertical clinics are mirrored horizontally by default
-                        xscale, yscale = -1.0, 1.0
+                        xscale, yscale = 1.0, 1.0
                         
                         # We keep the alternating vertical flip for creating symmetrical pairs
                         vertical_clinic_count += 1
@@ -3087,44 +2780,58 @@ class DXF_Controller:
             # If we haven't found a placement yet, nudge the main cursor forward.
             search_cursor += 10
 
-        # --- 2. If a best placement was found, COMMIT it now ---
+        # # --- 2. If a best placement was found, COMMIT it now ---
         if best_placement_details:
             print(f"    -> ✅ Best spot found. Committing {len(best_placement_details)} clinics to the wall.")
+            
+            # --- MODIFIED: This loop now places fixtures directly without re-validating ---
             for details in best_placement_details:
+                # Get all details from our pre-validated plan
+                fxtr = details['fxtr']
+                target_center = details['center']
+                rotation = details['rot']
+                xscale = details['xscale']
+                yscale = details['yscale']
+                pre_validated_bbox = details['bbox']
+
+                # --- Direct Placement Logic ---
+                # Calculate the final insertion point needed by place_fixture()
+                local_center = fxtr.bounding_box.center
+                local_center_scaled = Vec2(local_center.x * xscale, local_center.y * yscale)
+                rotated_offset = local_center_scaled.rotate(math.radians(rotation))
+                final_insert_point = target_center - rotated_offset
+                
+                # Place the fixture without any overlap checks
+                block_ref = self.place_fixture(
+                    fxtr, 
+                    (final_insert_point.x, final_insert_point.y, 0), 
+                    rotation, True, xscale=xscale, yscale=yscale
+                )
+                
+                # --- Update all state lists ---
+                placed_bboxes.append(pre_validated_bbox) # Add the pre-validated bbox to obstacles
+                
+                details['block_ref'] = block_ref # Store the entity reference for the "undo" function
+                placed_clinics_on_top_wall.append(details)
+                clinics_queue.popleft()
+
                 if details['orient'] == 'V':
                     final_vertical_count_state += 1
-                # self._validate_and_place_on_wall(details['fxtr'], details['center'], details['rot'], placed_bboxes, xscale=details['xscale'], yscale=details['yscale'], place_actually=True)
-                # placed_clinics_on_top_wall.append(details)
-                # # clinics_queue.popleft()
 
-                # Inside _find_and_place_row_in_zone, in the final "commit" loop
-                # --- MODIFICATION START ---
-                # The validation function now returns the bounding box
-                new_bbox_tuple = self._validate_and_place_on_wall(details['fxtr'], details['center'], details['rot'], placed_bboxes, xscale=details['xscale'], yscale=details['yscale'], place_actually=True)
-                
-                if new_bbox_tuple:
-                    # Capture the block_ref of the last created entity
-                    block_ref = self.msp[-1] 
-                    details['bbox'] = new_bbox_tuple # Update details with the accurate bbox
-                    details['block_ref'] = block_ref # *** ADD THIS LINE to store the direct object reference
-                    
-                    placed_clinics_on_top_wall.append(details)
-                    clinics_queue.popleft()
-                # --- MODIFICATION END ---
             return len(best_placement_details), final_vertical_count_state
-            
-
-        # If the loops finish and no placement was found
+        
         return 0, start_vertical_count
+    
+    
     
    
     
  
     ##--new-test--with---greedy method-- strategy -----space for boh
     ##--new-test--with---greedy method-- strategy -----space for boh----in top row itself
-    ##--new-test--with---greedy method-- strategy -----space for boh----in top row itself
 
-    def place_clinics_master_strategy(self, placed_bboxes: List[tuple]):
+
+    def place_clinics_master_strategy_og(self, placed_bboxes: List[tuple]):
         """
         [MODIFIED with "Place-Then-Verify" logic]
         Places all top-wall clinics first, then verifies if a valid BOH can be
@@ -3133,7 +2840,7 @@ class DXF_Controller:
         and "Opportunistic BOH" placement logic for the most robust placement.
         """
         self.clinic_placement_method = 'Unknown'
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import Polygon, LineString, Point
         from ezdxf.math import Vec2
         from ezdxf.bbox import extents
@@ -3142,7 +2849,7 @@ class DXF_Controller:
 
         # Create a temporary obstacle list for clinics (Unchanged)
         obstacles_for_clinics = list(placed_bboxes)
-        internal_wall_obstacles = self.cvc.get_internal_wall_partitions(2000, 20)
+        internal_wall_obstacles = self.cvc.get_internal_wall_partitions(1000,1200, 20) + self.cvc.get_internal_wall_partitions(2600,2800, 10)
         if internal_wall_obstacles:
             existing_obstacles = set(map(tuple, obstacles_for_clinics))
             new_obstacles = [obs for obs in internal_wall_obstacles if tuple(obs) not in existing_obstacles]
@@ -3155,7 +2862,7 @@ class DXF_Controller:
         # Setup and load clinic queue (Unchanged)
         clinic_config = self.fixtures.get("clinic_fixtures", {})
         clinics_queue = collections.deque([
-            Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
+            Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
             for name, count in clinic_config.items() if count > 0 for _ in range(count)
         ])
         if not clinics_queue:
@@ -3166,7 +2873,10 @@ class DXF_Controller:
         # =========== PHASE 1: UNCONDITIONAL TOP-WALL PLACEMENT ===================
         # =========================================================================
         print("\n  -> Phase 1: Placing all possible clinics on the top wall...")
-        top_wall_zones = self._analyze_top_wall_with_bulge_detection_new()
+        top_wall_zones = self._analyze_top_wall_with_bulge_detection_new(
+            small_bulge_max_width=1000, 
+            small_bulge_max_depth=1000
+        )
         
         placed_clinics_on_top_wall = []
         is_first_zone_processed = False
@@ -3180,7 +2890,7 @@ class DXF_Controller:
             print(f"\n  -> Analyzing placement zone of width {available_width:.0f}mm...")
 
             clinic_names_for_solver = [fxtr.name for fxtr in clinics_queue]
-            best_layouts_ranked = self._find_best_combination_for_row(clinic_names_for_solver, available_width)
+            best_layouts_ranked = self._find_best_combination_for_row(clinic_names_for_solver, available_width,force_orientation='H')
 
             if not best_layouts_ranked:
                 print("    -> No combination of remaining clinics fits in this zone.")
@@ -3215,16 +2925,19 @@ class DXF_Controller:
             # Find the absolute right-most clinic from Phase 1
             final_anchor_clinic_details = max(placed_clinics_on_top_wall, key=lambda c: c['bbox'][2])
             
-            # Perform the "what-if" check for the BOH area
+            
+            # --- MODIFICATION: Pass the partition threshold to the verification function ---
             boh_zone_poly, boh_area_sqft = self._calculate_opportunistic_boh_zone(
                 final_anchor_clinic_details['bbox'],
                 [], # Pass empty obstacles as we only care about potential area
-                final_anchor_clinic_details['orient']
+                final_anchor_clinic_details['orient'],
+                # big_partition_threshold_mm=800.0 # Use the same threshold as the final drawing function
             )
+            # --- END OF MODIFICATION ---
             print(f"    -> Final check: Potential BOH area is {boh_area_sqft:.2f} sq. ft.")
 
             # Define your mandatory minimum area
-            MINIMUM_BOH_AREA = 30.0
+            MINIMUM_BOH_AREA = 200.0
             
             if boh_area_sqft >= MINIMUM_BOH_AREA:
                 print("    -> ✅ Verification PASSED. Committing layout and drawing BOH.")
@@ -3245,96 +2958,856 @@ class DXF_Controller:
         if clinics_queue:
             self.clinic_placement_method = 'Plan_B'
             print(f"\n  -> Plan B: {len(clinics_queue)} clinics remain. Starting Fallback (Row-by-Row)...")
+            self._place_clinics_fallback_row_by_row(
+                clinics_queue,
+                placed_bboxes,
+                placed_clinics_on_top_wall,
+                first_row_orientation
+            )    
 
-    
-            y_cursor = self.cvc.max_y
-            
-            if placed_clinics_on_top_wall:
-                y_cursor = min(d['bbox'][1] for d in placed_clinics_on_top_wall)
-                print(f"  -> First row placed. Starting next search below y={y_cursor:.0f}")
-            
-            is_second_row = True
-            last_placed_row_orientation = first_row_orientation
-            
-            while clinics_queue and y_cursor > self.cvc.min_y:
-                # --- NEW LOGIC BLOCK (REVISED) ---
-                
-                # 1. First, determine if we should FORCE a vertical orientation for this row.
-                force_orientation = 'V' if is_second_row and first_row_orientation == 'H' else None
-
-
-                if force_orientation == 'V' or (is_second_row and first_row_orientation == 'V'):
-                    VERTICAL_ROW_GAP = 50.0
-                    print(f"  -> Intending to place a VERTICAL row. Using a tight {VERTICAL_ROW_GAP}mm gap.")
-                else:
-                    VERTICAL_ROW_GAP = 800.0
-                    print(f"  -> Intending to place a HORIZONTAL/MIXED row. Using a wide {VERTICAL_ROW_GAP}mm gap.")
-                # --- END OF CORRECTION ---
-
-                # 3. Apply the gap.
-                y_cursor -= VERTICAL_ROW_GAP
-
-                # 4. Find the available space at the new y_cursor.
-                intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, y_cursor), (self.cvc.max_x + 100, y_cursor)]))
-                if not isinstance(intersection, LineString) or intersection.is_empty:
-                    y_cursor -= 500; continue
-                
-                local_bounds, row_width = intersection.bounds, intersection.length
-                # --- END OF NEW LOGIC BLOCK ---
-                is_second_row = False
-                
-                best_layouts_ranked = self._find_best_combination_for_row([f.name for f in clinics_queue], row_width, force_orientation=force_orientation)
-                
-                if best_layouts_ranked:
-                    best_layout_used = best_layouts_ranked[0]
-                    print(f"    -> Found valid spot for a new row at y={y_cursor:.0f}. Placing {len(best_layout_used['combo'])} clinics.")
-                    row_fixtures = best_layout_used['fixtures_for_row']
-                    
-                    margin_from_left_wall = 50.0
-                    row_start_x = local_bounds[0] + margin_from_left_wall
-                    max_row_height = 0
-                    vertical_clinic_count_in_row = 0
-
-                    for i, (orient, fxtr) in enumerate(zip(best_layout_used['combo'], row_fixtures)):
-                        if not clinics_queue: break
-                        w, h = (fxtr.width if orient == 'H' else fxtr.height), (fxtr.height if orient == 'H' else fxtr.width)
-                        max_row_height = max(max_row_height, h)
-                        target_center = Vec2(row_start_x + w/2, y_cursor - h/2)
-                        rotation = 0 if orient == 'H' else 90
-
-                        if orient == 'H':
-                            xscale, yscale = 1.0, -1.0
-                        else:
-                            xscale, yscale = -1.0, 1.0
-                            vertical_clinic_count_in_row += 1
-                            if vertical_clinic_count_in_row % 2 == 0:
-                                yscale = -1.0
-                        
-                        if self._validate_and_place_in_open_space(fxtr, target_center, rotation, placed_bboxes, xscale=xscale, yscale=yscale):
-                            clinics_queue.popleft()
-                            row_start_x += w + best_layout_used['gaps'][i]
-                        else:
-                            clinics_queue.clear(); break
-                        
-                    # --- ADD THIS NEW CODE BLOCK AT THE END OF THE 'if best_layouts_ranked:' BLOCK ---
-                    # Determine the dominant orientation of the row we just placed
-                    h_count = best_layout_used['combo'].count('H')
-                    v_count = len(best_layout_used['fixtures_for_row']) - h_count
-                    last_placed_row_orientation = 'H' if h_count >= v_count else 'V'
-                    
-                    # Update y_cursor to the bottom of the row just placed for the next iteration
-                    if max_row_height > 0: y_cursor -= max_row_height
-                    # --- END OF NEW CODE ---                  
-                    # if max_row_height > 0: y_cursor -= (max_row_height + 1500)
-                    else: y_cursor -= 500
-                else:
-                    y_cursor -= 500
-        
         if clinics_queue:
             print(f"\n  -> {len(clinics_queue)} clinics still remain. Starting Final Fallback (Perimeter Walk)...")
             self.place_clinics_by_perimeter_walk(list(clinics_queue), obstacles_for_clinics)
 
         print("\n✅ Master clinic placement process complete.")
+
+    
+
+    def place_clinics_master_strategy(self, placed_bboxes: List[tuple]):
+        """
+        [MODIFIED with "Place-Then-Verify" logic]
+        Places all top-wall clinics first, then verifies if a valid BOH can be
+        created. If not, it "undoes" the last clinic placement.
+        [MASTER STRATEGY] Merges "Smart Walk" with a "Resilient Sliding Search"
+        and "Opportunistic BOH" placement logic for the most robust placement.
+        """
+        self.clinic_placement_method = 'Unknown'
+        # from Fixture import Fixture
+        from shapely.geometry import Polygon, LineString, Point
+        from ezdxf.math import Vec2
+        from ezdxf.bbox import extents
+        import collections
+        import math
+
+        # Create a temporary obstacle list for clinics (Unchanged)
+        obstacles_for_clinics = list(placed_bboxes)
+        internal_wall_obstacles = self.cvc.get_internal_wall_partitions(1000,1200, 20) + self.cvc.get_internal_wall_partitions(2600,2800, 10)
+        if internal_wall_obstacles:
+            existing_obstacles = set(map(tuple, obstacles_for_clinics))
+            new_obstacles = [obs for obs in internal_wall_obstacles if tuple(obs) not in existing_obstacles]
+            if new_obstacles:
+                obstacles_for_clinics.extend(new_obstacles)
+                print(f"  -> Added {len(new_obstacles)} partitions to a temporary obstacle list FOR CLINIC PLACEMENT.")
+        
+        print("\n--- 🧠 Executing MASTER Clinic Placement (Place-Then-Verify Strategy) ---")
+
+        # Setup and load clinic queue (Unchanged)
+        clinic_config = self.fixtures.get("clinic_fixtures", {})
+        clinics_queue = collections.deque([
+            Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
+            for name, count in clinic_config.items() if count > 0 for _ in range(count)
+        ])
+        if not clinics_queue:
+            print("  -> SKIPPED: No clinics to place.")
+            return
+
+        # =========================================================================
+        # =========== PHASE 1: UNCONDITIONAL TOP-WALL PLACEMENT ===================
+        # =========================================================================
+        print("\n  -> Phase 1: Placing all possible clinics on the top wall...")
+        top_wall_zones = self._analyze_top_wall_with_bulge_detection_new(
+            small_bulge_max_width=1000, 
+            small_bulge_max_depth=1000
+        )
+        
+        placed_clinics_on_top_wall = []
+        is_first_zone_processed = False
+        first_row_orientation = 'H'
+        total_vertical_clinics_placed_on_top = 0
+
+        for zone in top_wall_zones:
+            if not clinics_queue: break
+            
+            available_width = zone['length']
+            print(f"\n  -> Analyzing placement zone of width {available_width:.0f}mm...")
+
+            clinic_names_for_solver = [fxtr.name for fxtr in clinics_queue]
+            best_layouts_ranked = self._find_best_combination_for_row(clinic_names_for_solver, available_width,force_orientation='H')
+
+            if not best_layouts_ranked:
+                print("    -> No combination of remaining clinics fits in this zone.")
+                continue
+
+            print(f"    -> Best layout for this zone: {best_layouts_ranked[0]['combo']}")
+
+            # This helper function now just places clinics without BOH checks
+            placed_count, total_vertical_clinics_placed_on_top = self._find_and_place_row_in_zone(
+                zone, 
+                best_layouts_ranked, 
+                clinics_queue, 
+                obstacles_for_clinics, # Use the temporary list with partitions
+                placed_clinics_on_top_wall,
+                start_vertical_count=total_vertical_clinics_placed_on_top
+            ) # type: ignore
+
+            if placed_count > 0 and not is_first_zone_processed:
+                best_layout_used = best_layouts_ranked[0]
+                h_count = best_layout_used['combo'].count('H')
+                v_count = len(best_layout_used['fixtures_for_row']) - h_count
+                first_row_orientation = 'H' if h_count >= v_count else 'V'
+                is_first_zone_processed = True
+
+        # =========================================================================
+        # =========== PHASE 2 & 3: FINAL BOH CHECK AND "UNDO" LOGIC ===============
+        # =========================================================================
+        print("\n  -> Phase 2: Performing final BOH verification...")
+        if not placed_clinics_on_top_wall:
+            print("    -> No clinics were placed on the top wall. Skipping BOH check.")
+        else:
+            # Find the absolute right-most clinic from Phase 1
+            final_anchor_clinic_details = max(placed_clinics_on_top_wall, key=lambda c: c['bbox'][2])
+            
+            
+            # --- MODIFICATION: Pass the partition threshold to the verification function ---
+            boh_zone_poly, boh_area_sqft = self._calculate_opportunistic_boh_zone(
+                final_anchor_clinic_details['bbox'],
+                [], # Pass empty obstacles as we only care about potential area
+                final_anchor_clinic_details['orient'],
+                # big_partition_threshold_mm=800.0 # Use the same threshold as the final drawing function
+            )
+            # --- END OF MODIFICATION ---
+            print(f"    -> Final check: Potential BOH area is {boh_area_sqft:.2f} sq. ft.")
+
+            # Define your mandatory minimum area
+            MINIMUM_BOH_AREA = 200.0
+            
+            if boh_area_sqft >= MINIMUM_BOH_AREA:
+                print("    -> ✅ Verification PASSED. Committing layout and drawing BOH.")
+                # The layout is valid, so now we draw the BOH for real.
+                self.clinic_placement_method = 'Plan_A'
+                self.create_boh_zone_from_last_clinic(placed_clinics_on_top_wall, placed_bboxes)
+            else:
+                print(f"    -> ❌ Verification FAILED. BOH area is less than {MINIMUM_BOH_AREA} sq. ft.")
+                # The layout is invalid. Call your new helper to "undo" the last placement.
+                self._undo_last_clinic_placement(final_anchor_clinic_details, clinics_queue, placed_bboxes, placed_clinics_on_top_wall)
+                # -------
+                print("    -> Re-evaluating BOH zone with the updated clinic layout...")
+                # This call will now use the modified 'placed_clinics_on_top_wall' list
+                # to draw the BOH in the newly available space.
+                self.create_boh_zone_from_last_clinic(placed_clinics_on_top_wall, placed_bboxes)
+              
+        # --- FALLBACK LOGIC  ---
+        if clinics_queue:
+            print(f"\n  -> Plan B: {len(clinics_queue)} clinics remain. Starting Fallback Strategies...")
+            self.clinic_placement_method = 'Plan_B'
+            # --- Strategy 2: Place directly under the first row ---
+            self.place_clinic_under_first_row(
+                clinics_queue=clinics_queue,
+                placed_bboxes=placed_bboxes,
+                placed_clinics_on_top_wall=placed_clinics_on_top_wall
+            )
+
+        if clinics_queue:
+            # --- Strategy 3: Fallback to Row-by-Row Placement ---
+            self.clinic_placement_method = 'Plan_B' # Set method for this fallback
+            print(f"\n  -> {len(clinics_queue)} clinics remain. Starting Fallback (Row-by-Row)...")
+            self._place_clinics_fallback_row_by_row(
+                clinics_queue,
+                placed_bboxes,
+                placed_clinics_on_top_wall,
+                first_row_orientation
+            )    
+
+        if clinics_queue:
+            print(f"\n  -> {len(clinics_queue)} clinics still remain. Starting Final Fallback (Perimeter Walk)...")
+            self.place_clinics_by_perimeter_walk(list(clinics_queue), obstacles_for_clinics)
+
+        print("\n✅ Master clinic placement process complete.")
+
+
+    def _draw_and_register_clinic_bboxes(self, placed_bboxes: List[tuple]):
+        """
+        Iteratively finds all placed clinic fixtures, draws their bounding boxes 
+        as polygons on unique layers (e.g., LAYER_CLINIC_1), and adds the 
+        coordinates to the master placed_bboxes list.
+        
+        CORRECTION: Uses entity.virtual_entities() to ensure rotation and scale 
+        (including yscale=-1.0 for mirroring) are correctly applied before 
+        calculating extents.
+        """
+        from ezdxf.bbox import extents
+        from ezdxf.math import Vec2, Matrix44, BoundingBox
+        import math
+        
+        print("\n--- 🎨 Drawing and Registering Clinic Bounding Boxes (CORRECTED) ---")
+        
+        # 1. Identify all clinic entities
+        clinic_entities = [
+            e for e in self.msp.query('INSERT') 
+            if "CLINIC" in e.dxf.name.upper()
+        ]
+
+        if not clinic_entities:
+            print("  -> No clinic fixtures found to process.")
+            return
+
+        # 2. Sort clinics by their placement order (based on suffix number)
+        def get_clinic_number(entity):
+            try: return int(entity.dxf.name.split('_')[-1])
+            except (ValueError, IndexError): return 0
+        
+        clinic_entities.sort(key=get_clinic_number)
+        
+        existing_clinic_bboxes_count = 0
+        
+        for i, entity in enumerate(clinic_entities):
+            clinic_number = get_clinic_number(entity)
+            if clinic_number == 0:
+                clinic_number = i + 1
+
+            layer_name = f"LAYER_CLINIC_{clinic_number}"
+            
+            try:
+                # *******************************************************************
+                # ************ THE CRITICAL CORRECTION IS HERE ************
+                # ezdxf.bbox.extents on a simple INSERT entity does not reliably account 
+                # for non-uniform scaling (yscale=-1.0). virtual_entities() yields 
+                # the transformed geometry in WCS, making the bounding box correct.
+                # *******************************************************************
+                
+                # Use virtual_entities to get the fully transformed geometry
+                transformed_entities = list(entity.virtual_entities())
+                if not transformed_entities:
+                    print(f"  -> ⚠️ Skipping '{entity.dxf.name}': No transformed entities found.")
+                    continue
+                    
+                bbox = extents(transformed_entities)
+
+                # Standard check for valid bbox data
+                if not bbox.has_data:
+                    print(f"  -> ⚠️ Skipping '{entity.dxf.name}': Calculated bbox has no data.")
+                    continue
+                    
+                min_x, min_y, _, max_x, max_y, _ = bbox.extmin.x, bbox.extmin.y + 100, bbox.extmin.z, bbox.extmax.x, bbox.extmax.y, bbox.extmax.z
+                
+                # --- NEW: Limit width for horizontally placed clinics ---
+                rotation = entity.dxf.rotation
+                is_horizontal = (abs(rotation) < 5) or (abs(rotation - 180) < 5)
+                
+                # Define the 4 corners of the bounding box
+                points = [
+                    (min_x, min_y),
+                    (max_x, min_y),
+                    (max_x, max_y),
+                    (min_x, max_y)
+                ]
+
+                if is_horizontal:
+                    width = max_x - min_x
+                    if width > 2600.0:
+                        print(f"  -> Limiting width of '{entity.dxf.name}' to 2600mm and applying rotation.")
+                        
+                        height = max_y - min_y
+                        new_width = 2600.0
+                        
+                        # Define the corners of the new 2600mm wide box at the origin, anchored at its own bottom-left
+                        local_corners = [
+                            Vec2(0, 0), Vec2(new_width, 0),
+                            Vec2(new_width, height), Vec2(0, height)
+                        ]
+                        
+                        # Create a transformation matrix to rotate and move the box
+                        # It rotates around the origin (0,0) and then translates to the final position
+                        transform = Matrix44.chain(
+                            Matrix44.z_rotate(math.radians(rotation)),
+                            Matrix44.translate(min_x, min_y, 0)
+                        )
+                        
+                        # Apply the transformation to get the final world coordinates
+                        points = [(p.x, p.y) for p in transform.transform_vertices(local_corners)]
+                        
+                        # Recalculate the axis-aligned bounding box for registration
+                        # --- FIX: Use BoundingBox for coordinate tuples, not extents() ---
+                        new_bbox = BoundingBox(points)
+                        min_x, min_y = new_bbox.extmin.x, new_bbox.extmin.y
+                        max_x, max_y = new_bbox.extmax.x, new_bbox.extmax.y
+                        # --- END OF FIX ---
+
+                # --- END OF NEW CODE ---
+
+                bbox_coords = (min_x, min_y, max_x, max_y)
+                
+                # Create a new layer if it doesn't exist (color 2 is Yellow)
+                if layer_name not in self.doc.layers:
+                    self.doc.layers.add(name=layer_name, color=2)
+
+                # Add the polygon outline to the modelspace
+                self.msp.add_lwpolyline(
+                    points, 
+                    close=True, 
+                    dxfattribs={"layer": layer_name, "lineweight": 70}
+                )
+
+                # Add the bounding box to the master list of obstacles
+                if bbox_coords not in placed_bboxes:
+                    placed_bboxes.append(bbox_coords)
+                    print(f"  -> ✅ Registered and drew bbox for '{entity.dxf.name}' on layer '{layer_name}'.")
+                    existing_clinic_bboxes_count += 1
+                else:
+                     print(f"  -> ℹ️ Bbox for '{entity.dxf.name}' already registered. Drawing layer '{layer_name}'.")
+
+            except Exception as e:
+                print(f"  -> ⚠️ ERROR processing clinic '{entity.dxf.name}': {e}")
+                continue
+
+        print(f"  -> Finished. Added {existing_clinic_bboxes_count} new bounding boxes to the obstacle list.")
+
+ 
+
+    def _analyze_first_row_clinic_until_boh_last(self, top_row_clinic_bboxes: list, y_offset: float = 0.0, min_segment_length: float = 1500.0) -> List[dict]:
+        """
+        [MODIFIED] Analyzes the space directly underneath a given list of bounding boxes
+        by walking along their bottom edges. This is more accurate than walking the main floorplan wall.
+        It now accepts a simple list of bbox tuples.
+        """
+        from ezdxf.math import Vec2
+        print("    -> Analyzing space under first row via 'Direct Bounding Box Walk'...")
+
+        if not top_row_clinic_bboxes:
+            print("      -> No top-row bounding boxes provided. Cannot analyze space.")
+            return []
+
+
+        print
+
+        # 1. Sort the bounding boxes from left to right to create an ordered path
+        # FIX: The input is a list of dictionaries, so we need to access the 'bbox' key.
+        sorted_bboxes = sorted(top_row_clinic_bboxes, key=lambda clinic_dict: clinic_dict['bbox'][0])
+        all_clinic_entities = [e for e in self.msp.query('INSERT') if "CLINIC" in e.dxf.name.upper()]
+        for e in all_clinic_entities:
+            # print(e.dxf.insert)
+            corners = self.get_outer_rect_corners_shapely(e)
+            segs = [(Vec2(corners[i][0], corners[i][1]), Vec2(corners[(i+1)%4][0], corners[(i+1)%4][1])) for i, c in enumerate(corners)]
+            # print(segs)
+            seg_angles = {}
+            min_angle = 360
+            for s in segs:
+                # print(s)
+                p1 = s[0]
+                p2 = s[1]
+                start_pt, end_pt = (p1, p2) if p1.x < p2.x else (p2, p1)
+        
+                segment_vec = end_pt - start_pt
+                # print(f"start: {start_pt}, end: {end_pt}, segment_vec: {segment_vec}")
+                segment_angle = math.degrees(segment_vec.angle)
+                print("Segment angle:", segment_angle)
+                seg_angles[s] = segment_angle
+                min_angle = min(min_angle, segment_angle)
+            
+            final_seg = []
+            
+            for key, value in seg_angles.items():
+                if abs(value - min_angle) < 1:
+                    if len(final_seg) == 0:
+                        final_seg.append(key)
+                    else:
+                        min_y_key = min(key[0].y, key[1].y)
+                        # print("final_seg: ", final_seg)
+                        min_y_fseg = min(final_seg[0][0].y, final_seg[0][1].y)
+                        if min_y_key < min_y_fseg:
+                            final_seg[0] = key
+
+            print(final_seg)
+            print()
+            
+        valid_zones = []
+        
+        # 2. Iterate through each bounding box to define a placement zone
+        for clinic_dict in sorted_bboxes:
+            # FIX: Extract the bbox tuple from the dictionary
+            bbox = clinic_dict['bbox']
+            print(f"___________________________ bbox: {bbox}___________________________")
+            min_x, min_y, max_x, _ = bbox
+            
+            segment_length = max_x - min_x
+
+            # 3. If the segment is long enough, create a zone from it
+            if segment_length >= min_segment_length:
+                # The zone is defined by the bottom edge of the bounding box
+                p1 = Vec2(min_x, min_y - y_offset)
+                p2 = Vec2(max_x, min_y - y_offset)
+                # p1 = Vec2(-7249.4444, 3914.6325)
+                # p2 = Vec2(-2155.5434, 3665.2885)
+                
+                # Use the existing helper to create a standardized zone dictionary
+                # Assuming angle 0 (horizontal) and a wide tolerance
+                segment_angle = math.degrees(segment_vec.angle)
+                print("Segment angle new", segment_angle)
+                zone = self._create_zone_from_points(p1, p2, len(valid_zones), segment_angle)
+                # print(zone)
+
+                if zone:
+                    print("append")
+                    valid_zones.append(zone)
+            else:
+                print(f"      -> Skipping short segment (Length: {segment_length:.0f}mm)")
+
+        print(f"      -> Direct BBox Walk complete. Found {len(valid_zones)} valid placement zones.")
+        return valid_zones
+
+    
+
+    def get_outer_rect_corners_shapely(self, insert, flatten_dist=0.5, debug=False):
+        from shapely.geometry import MultiPoint, Polygon, LineString
+        import math
+        from ezdxf.path import make_path
+        """
+        Returns 4 WCS corners (x, y, z) of the oriented minimum bounding rectangle (OBR)
+        for a given INSERT using Shapely's minimum_rotated_rectangle.
+
+        Requires: shapely
+        """
+
+        def _log(msg):
+            if debug: print(msg)
+
+        # ---------- collect WCS sample points from the INSERT (incl. nested) ----------
+        pts = []
+
+        def _add_xy(pt):
+            pts.append((float(pt[0]), float(pt[1])))
+
+        def _sample_arc(cx, cy, r, a0, a1, steps=48):
+            if a1 < a0: a1 += 2*math.pi
+            for i in range(steps+1):
+                t = a0 + (a1-a0) * (i/steps)
+                _add_xy((cx + r*math.cos(t), cy + r*math.sin(t)))
+
+        def _collect(entity):
+            dxft = entity.dxftype()
+
+            # nested inserts (defensive)
+            if dxft == "INSERT":
+                for ve in entity.virtual_entities():
+                    _collect(ve)
+                return
+
+            # generic path first (covers many entities)
+            try:
+                p = make_path(entity)
+                for v in p.flattening(distance=flatten_dist):
+                    _add_xy((v.x, v.y))
+                return
+            except Exception:
+                pass
+
+            # fallback handlers
+            if dxft == "LINE":
+                _add_xy(entity.dxf.start); _add_xy(entity.dxf.end)
+
+            elif dxft in ("LWPOLYLINE", "POLYLINE"):
+                if hasattr(entity, "get_points"):
+                    for t in entity.get_points(): _add_xy((t[0], t[1]))
+                elif hasattr(entity, "points"):
+                    for p in entity.points(): _add_xy((p[0], p[1]))
+
+            elif dxft == "CIRCLE":
+                c = entity.dxf.center; r = float(entity.dxf.radius)
+                _sample_arc(c.x, c.y, r, 0.0, 2*math.pi, steps=72)
+
+            elif dxft == "ARC":
+                c = entity.dxf.center; r = float(entity.dxf.radius)
+                a0 = math.radians(float(entity.dxf.start_angle))
+                a1 = math.radians(float(entity.dxf.end_angle))
+                _sample_arc(c.x, c.y, r, a0, a1, steps=48)
+
+            elif dxft == "ELLIPSE":
+                # use make_path above normally; if here, sample roughly using major axis/ratio
+                center = entity.dxf.center
+                major = entity.dxf.major_axis
+                ratio = float(entity.dxf.ratio)
+                a0 = float(entity.dxf.start_param); a1 = float(entity.dxf.end_param)
+                ux, uy = major.x, major.y
+                a = math.hypot(ux, uy)
+                if a > 0:
+                    ux, uy = ux/a, uy/a
+                    vx, vy = -uy, ux
+                    b = a*ratio
+                    if a1 < a0: a1 += 2*math.pi
+                    for i in range(73):
+                        t = a0 + (a1-a0)*(i/72)
+                        x = center.x + a*math.cos(t)*ux + b*math.sin(t)*vx
+                        y = center.y + a*math.cos(t)*uy + b*math.sin(t)*vy
+                        _add_xy((x, y))
+
+            elif dxft in ("TEXT", "MTEXT", "IMAGE", "SOLID", "TRACE", "3DFACE", "HATCH", "SPLINE", "DIMENSION", "LEADER"):
+                # We already tried make_path; if it failed, try bbox as a last resort
+                try:
+                    bbox = entity.bbox()
+                    if bbox.has_data:
+                        (minx, miny, _), (maxx, maxy, _) = bbox.extmin, bbox.extmax
+                        _add_xy((minx, miny)); _add_xy((maxx, miny))
+                        _add_xy((maxx, maxy)); _add_xy((minx, maxy))
+                except Exception:
+                    pass
+
+        # gather
+        for ve in insert.virtual_entities():  # WCS-transformed virtual geometry
+            _collect(ve)
+
+        if not pts:
+            _log("No geometry collected from INSERT; cannot compute rectangle.")
+            return []
+
+        # ---------- Shapely: minimum rotated rectangle ----------
+        cloud = MultiPoint(pts)
+        mrr = cloud.minimum_rotated_rectangle  # Polygon
+
+        # Extract 4 unique corners (Shapely closes ring with the first again)
+        coords = list(mrr.exterior.coords)
+        if len(coords) < 4:
+            return []
+        # dedupe the closing point and ensure exactly 4
+        uniq = []
+        for x, y in coords:
+            if not uniq or (abs(x-uniq[-1][0]) > 1e-9 or abs(y-uniq[-1][1]) > 1e-9):
+                uniq.append((x, y))
+        if len(uniq) == 5 and abs(uniq[0][0]-uniq[-1][0]) < 1e-9 and abs(uniq[0][1]-uniq[-1][1]) < 1e-9:
+            uniq = uniq[:-1]
+
+        # Order: Shapely already returns CCW; start from lower-left (in the rect's own frame)
+        # Find index of the vertex with minimal (y, then x)
+        start = min(range(len(uniq)), key=lambda i: (uniq[i][1], uniq[i][0]))
+        ordered = uniq[start:] + uniq[:start]  # rotate list
+
+        # return as (x, y, z)
+        return [(float(x), float(y), 0.0) for (x, y) in ordered]    
+
+    def draw_under_row_placement_zones(self):
+        """
+        [DEBUG HELPER] Visualizes the placement zones found by 
+        _analyze_first_row_clinic_until_boh_last().
+        """
+        from ezdxf.bbox import extents
+        print("\n--- 🎨 Drawing 'Under First Row' Placement Zones for Validation ---")
+
+        # 1. Reconstruct the list of clinics placed on the top wall.
+        all_clinic_entities = [e for e in self.msp.query('INSERT') if "CLINIC" in e.dxf.name.upper()]
+        if not all_clinic_entities:
+            print("  -> No clinics found in the drawing to analyze.")
+            return
+
+        # Find the highest Y coordinate among all clinics to identify the top row.
+        max_y = max(extents([c]).extmax.y for c in all_clinic_entities)
+        
+        # Consider clinics in a band near the top as being on the top wall.
+        top_wall_clinic_entities = [c for c in all_clinic_entities if extents([c]).extmax.y > max_y - 1500]
+
+        placed_clinics_on_top_wall = []
+        for entity in top_wall_clinic_entities:
+            bbox = extents([entity])
+            bbox_tuple = (bbox.extmin.x, bbox.extmin.y, bbox.extmax.x, bbox.extmax.y)
+            # --- FIX: Add the 'block_ref' to the dictionary ---
+            placed_clinics_on_top_wall.append({
+                'bbox': bbox_tuple,
+                'block_ref': entity  # Add the entity itself as the block_ref
+            })
+            # --- END OF FIX ---
+        
+        
+        if not placed_clinics_on_top_wall:
+            print("  -> Could not identify any clinics on the top wall.")
+            return
+
+        # 2. Call the analysis function to get the zones.
+        placement_zones = self._analyze_first_row_clinic_until_boh_last(placed_clinics_on_top_wall)
+
+        if not placement_zones:
+            print("  -> No placement zones were found to draw.")
+            return
+
+        # 3. Create a new, highly visible layer for the debug drawing.
+        layer_name = "DEBUG_UNDER_ROW_ZONES"
+        if layer_name not in self.doc.layers:
+            self.doc.layers.add(name=layer_name, color=3)  # ACI color 3 is Green
+
+        # 4. Iterate through the zones and draw each one.
+        for zone in placement_zones:
+            start_point = zone['start']
+            end_point = zone['end']
+            
+            # Draw the line segment for the zone.
+            self.msp.add_line(
+                start_point, 
+                end_point, 
+                dxfattribs={"layer": layer_name, "lineweight": 70}            )
+
+            # Add a text label to identify the zone.
+            mid_point = Vec2(start_point).lerp(Vec2(end_point))
+            self.msp.add_mtext(
+                f"{zone['id']} ({zone['length']:.0f}mm)",
+                dxfattribs={
+                    'char_height': 150,
+                    'insert': mid_point + Vec2(0, 100),                    'layer': layer_name
+                }
+            )
+        
+        print(f"  -> ✅ Drew {len(placement_zones)} 'under row' zones on layer '{layer_name}'.")
+
+
+
+
+    def _create_zone_from_points(self, p1: 'Vec2', p2: 'Vec2', index: int, segment_angle: float) -> dict:
+        """Helper to create a zone dictionary using a pre-calculated angle."""
+        from ezdxf.math import Vec2
+        
+        # Ensure p1 is left and p2 is right
+        start_pt, end_pt = (p1, p2) if p1.x < p2.x else (p2, p1)
+        
+        segment_vec = end_pt - start_pt
+        
+        zone = {
+            "id": f"under_row_{index}",
+            "start": (start_pt.x, start_pt.y),
+            "end": (end_pt.x, end_pt.y),
+            "length": segment_vec.magnitude,
+            "angle": segment_angle  # Use the angle passed into the function
+        }
+        print(f"      -> Found valid zone '{zone['id']}' (Length: {zone['length']:.0f}mm, Angle: {zone['angle']:.1f}°)")
+        return zone
+
+
+    def place_clinic_under_first_row(self, clinics_queue: collections.deque, placed_bboxes: list, placed_clinics_on_top_wall: list):
+        """
+        [CORRECTED] Attempts to place remaining clinics in zones directly underneath the first row.
+        """
+        from ezdxf.math import Vec2
+        if not clinics_queue:
+            return
+        
+        # --- NEW: Synchronize bounding boxes before analysis ---
+        # print("    -> Synchronizing clinic bounding boxes before analyzing under-row space...")
+        # self._draw_and_register_clinic_bboxes(placed_bboxes)
+        # --- END OF NEW CODE ---
+
+        # --- FIX: Check for 'orientation' first, then fall back to 'orient' ---
+        first_row_orientation = 'H'
+        if placed_clinics_on_top_wall:
+            first_clinic = placed_clinics_on_top_wall[0]
+            first_row_orientation = first_clinic.get('orientation', first_clinic.get('orient', 'H'))
+        # --- END OF FIX ---
+
+        force_orientation = 'V' if first_row_orientation == 'H' else 'H'
+
+        placement_zones = self._analyze_first_row_clinic_until_boh_last(placed_clinics_on_top_wall)
+        if not placement_zones:
+            print("    -> No suitable zones found to place clinics under the first row.")
+            return
+
+        for zone in placement_zones:
+            if not clinics_queue:
+                break
+
+            print(f"    -> Attempting to fill Zone '{zone['id']}' (width: {zone['length']:.0f}mm)")
+
+            if not (-15 <= zone['angle'] <= 15):
+                print(f"      -> ⚠️ Zone angle ({zone['angle']:.1f}°) is too steep. Switching to fallback placement.")
+                self._place_clinics_fallback_row_by_row(
+                    clinics_queue,
+                    placed_bboxes,
+                    placed_clinics_on_top_wall,
+                    first_row_orientation
+                )
+                return # Exit this function as the fallback has taken over
+
+            print(f"\t{zone}")
+            
+            clinic_names_for_solver = [f.name for f in clinics_queue]
+            layouts_ranked = self._find_best_combination_for_row(clinic_names_for_solver, zone['length'], force_orientation=force_orientation)
+            
+            if not layouts_ranked:
+                print(f"      -> No combination of remaining clinics fits in Zone '{zone['id']}'.")
+                continue
+
+            best_layout = layouts_ranked[0]
+            print(f"      -> Best layout for zone: {len(best_layout['fixtures_for_row'])} clinics, combo: {best_layout['combo']}")
+
+            current_x = zone['start'][0]
+            y_pos = zone['start'][1]
+
+            
+            # --- FIX: Iterate through Fixture objects directly ---
+            for i, fxtr in enumerate(best_layout['fixtures_for_row']):
+                if not clinics_queue: break
+                
+                orient = best_layout['combo'][i]
+                width, height = (fxtr.height, fxtr.width) if orient == 'V' else (fxtr.width, fxtr.height)
+                # --- END OF FIX ---
+
+                target_center_x = current_x + width / 2
+                target_center_y = y_pos - height / 2
+                target_center = Vec2(target_center_x, target_center_y)
+                # # target_center = Vec2(target_center_x - x_trans, target_center_y + y_trans)
+                angle = 90 if orient == 'V' else 0
+
+
+                # angle += zone["angle"]
+
+                new_bbox = self._validate_and_place_in_open_space(
+                    fixture=fxtr,
+                    target_center=target_center,
+                    angle_deg=zone["angle"],
+                    placed_bboxes=placed_bboxes,
+                    rotated=(angle==90)
+                )
+
+                if new_bbox:
+                    print(f"        -> ✅ Placed '{fxtr.name}' at ({target_center.x:.0f}, {target_center.y:.0f})")
+                    
+                    # Find and remove the specific clinic instance from the queue
+                    for item in list(clinics_queue):
+                        if item.name == fxtr.name:
+                            clinics_queue.remove(item)
+                            break
+                    
+                    current_x += width + best_layout['gaps'][i]
+                else:
+                    print(f"        -> ❌ Collision detected for '{fxtr.name}'. Stopping placement in this zone.")
+                    break
+    
+
+    
+    def _place_clinics_fallback_row_by_row(self, clinics_queue, placed_bboxes, placed_clinics_on_top_wall, first_row_orientation):
+        """
+        [RESTORED] Places remaining clinics in open space, row by row, from top to bottom.
+        This is the "Plan B" fallback for the master clinic placement strategy, using the original gap logic.
+        """
+        from shapely.geometry import LineString, MultiLineString
+        from ezdxf.math import Vec2
+
+        self.clinic_placement_method = 'Plan_B'
+        print(f"\n  -> Plan B: {len(clinics_queue)} clinics remain. Starting Fallback (Row-by-Row)...")
+
+        y_cursor = self.cvc.max_y
+        print(f"******************placed_clinics_on_top_wall: {placed_clinics_on_top_wall}")
+        
+        # min_angle = 360
+        # min_clinic = None
+        # min_x = self.cvc.max_x
+        if placed_clinics_on_top_wall:
+            # for obj in placed_clinics_on_top_wall:
+            #     corners = self.get_outer_rect_corners_shapely(obj["block_ref"])
+            #     segs = [(Vec2(corners[i][0], corners[i][1]), Vec2(corners[(i+1)%4][0], corners[(i+1)%4][1])) for i, c in enumerate(corners)]
+            #     seg_angles = {}
+                
+            #     for s in segs:
+            #         # print(s)
+            #         p1 = s[0]
+            #         p2 = s[1]
+            #         temp_x = min(min_x, min(p1.x, p2.x))
+            #         if temp_x != min_x:
+            #             min_x = temp_x
+            #             min_clinic = obj["fxtr"]
+            #         start_pt, end_pt = (p1, p2) if p1.x < p2.x else (p2, p1)
+            #         segment_vec = end_pt - start_pt
+            #         # print(f"start: {start_pt}, end: {end_pt}, segment_vec: {segment_vec}")
+            #         segment_angle = math.degrees(segment_vec.angle)
+            #         seg_angles[s] = segment_angle
+
+            #         if abs(min_angle) > abs(segment_angle):
+            #             min_angle = segment_angle
+            y_cursor = min(d['bbox'][1] for d in placed_clinics_on_top_wall)
+            print(f"  -> First row placed. Starting next search below y={y_cursor:.0f}")
+
+        # if min_angle == 360:
+        #     min_angle = 0
+        # if not min_clinic:
+        #     min_clinic = clinics_queue[0]
+
+        # print(clinics_queue)
+        # y_adjust = 0
+
+        # if abs(min_angle) > 1:
+        #     if first_row_orientation == "H":
+        #         y_adjust = min_clinic.width * abs(math.sin(math.radians(min_angle)))
+        #     else:
+        #         y_adjust = min_clinic.height * abs(math.sin(math.radians(min_angle)))
+        # y_adjust += 100
+            
+
+        
+        is_second_row = True
+        
+        while clinics_queue and y_cursor > self.cvc.min_y:
+            force_orientation = 'V' if is_second_row and first_row_orientation == 'H' else None
+
+            if force_orientation == 'V' or (is_second_row and first_row_orientation == 'V'):
+                VERTICAL_ROW_GAP = -100.0
+                print(f"  -> Intending to place a VERTICAL row. Using a tight {VERTICAL_ROW_GAP}mm gap.")
+            else:
+                VERTICAL_ROW_GAP = 800.0
+                print(f"  -> Intending to place a HORIZONTAL/MIXED row. Using a wide {VERTICAL_ROW_GAP}mm gap.")
+
+            y_cursor -= VERTICAL_ROW_GAP
+
+            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, y_cursor), (self.cvc.max_x + 100, y_cursor)]))
+            
+            if intersection.is_empty:
+                y_cursor -= 500
+                continue
+
+            # Handle cases where the intersection might be multiple segments
+            if isinstance(intersection, MultiLineString):
+                # Use the longest segment if multiple are found
+                intersection = max(intersection.geoms, key=lambda line: line.length)
+            
+            if not isinstance(intersection, LineString):
+                y_cursor -= 500
+                continue
+
+            local_bounds, row_width = intersection.bounds, intersection.length
+            is_second_row = False
+            
+            best_layouts_ranked = self._find_best_combination_for_row([f.name for f in clinics_queue], row_width, force_orientation=force_orientation)
+            
+            if best_layouts_ranked:
+                best_layout_used = best_layouts_ranked[0]
+                print(f"    -> Found valid spot for a new row at y={y_cursor:.0f}. Placing {len(best_layout_used['combo'])} clinics.")
+                row_fixtures = best_layout_used['fixtures_for_row']
+                
+                margin_from_left_wall = -100.0
+                row_start_x = local_bounds[0] + margin_from_left_wall
+                max_row_height = 0
+                vertical_clinic_count_in_row = 0
+
+                for i, (orient, fxtr) in enumerate(zip(best_layout_used['combo'], row_fixtures)):
+                    if not clinics_queue: break
+                    w, h = (fxtr.width if orient == 'H' else fxtr.height), (fxtr.height if orient == 'H' else fxtr.width)
+                    max_row_height = max(max_row_height, h)
+                    target_center = Vec2(row_start_x + w/2, y_cursor - h/2)
+                    # print(f"target_center: {target_center}$$$$$$$$$$$$$")
+                    rotation = 0 if orient == 'H' else 90
+
+                    if orient == 'H':
+                        xscale, yscale = 1.0, -1.0
+                    else:
+                        xscale, yscale = -1.0, 1.0
+                        vertical_clinic_count_in_row += 1
+                        if vertical_clinic_count_in_row % 2 == 0:
+                            yscale = -1.0
+                    
+                    # print(f"min_angle before validate and place: {min_angle}")
+                    if self._validate_and_place_in_open_space(fxtr, target_center, 0, placed_bboxes, rotation==90, xscale=xscale, yscale=yscale):
+                        clinics_queue.popleft()
+                        row_start_x += w + best_layout_used['gaps'][i]
+                    else:
+                        clinics_queue.clear()
+                        break
+                
+                if max_row_height > 0: y_cursor -= max_row_height
+                else: y_cursor -= 500
+            else:
+                y_cursor -= 500
 
 
 
@@ -3383,222 +3856,7 @@ class DXF_Controller:
     ##--new-test--with---greedy method-- strategy -----space for boh----in top row itself
 
 
-    def place_clinics_with_best_fit_and_fallback(self, placed_bboxes: List[tuple]):
-        """
-        Master function for clinic placement using the final, fully-featured
-        "Opportunistic BOH Reservation" strategy with a custom, corner-filling zone.
-        - FINAL VERSION: Now draws a visual boundary for the BOH zone in all cases.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import Polygon
-        print("\n--- 🧠 Executing Final Clinic & BOH Placement Strategy ---")
-
-        # --- Setup: Load a list of all clinic NAMES ---
-        clinic_config = self.fixtures.get("clinic_fixtures", {})
-        clinic_names_queue = collections.deque([name for name, count in clinic_config.items() if count > 0 for _ in range(count)])
-        
-        if not clinic_names_queue:
-            print("  -> SKIPPED: No clinics to place.")
-            return
-
-        # --- Plan A: The Row-by-Row Placement Engine ---
-        print("\n  -> Plan A: Initiating Row-by-Row Placement Engine...")
-        placed_count_plan_a = 0
-        is_first_row = True
-        y_cursor = 0
-        last_row_details = {}
-        
-        while clinic_names_queue:
-            available_width, anchor_details = 0, {}
-            force_orientation_for_row = None
-
-            if is_first_row:
-                ordered_corners = self._get_reordered_corners_top_left()
-                perimeter_path = []
-                if ordered_corners:
-                    for i in range(len(ordered_corners)):
-                        p1, p2 = Vec2(ordered_corners[i]), Vec2(ordered_corners[(i + 1) % len(ordered_corners)])
-                        if p1.distance(p2) > 100: perimeter_path.append((p1, p2))
-                if not perimeter_path: break
-                
-                p1_top, p2_top = perimeter_path[0]
-                available_width = p1_top.distance(p2_top)
-                anchor_details = { "type": "wall", "segment": (p1_top, p2_top) }
-            else:
-                # Logic for subsequent rows (unchanged and correct)
-                intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, y_cursor), (self.cvc.max_x + 100, y_cursor)]))
-                if not isinstance(intersection, LineString) or intersection.is_empty:
-                    print("      -> ⚠️ No more vertical space available."); break
-                local_bounds = intersection.bounds
-                available_width = local_bounds[2] - local_bounds[0]
-                anchor_details = { "type": "open_space", "bounds": local_bounds }
-                if last_row_details.get("orientation") == 'H':
-                    force_orientation_for_row = 'V'
-                    print("    -> Last row was horizontal, forcing this row to be vertical.")
-
-            best_layout = self._find_best_combination_for_row(list(clinic_names_queue), available_width, force_orientation=force_orientation_for_row)
-            # =========================================================================
-            # =========== NEW LOGIC TO REMOVE GAP BEFORE LAST VERTICAL CLINIC ===========
-            # =========================================================================
-            if best_layout:
-                combo = best_layout['combo']
-                gaps = best_layout['gaps']
-                
-                # This is the new rule: If the last two clinics in the planned row are
-                # both vertical, remove the gap between them to create a solid block.
-                if len(combo) > 1 and combo[-1] == 'V' and combo[-2] == 'V':
-                    print("    -> 💡 Applying special rule: Removing gap between the last two vertical clinics.")
-                    # The gap list has one less item than the combo list. The gap between
-                    # the second-to-last and last fixture is the second-to-last item in the gaps list.
-                    gaps[-2] = 0.0 # Set the gap to 0
-                    best_layout['gaps'] = gaps # IMPORTANT: Update the dictionary with the new gaps
-            # =========================================================================
-            # ======================== END OF NEW LOGIC ===============================
-            # =========================================================================
-            if not best_layout:
-                if is_first_row: placed_count_plan_a = 0
-                break
-
-            print(f"    -> Best layout for this row: {best_layout['combo']}")
-            
-            if is_first_row:
-                row_fixtures = best_layout['fixtures_for_row']
-                row_combo = best_layout['combo']
-                row_gaps = best_layout['gaps']
-                
-                start_margin = best_layout.get('start_margin', 50.0) # Default to 50 if not found
-                placement_details, current_x = [], anchor_details["segment"][0].x + start_margin
-
-                vertical_clinic_count = 0
-                for i in range(len(row_fixtures)):
-                    fxtr, orient = row_fixtures[i], row_combo[i]
-                    w = fxtr.width if orient == 'H' else fxtr.height
-                    xscale, yscale = (-1.0 if orient == 'H' else 1.0), 1.0
-                    if orient == 'V':
-                        vertical_clinic_count += 1
-                        if vertical_clinic_count % 2 == 0: yscale = -1.0
-                    
-                    p1, p2 = anchor_details["segment"]
-                    wall_vector, wall_angle_deg = (p2 - p1).normalize(), math.degrees((p2 - p1).angle)
-                    inward_normal = wall_vector.orthogonal().normalize()
-                    if not self.floorplan_polygon.contains(Point(p1 + inward_normal)): inward_normal *= -1
-                    
-                    center_on_wall = p1 + wall_vector * (current_x - p1.x + w / 2)
-                    target_center = center_on_wall + inward_normal * (50.0 + (fxtr.height if orient == 'H' else fxtr.width) / 2)
-                    rotation = wall_angle_deg if orient == 'H' else wall_angle_deg + 90
-
-                    placement_details.append({'fxtr': fxtr, 'center': target_center, 'rot': rotation, 'xscale': xscale, 'yscale': yscale})
-                    current_x += w + row_gaps[i]
-                # --- B: Place all clinics EXCEPT the last one unconditionally ---
-                placed_bboxes_in_this_row = []
-                for details in placement_details[:-1]:
-                    new_bbox = self._validate_and_place_on_wall(details['fxtr'], details['center'], details['rot'], placed_bboxes, xscale=details['xscale'], yscale=details['yscale'])
-                    if new_bbox:
-                        placed_bboxes_in_this_row.append(new_bbox)
-                        placed_count_plan_a += 1
-                        clinic_names_queue.popleft()
-                
-                # --- C: Perform the "what-if" check for the LAST clinic ---
-                if placement_details:
-                    last_clinic_details = placement_details[-1]
-                    hypothetical_bbox = self._validate_and_place_on_wall(
-                        last_clinic_details['fxtr'], last_clinic_details['center'], last_clinic_details['rot'], 
-                        placed_bboxes, xscale=last_clinic_details['xscale'], yscale=last_clinic_details['yscale'], 
-                        place_actually=False
-                    )
-                    
-                    if hypothetical_bbox:
-                        boh_zone_poly, boh_area_sqft = self._calculate_opportunistic_boh_zone(hypothetical_bbox, placed_bboxes)
-                        print(f"    -> What-If Check: Placing last clinic leaves a {boh_area_sqft:.2f} sq. ft. zone for BOH.")
-
-                        if boh_area_sqft >= 40.0:
-                            print("    -> ✅ Success: Committing clinic and creating BOH zone.")
-                            final_bbox = self._validate_and_place_on_wall(
-                                last_clinic_details['fxtr'], last_clinic_details['center'], last_clinic_details['rot'], 
-                                placed_bboxes, xscale=last_clinic_details['xscale'], yscale=last_clinic_details['yscale'],
-                                place_actually=True
-                            )
-                            if final_bbox:
-                                placed_bboxes_in_this_row.append(final_bbox)
-                                placed_count_plan_a += 1
-                                clinic_names_queue.popleft()
-                                # --- REPLACED CODE STARTS HERE ---
-                                # Draw the valid BOH zone as a proper wall
-                                if boh_zone_poly and not boh_zone_poly.is_empty:
-                                    self._create_boh_room_from_zone(boh_zone_poly, wall_thickness=50.0, layer_name="BOH_WALL_VALID", hatch_color=150) # Blue-ish hatch
-                                    placed_bboxes.append(boh_zone_poly.bounds)
-                                # --- REPLACED CODE ENDS HERE ---
-                        else:
-                            print("    -> ⚠️ BOH space would be too small. Deferring last clinic to the next row.")
-                            last_placed_bbox = placed_bboxes_in_this_row[-1] if placed_bboxes_in_this_row else None
-                            if last_placed_bbox:
-                                undersized_boh_poly, undersized_area_sqft = self._calculate_opportunistic_boh_zone(last_placed_bbox, [])
-                                print(f"    -> The undersized BOH area is {undersized_area_sqft:.2f} sq. ft.")
-                                # --- REPLACED CODE STARTS HERE ---
-                                if undersized_boh_poly and not undersized_boh_poly.is_empty:
-                                    # Draw the undersized BOH zone as a different colored wall
-                                    # self._create_boh_room_from_zone(undersized_boh_poly, wall_thickness=50.0, layer_name="BOH_WALL_OVERSIZED", hatch_color=252) # Gray hatch
-                                    self._create_boh_room_from_zone(undersized_boh_poly, wall_thickness=50.0, layer_name="BOH_WALL_VALID", hatch_color=252) # Gray hatch
-                                # --- REPLACED CODE ENDS HERE ---
-                    else:
-                        print("    -> ⚠️ Last clinic in row is blocked. Deferring to next row.")
-            
-            # --- Standard placement for subsequent rows (2nd, 3rd, etc.) ---
-            else:
-                row_fixtures = best_layout['fixtures_for_row']
-                total_row_width = sum((f.width if o == 'H' else f.height) for f, o in zip(row_fixtures, best_layout['combo'])) + sum(best_layout['gaps'])
-                LEFT_NUDGE = 0.0
-                row_start_x = last_row_details.get("bbox", [anchor_details["bounds"][0]])[0] + LEFT_NUDGE
-                placed_bboxes_in_this_row = []
-                vertical_clinic_count_in_row = 0
-                for i, (orient, fxtr) in enumerate(zip(best_layout['combo'], row_fixtures)):
-                    w, h, gap = (fxtr.width if orient == 'H' else fxtr.height), (fxtr.height if orient == 'H' else fxtr.width), best_layout['gaps'][i]
-                    xscale, yscale = (-1.0 if orient == 'H' else 1.0), 1.0
-                    if orient == 'V':
-                        vertical_clinic_count_in_row += 1
-                        if vertical_clinic_count_in_row % 2 == 0: yscale = -1.0
-                    
-                    target_y = y_cursor - h
-                    target_center = Vec2(row_start_x + w/2, target_y + h/2)
-                    rotation = 0 if orient == 'H' else 90
-                    new_bbox = self._validate_and_place_in_open_space(fxtr, target_center, rotation, placed_bboxes, xscale=xscale, yscale=yscale)
-                    if new_bbox:
-                        placed_bboxes_in_this_row.append(new_bbox)
-                        placed_count_plan_a += 1
-                        clinic_names_queue.popleft()
-                        row_start_x += w + gap
-                    else:
-                        print(f"      -> ⚠️ Could not place '{fxtr.name}'. Halting row placement.")
-                        clinic_names_queue.clear(); break
-            
-            # --- Update state for the next row ---
-            if placed_bboxes_in_this_row:
-                min_x = min(b[0] for b in placed_bboxes_in_this_row); min_y = min(b[1] for b in placed_bboxes_in_this_row)
-                max_x = max(b[2] for b in placed_bboxes_in_this_row); max_y = max(b[3] for b in placed_bboxes_in_this_row)
-                combined_row_bbox = (min_x, min_y, max_x, max_y)
-                h_count = best_layout['combo'].count('H'); v_count = best_layout['combo'].count('V')
-                dominant_orientation = 'H' if h_count >= v_count else 'V'
-                last_row_details = {"bbox": combined_row_bbox, "orientation": dominant_orientation}
-                VERTICAL_ROW_GAP = 10.0
-                y_cursor = combined_row_bbox[1] - VERTICAL_ROW_GAP
-                if is_first_row: is_first_row = False
-            else: 
-                # If nothing was placed in the row, we must advance the state to avoid an infinite loop
-                if is_first_row: is_first_row = False
-                y_cursor -= 500 # Nudge y_cursor down to try a new area
-        
-        # --- Plan B Fallback ---
-        if placed_count_plan_a == 0 and [name for name, count in clinic_config.items() if count > 0]:
-             print("\n  -> Plan A failed to place any clinics. Activating Fallback...")
-             clinics_to_place_obj = [Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"]) for name, count in clinic_config.items() if count > 0 for _ in range(count)]
-             remaining = self.place_clinics_by_perimeter_walk(clinics_to_place_obj, placed_bboxes)
-             if remaining: print(f"    -> ⚠️ Fallback finished with {len(remaining)} unplaced clinics.")
-        else:
-             print(f"\n✅ Plan A Succeeded. Placed {placed_count_plan_a} clinics.")
-
-    # In DXF_Controller.py
-    # In DXF_Controller.py
-
+    
 # (This function can be placed where the old one was)
 
     # In DXF_Controller.py
@@ -3620,17 +3878,16 @@ class DXF_Controller:
     ##--new-test--with---greedy method-- strategy ---- new -- wall-walk method
 
 
-    def _analyze_top_wall_with_bulge_detection_new(self, small_bulge_max_width=250, small_bulge_max_depth=150):
+    def _analyze_top_wall_with_bulge_detection_new(self, small_bulge_max_width=500, small_bulge_max_depth=700):
         """
-        [FINAL ROBUST VERSION] Performs a "smart walk" along the top wall.
-        - NEW: Intelligently finds ALL top wall segments, regardless of corner order,
-        making it robust for any floorplan shape.
-        - Classifies diversions as small (ignorable) or large (obstacles).
+        [RESTORED] Performs a "smart walk" along the top wall to find multiple placeable zones.
+        - Intelligently finds ALL top wall segments, regardless of corner order.
+        - Classifies diversions as small (ignorable) or large (which create a new zone).
         """
         from ezdxf.math import Vec2
         print("  -> Starting 'Smart Walk' analysis of top wall...")
         
-        ### --- ROBUST TOP WALL IDENTIFICATION (NEW LOGIC) --- ###
+        ### --- ROBUST TOP WALL IDENTIFICATION --- ###
         all_corners = self.cvc.corners
         if len(all_corners) < 3: return []
 
@@ -3645,19 +3902,24 @@ class DXF_Controller:
         y_threshold = self.cvc.max_y - (self.cvc.max_y - self.cvc.min_y) * 0.20
         top_segments = []
         for p1, p2 in all_segments:
-            # Check if the segment's midpoint is in the top zone
+            # Check if the segment is in the top zone
             if (p1.y + p2.y) / 2 > y_threshold:
-                # Check if the segment is mostly horizontal
-                if abs(p1.y - p2.y) < abs(p1.x - p2.x):
-                    # Ensure segment goes from left to right for consistent walking
-                    if p1.x < p2.x:
-                        top_segments.append((p1, p2))
-                    else:
-                        top_segments.append((p2, p1))
+                # Check if it's mostly horizontal and has a minimum length
+                if abs(p1.y - p2.y) < abs(p1.x - p2.x) and p1.distance(p2) > 1700:
+                    # Ensure segments are ordered left-to-right
+                    if p1.x > p2.x: p1, p2 = p2, p1
+                    top_segments.append((p1, p2))
+        
+        if not top_segments:
+            print("  -> No top segments > 1700mm found. Falling back to find any top horizontal segment.")
+            for p1, p2 in all_segments:
+                if (p1.y + p2.y) / 2 > y_threshold and abs(p1.y - p2.y) < abs(p1.x - p2.x):
+                    if p1.x > p2.x: p1, p2 = p2, p1
+                    top_segments.append((p1, p2))
         
         # 3. Sort the found top segments from left to right to create the "walk" path
         top_segments.sort(key=lambda seg: seg[0].x)
-        ### --- END OF NEW LOGIC --- ###
+        ### --- END OF ROBUST IDENTIFICATION --- ###
 
         if not top_segments:
             print("  -> Smart Walk complete. No top wall zones found.")
@@ -3675,17 +3937,15 @@ class DXF_Controller:
             deviation_depth = abs(next_seg_start.y - current_seg_end.y)
 
             if deviation_width < small_bulge_max_width and deviation_depth < small_bulge_max_depth:
-                # This is a small, ignorable gap/bulge, so we continue the current wall
-                continue
+                # This is a small, ignorable bulge. Continue the current flat wall.
+                pass
             else:
-                # This is a large bulge/step. End the current zone.
-                print(f"    -> Found LARGE diversion (w:{deviation_width:.0f}, d:{deviation_depth:.0f}). Ending wall zone.")
+                # This is a large deviation. End the current zone and start a new one.
                 placeable_zones.append({
                     'start': current_flat_wall_start, 
                     'end': current_seg_end, 
                     'length': current_seg_end.distance(current_flat_wall_start)
                 })
-                # Start a new zone from the beginning of the next segment
                 current_flat_wall_start = next_seg_start
 
         # After the loop, add the last remaining flat wall zone
@@ -3699,93 +3959,570 @@ class DXF_Controller:
 
         print(f"  -> Smart Walk complete. Found {len(placeable_zones)} placeable zones on the top wall.")
         return placeable_zones
+    
 
-
-        
-    def _analyze_top_wall_with_bulge_detection_new_og(self, small_bulge_max_width=200.0, small_bulge_max_depth=100.0):
+    def draw__analyze_top_wall_with_bulge_detection_new(self):
         """
-        [FINAL ROBUST VERSION] Performs a "smart walk" along the top wall.
-        - NEW: Intelligently finds ALL top wall segments, regardless of corner order,
-        making it robust for any floorplan shape.
-        - Classifies diversions as small (ignorable) or large (obstacles).
+        [DEBUG HELPER] Visualizes the segments created by _analyze_top_wall_with_bulge_detection_new()
+        and prints their lengths in JSON format.
+        """
+        import json
+        print("\n--- 🎨 Drawing Top Wall Analysis Zones for Validation ---")
+
+        # 1. Call the analysis function to get the zones
+        placeable_zones = self._analyze_top_wall_with_bulge_detection_new(
+            small_bulge_max_width=1000, 
+            small_bulge_max_depth=1000
+        )
+
+        if not placeable_zones:
+            print("  -> No placeable zones found to draw.")
+            return
+
+        # --- NEW: Prepare and print segment lengths in JSON format ---
+        segment_lengths = {}
+        for i, zone in enumerate(placeable_zones):
+            zone_id = f"TOP_ZONE_{i+1}"
+            segment_lengths[zone_id] = f"{zone['length']:.2f}mm"
+        
+        print("  -> Top Wall Segment Lengths:")
+        print(json.dumps(segment_lengths, indent=4))
+        # --- END OF NEW CODE ---
+
+        # 2. Create a new, highly visible layer for the debug drawing
+        layer_name = "DEBUG_TOP_WALL_ZONES"
+        if layer_name not in self.doc.layers:
+            self.doc.layers.add(name=layer_name, color=6)  # ACI color 6 is Magenta
+
+        # 3. Iterate through the zones and draw each one
+        for i, zone in enumerate(placeable_zones):
+            start_point = zone['start']
+            end_point = zone['end']
+            
+            # Draw the line segment for the zone
+            self.msp.add_line(
+                start_point, 
+                end_point, 
+                dxfattribs={"layer": layer_name, "lineweight": 70} # Use a thick lineweight
+            )
+
+            # Add a text label to identify the zone number
+            mid_point = start_point.lerp(end_point)
+            self.msp.add_mtext(
+                f"TOP_ZONE_{i+1}",
+                dxfattribs={
+                    'char_height': 150,
+                    'insert': mid_point,
+                    'layer': layer_name
+                }
+            )
+        
+        print(f"  -> ✅ Drew {len(placeable_zones)} top wall zones on layer '{layer_name}'.")
+        
+    ##--new-test--with---greedy method-- strategy ---- new -- wall-walk method
+    ##--new-test--with---greedy method-- strategy ---- new -- wall-walk method
+
+
+    def place_clinics_master_strategy_opposite(self, placed_bboxes: List[tuple]):
+        """
+        [OPPOSITE STRATEGY] Places clinics from RIGHT to LEFT and creates BOH on the LEFT side.
+        This is the mirror/opposite version of place_clinics_master_strategy.
+        - Clinics: Placed RIGHT-TO-LEFT starting from the facade's right corner
+        - BOH: Drawn from the leftmost clinic extending to the left wall
+        - Clinics are horizontally flipped (xscale=-1) for proper orientation
+        """
+        self.clinic_placement_method = 'Unknown'
+        from shapely.geometry import Polygon, LineString, Point
+        from ezdxf.math import Vec2
+        from ezdxf.bbox import extents
+    
+        print("\n--- 🧠 Executing OPPOSITE Clinic Placement (Right-to-Left with Left BOH) ---")
+    
+        # --- Create temporary obstacle list (same as original) ---
+        obstacles_for_clinics = list(placed_bboxes)
+        internal_wall_obstacles = self.cvc.get_internal_wall_partitions(1000, 1200, 20) + self.cvc.get_internal_wall_partitions(2600, 2800, 10)
+        if internal_wall_obstacles:
+            existing_obstacles = set(map(tuple, obstacles_for_clinics))
+            new_obstacles = [obs for obs in internal_wall_obstacles if tuple(obs) not in existing_obstacles]
+            if new_obstacles:
+                obstacles_for_clinics.extend(new_obstacles)
+                print(f"  -> Added {len(new_obstacles)} partitions to obstacle list.")
+        
+        # --- Setup clinic queue (same as original) ---
+        clinic_config = self.fixtures.get("clinic_fixtures", {})
+        clinics_queue = collections.deque([
+            Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
+            for name, count in clinic_config.items() if count > 0 for _ in range(count)
+        ])
+        if not clinics_queue:
+            print("  -> SKIPPED: No clinics to place.")
+            return
+    
+        # =========================================================================
+        # =========== PHASE 1: UNCONDITIONAL TOP-WALL PLACEMENT (RIGHT-TO-LEFT) ==
+        # =========================================================================
+        print("\n  -> Phase 1: Placing clinics RIGHT-TO-LEFT on the top wall...")
+        
+        # **KEY CHANGE**: Use right-start path instead of left-start
+        top_wall_zones = self._analyze_top_wall_with_bulge_detection_opposite()
+        
+        placed_clinics_on_top_wall = []
+        is_first_zone_processed = False
+        first_row_orientation = 'H'
+        total_vertical_clinics_placed_on_top = 0
+    
+        for zone in top_wall_zones:
+            if not clinics_queue: break
+            
+            available_width = zone['length']
+            print(f"\n  -> Analyzing placement zone of width {available_width:.0f}mm...")
+    
+            clinic_names_for_solver = [fxtr.name for fxtr in clinics_queue]
+            best_layouts_ranked = self._find_best_combination_for_row(clinic_names_for_solver, available_width, force_orientation='H')
+    
+            if not best_layouts_ranked:
+                print("    -> No combination of remaining clinics fits in this zone.")
+                continue
+    
+            print(f"    -> Best layout for this zone: {best_layouts_ranked[0]['combo']}")
+    
+            # **KEY CHANGE**: Use opposite placement helper with horizontal flip
+            placed_count, total_vertical_clinics_placed_on_top = self._find_and_place_row_in_zone_opposite(
+                zone, 
+                best_layouts_ranked, 
+                clinics_queue, 
+                obstacles_for_clinics,
+                placed_clinics_on_top_wall,
+                start_vertical_count=total_vertical_clinics_placed_on_top
+            )
+    
+            if placed_count > 0 and not is_first_zone_processed:
+                best_layout_used = best_layouts_ranked[0]
+                h_count = best_layout_used['combo'].count('H')
+                v_count = len(best_layout_used['fixtures_for_row']) - h_count
+                first_row_orientation = 'H' if h_count >= v_count else 'V'
+                is_first_zone_processed = True
+    
+        # =========================================================================
+        # =========== PHASE 2 & 3: FINAL BOH CHECK AND "UNDO" LOGIC ==============
+        # =========================================================================
+        print("\n  -> Phase 2: Performing final BOH verification...")
+        if not placed_clinics_on_top_wall:
+            print("    -> No clinics were placed on the top wall. Skipping BOH check.")
+        else:
+            # **KEY CHANGE**: Find the leftmost clinic instead of rightmost
+            final_anchor_clinic_details = min(placed_clinics_on_top_wall, key=lambda c: c['bbox'][0])
+            
+            # **KEY CHANGE**: Use opposite BOH calculation
+            boh_zone_poly, boh_area_sqft = self._calculate_opportunistic_boh_zone_opposite(
+                final_anchor_clinic_details['bbox'],
+                [],
+                final_anchor_clinic_details['orient']
+            )
+            print(f"    -> Final check: Potential BOH area is {boh_area_sqft:.2f} sq. ft.")
+    
+            MINIMUM_BOH_AREA = 160.0
+            
+            if boh_area_sqft >= MINIMUM_BOH_AREA:
+                print("    -> ✅ Verification PASSED. Committing layout and drawing BOH.")
+                self.clinic_placement_method = 'Plan_A'
+                # **KEY CHANGE**: Use opposite BOH creation
+                self.create_boh_zone_from_first_clinic_opposite(placed_clinics_on_top_wall, placed_bboxes)
+            else:
+                print(f"    -> ❌ Verification FAILED. BOH area is less than {MINIMUM_BOH_AREA} sq. ft.")
+                self._undo_last_clinic_placement(final_anchor_clinic_details, clinics_queue, placed_bboxes, placed_clinics_on_top_wall)
+                print("    -> Re-evaluating BOH zone with the updated clinic layout...")
+                self.create_boh_zone_from_first_clinic_opposite(placed_clinics_on_top_wall, placed_bboxes)
+                  
+        # --- FALLBACK LOGIC (if clinics remain) ---
+        if clinics_queue:
+            self.clinic_placement_method = 'Plan_B'
+            print(f"\n  -> Plan B: {len(clinics_queue)} clinics remain. Starting Fallback...")
+            # Additional fallback logic can be added here if needed
+    
+        print("\n✅ Opposite clinic placement process complete.")
+    
+    
+    def _analyze_top_wall_with_bulge_detection_opposite(self, small_bulge_max_width=200, small_bulge_max_depth=700):
+        """
+        [OPPOSITE VERSION - FULLY CORRECTED] Performs a "smart walk" along the top wall from RIGHT to LEFT.
+        Returns zones ordered from right to left for opposite placement.
+        **NOW CORRECTLY MIRRORS THE ORIGINAL FUNCTION'S LOGIC**
         """
         from ezdxf.math import Vec2
-        print("  -> Starting 'Smart Walk' analysis of top wall...")
+        print("  -> Starting 'Smart Walk' analysis of top wall (RIGHT-TO-LEFT)...")
         
-        ### --- ROBUST TOP WALL IDENTIFICATION (NEW LOGIC) --- ###
         all_corners = self.cvc.corners
         if len(all_corners) < 3: return []
 
-        # 1. Get all perimeter segments from the corners
+        # Get all perimeter segments
         all_segments = []
         for i in range(len(all_corners)):
             p1 = Vec2(all_corners[i])
             p2 = Vec2(all_corners[(i + 1) % len(all_corners)])
             all_segments.append((p1, p2))
 
-        # 2. Filter for segments in the top 20% of the floorplan that are mostly horizontal
+        # Filter for top segments
         y_threshold = self.cvc.max_y - (self.cvc.max_y - self.cvc.min_y) * 0.20
         top_segments = []
         for p1, p2 in all_segments:
-            # Check if the segment's midpoint is in the top zone
             if (p1.y + p2.y) / 2 > y_threshold:
-                # Check if the segment is mostly horizontal
-                if abs(p1.y - p2.y) < abs(p1.x - p2.x):
-                    # Ensure segment goes from left to right for consistent walking
-                    if p1.x < p2.x:
-                        top_segments.append((p1, p2))
-                    else:
-                        top_segments.append((p2, p1))
+                if p1.distance(p2) > 300 and abs(p1.y - p2.y) < abs(p1.x - p2.x):
+                    top_segments.append((p1, p2))
         
-        # 3. Sort the found top segments from left to right to create the "walk" path
-        top_segments.sort(key=lambda seg: seg[0].x)
-        ### --- END OF NEW LOGIC --- ###
+        if not top_segments:
+            print("  -> No top segments > 300mm found.")
+            for p1, p2 in all_segments:
+                if (p1.y + p2.y) / 2 > y_threshold:
+                    top_segments.append((p1, p2))
+        
+        # **KEY CHANGE**: Sort RIGHT to LEFT (by the RIGHTMOST point of each segment)
+        # This ensures we process segments from right to left
+        top_segments.sort(key=lambda seg: max(seg[0].x, seg[1].x), reverse=True)
 
         if not top_segments:
             print("  -> Smart Walk complete. No top wall zones found.")
             return []
 
+        # **CRITICAL FIX**: Start from the RIGHTMOST point of the first segment
+        # The first segment after sorting is the rightmost one
+        first_seg = top_segments[0]
+        # Pick the point with the larger X value as our starting point
+        current_flat_wall_start = first_seg[0] if first_seg[0].x > first_seg[1].x else first_seg[1]
+        
+        print(f"  -> Starting walk from rightmost point at x={current_flat_wall_start.x:.0f}, y={current_flat_wall_start.y:.0f}")
+        
         placeable_zones = []
-        current_flat_wall_start = top_segments[0][0]
         
         for i in range(len(top_segments) - 1):
-            current_seg_end = top_segments[i][1]
-            next_seg_start = top_segments[i+1][0]
+            # For the current segment, find which end connects to our current position
+            current_seg = top_segments[i]
             
-            # Calculate the deviation between the end of one segment and the start of the next
+            # Determine the "end" of this segment (the point moving leftward)
+            if i == 0:
+                # For the first segment, we already know the start point
+                # The end is the other point
+                current_seg_end = current_seg[1] if current_seg[0].x > current_seg[1].x else current_seg[0]
+            else:
+                # For subsequent segments, the end is the point we haven't used yet
+                current_seg_end = current_seg[0] if current_seg[0].x < current_seg[1].x else current_seg[1]
+            
+            # Look at the next segment
+            next_seg = top_segments[i + 1]
+            # The start of the next segment is the point closest to where we ended
+            next_seg_start = next_seg[0] if next_seg[0].distance(current_seg_end) < next_seg[1].distance(current_seg_end) else next_seg[1]
+            
+            # Calculate deviation
             deviation_width = abs(next_seg_start.x - current_seg_end.x)
             deviation_depth = abs(next_seg_start.y - current_seg_end.y)
 
+            # Check if this is a small bulge to ignore or a large gap
             if deviation_width < small_bulge_max_width and deviation_depth < small_bulge_max_depth:
-                # This is a small, ignorable gap/bulge, so we continue the current wall
+                print(f"    -> Small bulge detected (w:{deviation_width:.0f}mm, d:{deviation_depth:.0f}mm). Continuing zone.")
+                # Small bulge - continue the current zone
                 continue
             else:
-                # This is a large bulge/step. End the current zone.
-                print(f"    -> Found LARGE diversion (w:{deviation_width:.0f}, d:{deviation_depth:.0f}). Ending wall zone.")
-                placeable_zones.append({
-                    'start': current_flat_wall_start, 
-                    'end': current_seg_end, 
-                    'length': current_seg_end.distance(current_flat_wall_start)
-                })
-                # Start a new zone from the beginning of the next segment
+                # Large gap - end the current zone
+                print(f"    -> Large diversion detected (w:{deviation_width:.0f}mm, d:{deviation_depth:.0f}mm). Ending wall zone.")
+                zone_length = current_flat_wall_start.distance(current_seg_end)
+                if zone_length > 300:
+                    placeable_zones.append({
+                        'start': current_flat_wall_start, 
+                        'end': current_seg_end, 
+                        'length': zone_length
+                    })
+                # Start a new zone from the next segment's start
                 current_flat_wall_start = next_seg_start
 
-        # After the loop, add the last remaining flat wall zone
-        if current_flat_wall_start is not None:
-            last_point = top_segments[-1][1]
+        # Add the final zone (from current_flat_wall_start to the end of the last segment)
+        last_seg = top_segments[-1]
+        last_point = last_seg[0] if last_seg[0].x < last_seg[1].x else last_seg[1]  # Leftmost point of last segment
+        zone_length = current_flat_wall_start.distance(last_point)
+        if zone_length > 300:
             placeable_zones.append({
                 'start': current_flat_wall_start, 
                 'end': last_point, 
-                'length': last_point.distance(current_flat_wall_start)
+                'length': zone_length
             })
 
-        print(f"  -> Smart Walk complete. Found {len(placeable_zones)} placeable zones on the top wall.")
+        print(f"  -> Smart Walk complete. Found {len(placeable_zones)} placeable zones (RIGHT-TO-LEFT).")
         return placeable_zones
+
+        
+    def _find_and_place_row_in_zone_opposite(self, zone, layouts_ranked: list, clinics_queue, placed_bboxes, placed_clinics_on_top_wall, start_vertical_count: int = 0):
+        """
+        [OPPOSITE VERSION - FULLY CORRECTED] Places clinics RIGHT-TO-LEFT with horizontal mirroring.
+        **NOW CORRECTLY STARTS FROM THE RIGHT EDGE OF EACH SEGMENT**
+        """
+        from shapely.geometry import Point
+        from ezdxf.math import Vec2
+
+        if not layouts_ranked:
+            return 0, start_vertical_count
+
+        p1, p2 = zone['start'], zone['end']
+        wall_vector = (p2 - p1).normalize()
+        wall_angle_deg = math.degrees(wall_vector.angle)
+        inward_normal = wall_vector.orthogonal().normalize()
+        if not self.floorplan_polygon.contains(Point(p1 + inward_normal)): 
+            inward_normal *= -1
+
+        best_placement_details = None
+        final_vertical_count_state = start_vertical_count
+
+        # **KEY FIX**: p1 is rightmost, p2 is leftmost after the opposite sorting
+        # We need to place starting FROM p1 (right) and move toward p2 (left)
+        
+        # Start searching from near the RIGHT edge (p1 is rightmost after sorting)
+        search_cursor = 10.0
+        zone_length = p1.distance(p2)
+        
+        while search_cursor < zone_length - 50.0:
+            for layout in layouts_ranked:
+                row_fixtures = layout['fixtures_for_row']
+                
+                total_row_width = sum((f.width if o == 'H' else f.height) for f, o in zip(row_fixtures, layout['combo'])) + sum(layout['gaps'])
+                
+                if search_cursor + total_row_width > zone_length - 50.0:
+                    continue
+
+                is_entire_row_valid = True
+                hypothetical_placements = []
+                
+                # **CRITICAL FIX**: Start measuring from p1 (rightmost point)
+                # The search_cursor is an offset from the right edge
+                current_x = search_cursor
+                
+                vertical_clinic_count = start_vertical_count
+                
+                for i in range(len(row_fixtures)):
+                    fxtr = row_fixtures[i]
+                    orient = layout['combo'][i]
+                    fixture_width = fxtr.width if orient == 'H' else fxtr.height
+                    fixture_height = fxtr.height if orient == 'H' else fxtr.width
+                    
+                    # **KEY CHANGE**: Calculate position from p1 (rightmost)
+                    # current_x increases as we move LEFT along the wall
+                    # target_center = p1 + wall_vector * (current_x + fixture_width / 2) + inward_normal * (10.0 + fixture_height / 2)
+                    # --- MODIFICATION: Add a rightward push for wall overlap ---
+                    inward_position = p1 + wall_vector * (current_x + fixture_width / 2) + inward_normal * (-100.0 + fixture_height / 2)
+                    rightward_push_vector = Vec2(100, 0) # Push 100mm to the right
+                    target_center = inward_position + rightward_push_vector
+                    # --- END OF MODIFICATION ---
+                    
+                    rotation = wall_angle_deg if orient == 'H' else wall_angle_deg + 90
+                    
+                    
+                    # Apply horizontal flip
+                    xscale = -1.0
+                    yscale = -1.0
+                    
+                    bbox_result = self._validate_and_place_on_wall(fxtr, target_center, rotation, placed_bboxes, xscale=xscale, yscale=yscale, place_actually=False)
+                    
+                    if bbox_result is None:
+                        is_entire_row_valid = False
+                        break
+                    
+                    hypothetical_placements.append({
+                        'fxtr': fxtr, 'center': target_center, 'rot': rotation,
+                        'xscale': xscale, 'yscale': yscale, 'bbox': bbox_result, 'orient': orient
+                    })
+                    
+                    if orient == 'V':
+                        vertical_clinic_count += 1
+                    
+                    gap = layout['gaps'][i] if i < len(layout['gaps']) else 0
+                    current_x += (fixture_width + gap)
+
+                if is_entire_row_valid:
+                    best_placement_details = hypothetical_placements
+                    final_vertical_count_state = vertical_clinic_count
+                    break
+            
+            if best_placement_details is not None:
+                break
+            
+            search_cursor += 100
+
+        # Place if found
+        if best_placement_details:
+            print(f"    -> ✅ Best spot found. Committing {len(best_placement_details)} clinics to the wall.")
+            
+            for details in best_placement_details:
+                fxtr = details['fxtr']
+                target_center = details['center']
+                rotation = details['rot']
+                xscale = details['xscale']
+                yscale = details['yscale']
+                pre_validated_bbox = details['bbox']
+
+                local_center = fxtr.bounding_box.center
+                local_center_scaled = Vec2(local_center.x * xscale, local_center.y * yscale)
+                rotated_offset = local_center_scaled.rotate(math.radians(rotation))
+                final_insert_point = target_center - rotated_offset
+                
+                block_ref = self.place_fixture(fxtr, (final_insert_point.x, final_insert_point.y, 0), rotation, True, xscale=xscale, yscale=yscale)
+                
+                placed_bboxes.append(pre_validated_bbox)
+                details['block_ref'] = block_ref
+                placed_clinics_on_top_wall.append(details)
+                clinics_queue.popleft()
+
+            return len(best_placement_details), final_vertical_count_state
+
+        return 0, start_vertical_count
+    
+    
+    def _calculate_opportunistic_boh_zone_opposite(self, first_clinic_bbox: tuple, placed_bboxes: List[tuple], first_clinic_orientation: str) -> Tuple[Optional[Polygon], float]:
+        """
+        [OPPOSITE VERSION] Calculates BOH zone on the LEFT side by subtracting retail area from floorplan.
+        """
+        from shapely.geometry import box, Polygon
+    
+        fc_min_x, fc_min_y, fc_max_x, fc_max_y = first_clinic_bbox
+        fp_min_x, fp_min_y, fp_max_x, fp_max_y = self.floorplan_polygon.bounds
+        
+        # **KEY CHANGE**: Start from LEFT edge of first (leftmost) clinic
+        end_x_for_cutout = fc_min_x
+        if first_clinic_orientation == 'V':
+            print("    -> 💡 Applying architectural rule: Adding 800mm horizontal gap for vertical clinic.")
+            end_x_for_cutout -= 800.0
+    
+        # **KEY CHANGE**: Retail mask covers everything to the RIGHT of the cutout point
+        retail_mask = box(end_x_for_cutout, fp_min_y - 1000, fp_max_x + 1000, fp_max_y + 1000)
+    
+        # BOH zone is on the LEFT (everything NOT in retail mask)
+        boh_zone_poly = self.floorplan_polygon.difference(retail_mask)
+    
+        if any(boh_zone_poly.intersects(box(*b)) for b in placed_bboxes):
+            return None, 0.0
+    
+        area_in_sqmm = boh_zone_poly.area
+        SQMM_PER_SQFT = 92903.04
+        area_in_sqft = area_in_sqmm / SQMM_PER_SQFT
+        
+        return boh_zone_poly, area_in_sqft
+    
+    def create_boh_zone_from_first_clinic_opposite(self, placed_clinics_on_top_wall: list, placed_bboxes: list, big_partition_threshold_mm: float = 1200.0):
+        """
+        [OPPOSITE VERSION - CORRECTED PARTITION DETECTION] Creates BOH zone on the LEFT side.
+        **NOW PROPERLY DETECTS AND STOPS AT PARTITION WALLS WITHOUT ADDING GAPS**
+        """
+        from shapely.geometry import box
+        from ezdxf.math import Vec2
+        
+        print(f"\n--- 🏛️  Creating BOH Zone on LEFT Side (Partition Detection) ---")
+
+        if not placed_clinics_on_top_wall:
+            print("  -> SKIPPED: No clinics were placed on the top wall to anchor the BOH.")
+            return
+
+        # Find the LEFTMOST clinic
+        anchor_clinic = min(placed_clinics_on_top_wall, key=lambda c: c['bbox'][0])
+        anchor_bbox = anchor_clinic['bbox']
+        anchor_orientation = anchor_clinic['orient']
+        anchor_point_x = anchor_bbox[0]  # LEFT edge
+        anchor_point_y = anchor_bbox[1]
+        
+        print(f"  -> Anchoring to '{anchor_clinic['fxtr'].name}' at x={anchor_point_x:.0f}, y={anchor_point_y:.0f}")
+
+        # Conditional Gap Logic
+        total_vertical_clinics = sum(1 for clinic in placed_clinics_on_top_wall if clinic['orient'] == 'V')
+        print(f"  -> Total vertical clinics on top wall: {total_vertical_clinics}")
+        
+        start_x = anchor_point_x
+        if anchor_orientation == 'V' and total_vertical_clinics % 2 != 0:
+            start_x -= 800.0
+            print(f"  -> Applying 800mm gap: start_x adjusted to {start_x:.0f}")
+        else:
+            print(f"  -> NO gap applied. start_x remains at {start_x:.0f}")
+
+        # Initial BOH boundary extends to LEFT wall
+        boh_min_x = self.cvc.min_x
+        
+        # Get partitions using the proven method
+        print(f"  -> Detecting partitions using get_internal_wall_partitions()...")
+        stopper_partitions = self.cvc.get_internal_wall_partitions(
+            min_length=900, 
+            max_length=1200,
+            thickness=20.0
+        )
+        
+        print(f"  -> Found {len(stopper_partitions)} partitions")
+
+        # Define BOH vertical range
+        boh_min_y = anchor_point_y
+        boh_max_y = self.cvc.max_y + 1000
+
+        print(f"  -> BOH Y-range: {boh_min_y:.0f} to {boh_max_y:.0f}")
+        print(f"  -> Looking for partitions between left wall ({self.cvc.min_x:.0f}) and start ({start_x:.0f})")
+
+        # **KEY LOGIC**: Find partitions that block the BOH path
+        blocking_partitions = []
+        
+        for partition_bbox in stopper_partitions:
+            p_min_x, p_min_y, p_max_x, p_max_y = partition_bbox
+            
+            # Check 1: Partition must be to the LEFT of our starting point
+            is_in_path = p_max_x < start_x and p_max_x > self.cvc.min_x
+            
+            # Check 2: Partition must overlap vertically with BOH zone
+            has_vertical_overlap = not (p_max_y < boh_min_y or p_min_y > boh_max_y)
+            
+            print(f"    -> Checking partition at x=[{p_min_x:.0f}, {p_max_x:.0f}], y=[{p_min_y:.0f}, {p_max_y:.0f}]")
+            print(f"       - In path? {is_in_path}")
+            print(f"       - Vertical overlap? {has_vertical_overlap}")
+            
+            if is_in_path and has_vertical_overlap:
+                blocking_partitions.append(partition_bbox)
+                print(f"       ✓ BLOCKING - This partition stops the BOH")
+        
+        print(f"  -> Found {len(blocking_partitions)} blocking partitions")
+        
+        # Find the rightmost blocking partition (closest to our start point)
+        if blocking_partitions:
+            closest_partition = max(blocking_partitions, key=lambda p: p[2])  # p[2] is max_x
+            
+            # **NO GAP ADDED** - Stop exactly at the partition
+            boh_min_x = closest_partition[2]
+            
+            print(f"  -> ✅ BOH will stop at partition edge at x={boh_min_x:.0f}")
+            print(f"     Partition bounds: x=[{closest_partition[0]:.0f}, {closest_partition[2]:.0f}]")
+        else:
+            print(f"  -> No blocking partitions found. BOH extends to left wall at x={boh_min_x:.0f}")
+
+        # Create BOH box
+        print(f"\n  -> Creating BOH box:")
+        print(f"     Left edge: {boh_min_x:.0f}")
+        print(f"     Right edge: {start_x:.0f}")
+        print(f"     Bottom: {anchor_point_y:.0f}")
+        print(f"     Top: {boh_max_y:.0f}")
+        
+        boh_box = box(boh_min_x, anchor_point_y, start_x, boh_max_y)
+        final_boh_poly = self.floorplan_polygon.intersection(boh_box)
+
+        # Expansion logic
+        final_boh_poly = self._expand_boh_zone_downwards_if_needed(final_boh_poly, boh_box, self.floorplan_polygon)
+
+        if final_boh_poly.is_empty:
+            print("  -> ⚠️ FAILED: The calculated BOH zone is empty.")
+            return
+            
+        self._create_boh_room_from_zone(final_boh_poly, layer_name="BOH_WALL_VALID")
+        placed_bboxes.append(final_boh_poly.bounds)
+        
+        print("  -> ✅ BOH zone created on LEFT side successfully.")
+    
+    ##--new-test--with---oppsite placement of whole 
+    ##--new-test--with---oppsite placement of whole 
+
+
 
     
-            
-    ##--new-test--with---greedy method-- strategy ---- new -- wall-walk method
-    ##--new-test--with---greedy method-- strategy ---- new -- wall-walk method
+
+
+    ##--new-test--with---oppsite placement of whole 
+    ##--new-test--with---oppsite placement of whole 
 
 
     
@@ -3808,7 +4545,7 @@ class DXF_Controller:
         - Primary: Tries to place the window at this Y-level against the right wall.
         - Fallback: If the wall is blocked, places it at the same Y-level next to the anchor clinic.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from ezdxf.bbox import extents
         from shapely.geometry import box
         import math
@@ -3821,7 +4558,7 @@ class DXF_Controller:
             if config.get("Pick_up_window", 0) <= 0:
                 print("  -> SKIPPED: No Pick_up_window fixture specified.")
                 return
-            fixture_obj = Fixture("Pick_up_window", self.fixture_dict["Pick_up_window"]["path"])
+            fixture_obj = Fixture.Fixture("Pick_up_window", self.fixture_dict["Pick_up_window"]["path"])
         except Exception as e:
             print(f"  -> 🔥 ERROR during Pick_up_window setup: {e}")
             return
@@ -3913,28 +4650,49 @@ class DXF_Controller:
 
     # In DXF_Controller.py -> Add these three functions
 
+    
     def place_pickup_area_fixture(self, placed_bboxes: List[tuple]):
         """
-        [NEW DISPATCHER] Intelligently places either the 'pickup_table' or 'Pick_up_window'
-        based on the method used for clinic placement.
-        - Plan A (Standard Clinic Placement): Places 'pickup_table' in the BOH zone.
-        - Plan B (Fallback Clinic Placement): Places 'Pick_up_window' next to the last clinic.
+        [MODIFIED DISPATCHER] Intelligently places pickup fixtures based on the
+        clinic placement method and the size of the BOH zone.
         """
+        from shapely.geometry import Polygon
+
         print("\n---  Orchestrating Pickup Area Fixture Placement ---")
 
-        # Check the flag set by the clinic placement strategy
         if not hasattr(self, 'clinic_placement_method') or self.clinic_placement_method == 'Unknown':
             print("  -> SKIPPED: Clinic placement method is unknown. Cannot determine which pickup fixture to place.")
+            self._place_pickup_table_in_boh(placed_bboxes)
             return
 
+        # --- Step 1: Check for Plan A ---
         if self.clinic_placement_method == 'Plan_A':
             print("  -> Clinic placement used Plan A. Placing 'pickup_table' in BOH zone.")
             self._place_pickup_table_in_boh(placed_bboxes)
-        
-        elif self.clinic_placement_method == 'Plan_B':
-            print("  -> Clinic placement used Plan B Fallback. Placing 'Pick_up_window'.")
-            # self._place_pickup_window_fallback(placed_bboxes)
-            self.place_pickup_window_next_to_clinic(placed_bboxes)
+
+        # --- Step 2 (NEW LOGIC): Check if BOH zone is large enough ---
+        else:
+            boh_zone = self._get_boh_zone_polygon()
+            if boh_zone and not boh_zone.is_empty:
+                # Conversion factor from square mm to square feet
+                SQMM_PER_SQFT = 92903.04
+                area_sqft = boh_zone.area / SQMM_PER_SQFT
+                print(f"  -> BOH Zone found with an area of {area_sqft:.2f} sq. ft.")
+
+                if area_sqft >= 50.0:
+                    print("  -> BOH area is > 50 sq. ft. Placing 'pickup_table' in BOH Zone.")
+                    self._place_pickup_table_in_boh(placed_bboxes)
+                    return # Stop here since the table has been placed
+
+            # --- Step 3: Fallback to Plan B if other conditions aren't met ---
+            if self.clinic_placement_method == 'Plan_B':
+                print("  -> Clinic placement used Plan B Fallback. Placing 'Pick_up_window'.")
+                # self.place_pickup_window_next_to_clinic(placed_bboxes)
+                self._place_pickup_table_in_boh(placed_bboxes)
+            
+            else:
+                print("  -> No pickup fixture placement strategy was met.")
+
 
     def _place_pickup_table_in_boh(self, placed_bboxes: List[tuple]):
         """
@@ -3942,7 +4700,7 @@ class DXF_Controller:
         bottom-left and searches rightwards along the bottom edge until a
         clear spot is found. Includes a 150mm downward nudge for better aesthetics.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import box
         
         # 1. Load fixture
@@ -3954,7 +4712,7 @@ class DXF_Controller:
                 print("  -> SKIPPED: 'pickup_table' not specified in configuration.")
                 return
             
-            fixture_obj = Fixture("pickup_table", self.fixture_dict["pickup_table"]["path"])
+            fixture_obj = Fixture.Fixture("pickup_table", self.fixture_dict["pickup_table"]["path"])
         except Exception as e:
             print(f"  -> 🔥 ERROR loading 'pickup_table': {e}")
             return
@@ -4012,59 +4770,426 @@ class DXF_Controller:
         # 5. Final Failure Message
         if not is_placed:
             print("    -> ⚠️ FAILED: The entire bottom area of the BOH zone was blocked or invalid.")
-    
-    def _place_pickup_window_fallback(self, placed_bboxes: List[tuple]):
-        """Places the Pick_up_window next to the last-placed clinic with a dynamic gap."""
-        from Fixture import Fixture
-        from ezdxf.bbox import extents
+
+    def _place_pickup_table_in_boh_right(self, placed_bboxes: List[tuple]):
+        """
+        [RIGHT SIDE VERSION] Places the 'pickup_table' in the BOH zone on the RIGHT side.
+        It starts at the bottom-right and searches leftwards along the bottom edge until a
+        clear spot is found. Includes a 150mm downward nudge for better aesthetics.
+        """
         from shapely.geometry import box
-        import math
-
-        try:
-            config = self.fixtures.get("pickup_window", {})
-            if config.get("Pick_up_window", 0) <= 0:
-                print("  -> SKIPPED: 'Pick_up_window' not specified in configuration.")
-                return
-            fixture_obj = Fixture("Pick_up_window", self.fixture_dict["Pick_up_window"]["path"])
-        except Exception as e:
-            print(f"  -> 🔥 ERROR during Pick_up_window setup: {e}"); return
-
-        all_clinics = [e for e in self.msp.query('INSERT') if "CLINIC" in e.dxf.name.upper()]
-        if not all_clinics:
-            print("  -> ⚠️ FAILED: No clinics found to anchor to."); return
-
-        def get_clinic_number(entity):
-            try: return int(entity.dxf.name.split('_')[-1])
-            except (ValueError, IndexError): return float('inf')
-
-        all_clinics.sort(key=get_clinic_number)
-        anchor_clinic = all_clinics[-1]
-        anchor_bbox = extents([anchor_clinic])
-        print(f"  -> Fallback anchor is '{anchor_clinic.dxf.name}'")
-
-        rotation = anchor_clinic.dxf.rotation
-        is_vertical = (85 < rotation < 95) or (265 < rotation < 275)
-        gap = 800.0 if is_vertical else 50.0
-        print(f"    -> Anchor clinic is {'VERTICAL' if is_vertical else 'HORIZONTAL'}. Using {gap:.0f}mm gap.")
         
-        target_x = anchor_bbox.extmax.x + gap
-        target_y = anchor_bbox.center.y - (fixture_obj.height / 2)
+        # 1. Load fixture
+        try:
+            pickup_config = self.fixtures.get("pickup_window", {})
+            boh_config = self.fixtures.get("boh_fixtures", {})
+            
+            if pickup_config.get("pickup_table", 0) <= 0 and boh_config.get("pickup_table", 0) <= 0:
+                print("  -> SKIPPED: 'pickup_table' not specified in configuration.")
+                return
+            
+            fixture_obj = Fixture.Fixture("pickup_table", self.fixture_dict["pickup_table"]["path"])
+        except Exception as e:
+            print(f"  -> 🔥 ERROR loading 'pickup_table': {e}")
+            return
 
-        candidate_box = box(target_x, target_y, target_x + fixture_obj.width, target_y + fixture_obj.height)
-        is_overlapping = any(candidate_box.intersects(box(*b)) for b in placed_bboxes)
-        is_inside = self.floorplan_polygon.contains(candidate_box)
+        # 2. Find BOH zone
+        boh_zone = self._get_boh_zone_polygon()
+        if not boh_zone:
+            print("  -> ⚠️ FAILED: Could not find BOH zone to place pickup_table in.")
+            return
 
-        if is_inside and not is_overlapping:
-            self.place_fixture(fixture_obj, (target_x, target_y, 0), 0, False)
-            placed_bboxes.append(candidate_box.bounds)
-            print(f"    ✅ SUCCESS (Fallback): Placed '{fixture_obj.name}' with a {gap:.0f}mm gap.")
-        else:
-            print(f"  -> ⚠️ FINAL FAILURE: The fallback spot was also blocked or outside the boundary.")
+        # 3. Setup for 2D Resilient Grid Search (RIGHT SIDE)
+        boh_bounds = boh_zone.bounds
+        margin = 50.0
+        
+        # ***** KEY CHANGE: Start from the RIGHT side *****
+        search_start_y = boh_bounds[1] + margin - 150.0  # Same downward nudge
+        search_end_y = search_start_y + 500.0  # Search upward 500mm
+        
+        # ***** KEY CHANGE: Search from RIGHT to LEFT *****
+        search_start_x = boh_bounds[2] - fixture_obj.width - margin  # Start from right edge
+        search_end_x = boh_bounds[0] + margin  # End at left edge
+        
+        step = 100.0  # Grid step size in mm
+        is_placed = False
+
+        # 4. 2D Grid Search Loop (Searches upwards, then LEFTWARDS)
+        print("  -> Searching for a spot along the bottom-right of the BOH zone (2D Grid Search)...")
+        
+        y_try = search_start_y
+        while y_try < search_end_y:
+            # ***** KEY CHANGE: Search from right to left (decreasing X) *****
+            x_try = search_start_x
+            while x_try > search_end_x:
+                candidate_box = box(x_try, y_try, x_try + fixture_obj.width, y_try + fixture_obj.height)
+                
+                is_overlapping = any(candidate_box.intersects(box(*b)) for b in placed_bboxes)
+                is_inside = boh_zone.contains(candidate_box)
+
+                if is_inside and not is_overlapping:
+                    self.place_fixture(fixture_obj, (x_try, y_try, 0), 0, False)
+                    placed_bboxes.append(candidate_box.bounds)
+                    print(f"    ✅ SUCCESS: Placed '{fixture_obj.name}' in the BOH zone at (x={x_try:.0f}, y={y_try:.0f}).")
+                    is_placed = True
+                    break # Exit inner x-loop on success
+                
+                x_try -= step  # ***** KEY CHANGE: Decrement instead of increment *****
+            
+            if is_placed:
+                break # Exit outer y-loop on success
+            
+            y_try += step
+
+        # 5. Final Failure Message
+        if not is_placed:
+            print("    -> ⚠️ FAILED: The entire bottom-right area of the BOH zone was blocked or invalid.")
+    
 #---------------------NEW_PICKUP_WINDOW FUNCTION WITH PICKUP TABLE FALL BACK SETUP---------------------
 #---------------------NEW_PICKUP_WINDOW FUNCTION WITH PICKUP TABLE FALL BACK SETUP---------------------
 
 
 #---- PICKUP WINDOW PLACEMENT FUNCTION FINISHED HERE ----
+
+#-----back-room-finding--setup--------------------starts-here--------------------
+#-----back-room-finding--setup--------------------starts-here--------------------
+
+
+    def detect_back_corner_room_v1(self, partition_min_length: float = 1000.0) -> Optional[str]:
+        """
+        Detects if a room exists in a back corner (left or right).
+
+        This works by finding internal partitions and checking for a specific
+        pattern where a horizontal partition near the back wall meets a
+        vertical partition near a side wall.
+
+        Args:
+            self: The DXF_Controller instance.
+            partition_min_length (float): The minimum length for a wall segment to be
+                                        considered a significant internal partition.
+
+        Returns:
+            'left' if a room is detected in the back-left corner.
+            'right' if a room is detected in the back-right corner.
+            None if no such room is detected.
+        """
+        print("\n--- 🔍 Detecting Back Corner Room ---")
+        # 1. Get all significant internal partitions from the CV_Controller
+        # Using a wider range to catch walls of different sizes.
+        internal_partitions = self.cvc.get_internal_wall_partitions(min_length=1000,max_length=3000,thickness=0.0)
+        if len(internal_partitions) < 2:
+            print("  -> Not enough internal partitions to form a room.")
+            return None
+
+        # 2. Get floorplan dimensions for relative positioning
+        min_x, max_x = self.cvc.min_x, self.cvc.max_x
+        min_y, max_y = self.cvc.min_y, self.cvc.max_y
+        width = max_x - min_x
+        height = max_y - min_y
+
+        # 3. Define zones for "back" and "side" walls (e.g., top 30% of height)
+        back_zone_y_start = max_y - (height * 0.30)
+        left_zone_x_end = min_x + (width * 0.30)
+        right_zone_x_start = max_x - (width * 0.30)
+
+        # 4. Categorize partitions into "red" (back, horizontal) and "blue" (side, vertical)
+        red_lines = []
+        blue_lines = []
+
+        for p in internal_partitions:
+            p_line = LineString([(p[0], p[1]), (p[2], p[3])])
+            dx = abs(p[2] - p[0])
+            dy = abs(p[3] - p[1])
+            avg_y = (p[1] + p[3]) / 2
+            avg_x = (p[0] + p[2]) / 2
+
+            # Check for horizontal lines in the back zone ("red lines")
+            if dx > dy and avg_y >= back_zone_y_start:
+                red_lines.append(p_line)
+            # Check for vertical lines in the side zones ("blue lines")
+            elif dy > dx:
+                if avg_x <= left_zone_x_end:
+                    blue_lines.append({'line': p_line, 'side': 'left'})
+                elif avg_x >= right_zone_x_start:
+                    blue_lines.append({'line': p_line, 'side': 'right'})
+
+        print(f"  -> Found {len(red_lines)} potential back walls (red) and {len(blue_lines)} potential side walls (blue).")
+
+        # 5. Search for an intersection ("green dot") between a red and a blue line
+        for red_line in red_lines:
+            for blue_line_data in blue_lines:
+                blue_line = blue_line_data['line']
+                
+                # ***** THE FIX IS HERE *****
+                # Instead of a direct intersection, we create a small 5mm "halo" around the
+                # red line to catch near-misses and almost-touching endpoints.
+                if red_line.buffer(5.0).intersects(blue_line):
+                    side = blue_line_data['side']
+                    print(f"  -> ✅ Match found! Back corner room detected on the '{side}' side.")
+                    return side
+
+        print("  -> ℹ️ No back corner room pattern was detected.")
+        return None
+    
+    def draw_detected_room_for_validation_v1(self, partition_min_length: float = 1000.0):
+        """
+        A debugging helper to visualize the partitions being analyzed by
+        detect_back_corner_room.
+
+        - "Red" lines are horizontal partitions in the back zone.
+        - "Blue" lines are vertical partitions in the side zones.
+        - "Green" dots are the intersection points that form a corner room.
+
+        Args:
+            self: The DXF_Controller instance.
+            partition_min_length (float): The minimum length for a wall segment.
+        """
+        print("\n--- 🎨 Drawing Detected Room Partitions for Validation ---")
+        internal_partitions = self.cvc.get_internal_wall_partitions(min_length=1000,max_length=3000,thickness=0.0)
+        if len(internal_partitions) < 2:
+            return
+
+        # Define layers for visualization
+        if "DEBUG_ROOM_RED" not in self.doc.layers:
+            self.doc.layers.add(name="DEBUG_ROOM_RED", color=1)  # Red
+        if "DEBUG_ROOM_BLUE" not in self.doc.layers:
+            self.doc.layers.add(name="DEBUG_ROOM_BLUE", color=5)  # Blue
+        if "DEBUG_ROOM_GREEN_DOT" not in self.doc.layers:
+            self.doc.layers.add(name="DEBUG_ROOM_GREEN_DOT", color=3)  # Green
+
+        # Get dimensions and define zones (same logic as detection function)
+        min_x, max_x, min_y, max_y = self.cvc.min_x, self.cvc.max_x, self.cvc.min_y, self.cvc.max_y
+        width, height = max_x - min_x, max_y - min_y
+        back_zone_y_start = max_y - (height * 0.30)
+        left_zone_x_end = min_x + (width * 0.30)
+        right_zone_x_start = max_x - (width * 0.30)
+
+        red_lines = []
+        blue_lines = []
+
+        # Categorize and draw the red/blue lines
+        for p in internal_partitions:
+            p_line = LineString([(p[0], p[1]), (p[2], p[3])])
+            dx, dy = abs(p[2] - p[0]), abs(p[3] - p[1])
+            avg_y, avg_x = (p[1] + p[3]) / 2, (p[0] + p[2]) / 2
+
+            if dx > dy and avg_y >= back_zone_y_start:
+                red_lines.append(p_line)
+                self.msp.add_line(p_line.coords[0], p_line.coords[1], dxfattribs={"layer": "DEBUG_ROOM_RED", "lineweight": 50})
+            elif dy > dx:
+                if avg_x <= left_zone_x_end:
+                    blue_lines.append({'line': p_line, 'side': 'left'})
+                    self.msp.add_line(p_line.coords[0], p_line.coords[1], dxfattribs={"layer": "DEBUG_ROOM_BLUE", "lineweight": 50})
+                elif avg_x >= right_zone_x_start:
+                    blue_lines.append({'line': p_line, 'side': 'right'})
+                    self.msp.add_line(p_line.coords[0], p_line.coords[1], dxfattribs={"layer": "DEBUG_ROOM_BLUE", "lineweight": 50})
+
+        # Find and draw intersection points ("green dots")
+        for red_line in red_lines:
+            for blue_line_data in blue_lines:
+                blue_line = blue_line_data['line']
+                # ***** THE FIX IS HERE *****
+                # Use the same buffered intersection logic as the detection function.
+                if red_line.buffer(5.0).intersects(blue_line):
+                    # Now, find the intersection between the BUFFERED red line and the blue line.
+                    # The result is a small LineString where they cross.
+                    intersection_geom = red_line.buffer(5.0).intersection(blue_line)
+                    
+                    if not intersection_geom.is_empty:
+                        # The centroid of this small intersection LineString is the perfect spot for our dot.
+                        intersection_point = intersection_geom.centroid
+                        self.msp.add_circle(
+                            center=intersection_point.coords[0], 
+                            radius=100, 
+                            dxfattribs={"layer": "DEBUG_ROOM_GREEN_DOT"}
+                        )
+        
+        print("  -> Drawing complete. Check DXF for red/blue lines and green dots.")
+
+
+    def detect_back_corner_room(self, partition_min_length: float = 1000.0) -> Optional[str]:
+        """
+        [V9 - FINAL BUFFER INCREASE] Increases the intersection buffer to handle
+        larger geometric gaps between wall segments.
+        """
+        print("\n--- 🔍 Detecting Back Corner Room (v9 - Final Buffer Increase) ---")
+
+        # (The setup and filtering logic from V8 is correct and remains unchanged)
+        candidate_partitions = self.cvc.get_internal_wall_partitions(min_length=1000, max_length=3000, thickness=0.0)
+        if not candidate_partitions: return None
+
+        BOUNDARY_TOLERANCE = 150.0
+        internal_partitions = [p for p in candidate_partitions if self.floorplan_polygon.boundary.distance(LineString([(p[0], p[1]), (p[2], p[3])]).centroid) > BOUNDARY_TOLERANCE]
+
+        if len(internal_partitions) < 2:
+            print("  -> Not enough true internal partitions after filtering.")
+            return None
+
+        top_wall_zones = self._analyze_top_wall_with_bulge_detection_new()
+        if not top_wall_zones:
+            print("  -> ⚠️ Could not determine main back wall orientation. Aborting.")
+            return None
+        
+        p1_ref, p2_ref = top_wall_zones[0]['start'], top_wall_zones[0]['end']
+        back_wall_angle_deg = math.degrees((p2_ref - p1_ref).normalize().angle)
+        print(f"  -> Main back wall orientation detected at {back_wall_angle_deg:.1f}°")
+
+        min_x, max_x, min_y, max_y = self.cvc.min_x, self.cvc.max_x, self.cvc.min_y, self.cvc.max_y
+        width, height = max_x - min_x, max_y - min_y
+        back_zone_y_start, left_zone_x_end, right_zone_x_start = max_y - (height * 0.40), min_x + (width * 0.40), max_x - (width * 0.40)
+
+        red_lines, blue_lines = [], []
+        ANGLE_TOLERANCE = 15.0 
+
+        for p in internal_partitions:
+            p1, p2 = Vec2(p[0], p[1]), Vec2(p[2], p[3])
+            p_line = LineString([p1, p2])
+            seg_vec = p2 - p1
+            seg_angle_deg = math.degrees(seg_vec.angle)
+            avg_y, avg_x = (p1.y + p2.y) / 2, (p1.x + p2.x) / 2
+            if avg_y < back_zone_y_start: continue
+
+            angle_diff_parallel = abs((seg_angle_deg - back_wall_angle_deg + 180) % 360 - 180)
+            if angle_diff_parallel < ANGLE_TOLERANCE:
+                red_lines.append(p_line)
+                continue
+
+            angle_diff_perp = abs((seg_angle_deg - (back_wall_angle_deg + 90) + 180) % 360 - 180)
+            if angle_diff_perp < ANGLE_TOLERANCE:
+                if avg_x <= left_zone_x_end:
+                    blue_lines.append({'line': p_line, 'side': 'left'})
+                elif avg_x >= right_zone_x_start:
+                    blue_lines.append({'line': p_line, 'side': 'right'})
+
+        print(f"  -> Found {len(red_lines)} potential back walls (red) and {len(blue_lines)} potential side walls (blue) after angle-based filtering.")
+
+        # 5. Intersection check with LARGER BUFFER
+        for red_line in red_lines:
+            for blue_line_data in blue_lines:
+                blue_line = blue_line_data['line']
+                
+                # ***** THE FIX IS HERE: Increased buffer from 50.0 to 150.0 *****
+                buffered_red_line = red_line.buffer(150.0)
+                
+                if buffered_red_line.intersects(blue_line):
+                    intersection_geom = buffered_red_line.intersection(blue_line)
+                    if not intersection_geom.is_empty:
+                        intersection_point = intersection_geom.centroid
+                        distance_from_back_wall = max_y - intersection_point.y
+                        if distance_from_back_wall > 600.0:
+                            side = blue_line_data['side']
+                            print(f"  -> ✅ Match found! Corner at y={intersection_point.y:.0f} is {distance_from_back_wall:.0f}mm from back wall.")
+                            print(f"  -> Back corner room detected on the '{side}' side.")
+                            return side
+                        else:
+                            print(f"  -> ℹ️ Match ignored. Corner is only {distance_from_back_wall:.0f}mm from back wall.")
+
+        print("  -> ℹ️ No valid back corner room pattern was detected.")
+        return None
+
+    def draw_detected_room_for_validation(self, partition_min_length: float = 1000.0):
+        """
+        [V9] Visualizes partitions using the same increased buffer to correctly
+        draw the green dot.
+        """
+        print("\n--- 🎨 Drawing Detected Room Partitions for Validation (v9) ---")
+
+        candidate_partitions = self.cvc.get_internal_wall_partitions(min_length=1000, max_length=3000, thickness=0.0)
+        if not candidate_partitions: return
+
+        # (Setup logic is unchanged)
+        BOUNDARY_TOLERANCE = 150.0
+        internal_partitions = [p for p in candidate_partitions if self.floorplan_polygon.boundary.distance(LineString([(p[0], p[1]), (p[2], p[3])]).centroid) > BOUNDARY_TOLERANCE]
+        if not internal_partitions: return
+        top_wall_zones = self._analyze_top_wall_with_bulge_detection_new()
+        if not top_wall_zones: return
+        p1_ref, p2_ref = top_wall_zones[0]['start'], top_wall_zones[0]['end']
+        back_wall_angle_deg = math.degrees((p2_ref - p1_ref).normalize().angle)
+        if "DEBUG_ROOM_RED" not in self.doc.layers: self.doc.layers.add(name="DEBUG_ROOM_RED", color=1)
+        if "DEBUG_ROOM_BLUE" not in self.doc.layers: self.doc.layers.add(name="DEBUG_ROOM_BLUE", color=5)
+        if "DEBUG_ROOM_GREEN_DOT" not in self.doc.layers: self.doc.layers.add(name="DEBUG_ROOM_GREEN_DOT", color=3)
+        min_x, max_x, min_y, max_y = self.cvc.min_x, self.cvc.max_x, self.cvc.min_y, self.cvc.max_y
+        height, width = max_y - min_y, max_x - min_x
+        back_zone_y_start, left_zone_x_end, right_zone_x_start = max_y - (height * 0.40), min_x + (width * 0.40), max_x - (width * 0.40)
+
+        # Angle-based Categorization and Drawing (Unchanged)
+        red_lines, blue_lines = [], []
+        ANGLE_TOLERANCE = 15.0
+        for p in internal_partitions:
+            p1, p2 = Vec2(p[0], p[1]), Vec2(p[2], p[3])
+            p_line = LineString([p1, p2])
+            seg_vec = p2 - p1
+            seg_angle_deg = math.degrees(seg_vec.angle)
+            avg_y, avg_x = (p1.y + p2.y) / 2, (p1.x + p2.x) / 2
+            if avg_y < back_zone_y_start: continue
+            
+            angle_diff_parallel = abs((seg_angle_deg - back_wall_angle_deg + 180) % 360 - 180)
+            if angle_diff_parallel < ANGLE_TOLERANCE:
+                red_lines.append(p_line)
+                self.msp.add_line(p_line.coords[0], p_line.coords[1], dxfattribs={"layer": "DEBUG_ROOM_RED", "lineweight": 50})
+                continue
+
+            angle_diff_perp = abs((seg_angle_deg - (back_wall_angle_deg + 90) + 180) % 360 - 180)
+            if angle_diff_perp < ANGLE_TOLERANCE:
+                if avg_x <= left_zone_x_end:
+                    blue_lines.append({'line': p_line, 'side': 'left'})
+                    self.msp.add_line(p_line.coords[0], p_line.coords[1], dxfattribs={"layer": "DEBUG_ROOM_BLUE", "lineweight": 50})
+                elif avg_x >= right_zone_x_start:
+                    blue_lines.append({'line': p_line, 'side': 'right'})
+                    self.msp.add_line(p_line.coords[0], p_line.coords[1], dxfattribs={"layer": "DEBUG_ROOM_BLUE", "lineweight": 50})
+
+        # Intersection Drawing with LARGER BUFFER
+        for red_line in red_lines:
+            for blue_line_data in blue_lines:
+                blue_line = blue_line_data['line']
+                
+                # ***** APPLYING THE SAME FIX HERE *****
+                buffered_red_line = red_line.buffer(150.0)
+                
+                if buffered_red_line.intersects(blue_line):
+                    intersection_geom = buffered_red_line.intersection(blue_line)
+                    if not intersection_geom.is_empty:
+                        intersection_point = intersection_geom.centroid
+                        if (max_y - intersection_point.y) > 600.0:
+                            self.msp.add_circle(center=intersection_point.coords[0], radius=200, dxfattribs={"layer": "DEBUG_ROOM_GREEN_DOT"})
+        
+        print("  -> Drawing complete. Check DXF for correctly filtered red/blue lines and green dots.")
+
+    def orchestrate_clinic_placement(self, all_placed_bboxes: List[tuple]):
+        """
+        Orchestrates the main clinic placement by first detecting back corner rooms.
+        If a room is found on the back-left, it executes the 'opposite' (right-to-left)
+        placement strategy to keep the BOH area away from the room. Otherwise, it
+        proceeds with the default (left-to-right) strategy.
+        """
+        print("\n--- 🧭 Orchestrating Main Clinic Placement Strategy ---")
+
+        # First, detect if a room exists in a back corner and get its location.
+        back_room_location = self.detect_back_corner_room()
+        self.back_room_location = back_room_location # Store the result
+
+        # If a room is detected on the 'left'...
+        if back_room_location == 'left':
+            print("  -> Back-left room detected. Executing OPPOSITE (right-to-left) clinic placement strategy.")
+            # ...call the opposite placement function.
+            self.place_clinics_master_strategy_opposite(all_placed_bboxes)
+            all_placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
+            self._place_pickup_table_in_boh_right(all_placed_bboxes)
+
+        else:
+            # If the room is on the right or not detected at all...
+            if back_room_location == 'right':
+                print("  -> Back-right room detected. Using DEFAULT (left-to-right) clinic placement strategy.")
+            else:
+                print("  -> No back corner room detected. Using DEFAULT (left-to-right) clinic placement strategy.")
+            # ...call the default placement function.
+            self.place_clinics_master_strategy(all_placed_bboxes)
+            all_placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
+            self.place_pickup_area_fixture(all_placed_bboxes)
+
+#-----back-room-finding--setup--------------------stops-here--------------------
+#-----back-room-finding--setup--------------------stops-here--------------------
+
 
 
 #---- TOILET PLACEMENT FUNCTION STARTS HERE ----
@@ -4116,6 +5241,807 @@ class DXF_Controller:
 #---- TOILET PLACEMENT FUNCTION FINISHED HERE ----
 #---- Back-of-House (BOH) PLACEMENT FUNCTION STARTED HERE ----
 
+#---------------------------------NEW-WALK-BY-SEGMENT-PLACING-FOR-BOH-FIXTURES------------------------------
+#---------------------------------NEW-WALK-BY-SEGMENT-PLACING-FOR-BOH-FIXTURES------------------------------
+
+    def _get_boh_perimeter_path_from_bottom_right_ccw(self):
+        """
+        [NEW HELPER] Gets the BOH inner perimeter path, starting from the
+        bottom-right corner and proceeding counter-clockwise.
+        """
+        from ezdxf.math import Vec2
+        import math
+
+        # Step 1: Get the inner BOH polygon
+        boh_outlines = list(self.msp.query('LWPOLYLINE[layer=="BOH_WALL_VALID_OUTLINE"]'))
+        if not boh_outlines:
+            boh_outlines = list(self.msp.query('LWPOLYLINE[layer=="BOH_PARTITION_OUTLINE"]'))
+        if not boh_outlines:
+            return []
+        polygons = [Polygon(list(p.get_points('xy'))) for p in boh_outlines]
+        if not polygons:
+            return []
+        boh_placement_zone = min(polygons, key=lambda p: p.area)
+        
+        perimeter_coords_tuples = list(boh_placement_zone.exterior.coords)[:-1] # Remove duplicate closing point
+        
+        # Step 2: Find the corner closest to the theoretical bottom-right
+        if not perimeter_coords_tuples:
+            return []
+
+        boh_bounds = boh_placement_zone.bounds
+        target_x = boh_bounds[2] # max_x
+        target_y = boh_bounds[1] # min_y
+
+        start_idx = min(range(len(perimeter_coords_tuples)),
+                        key=lambda i: math.hypot(perimeter_coords_tuples[i][0] - target_x, perimeter_coords_tuples[i][1] - target_y))
+
+        # Step 3: Reorder the path to start from that corner
+        reordered_coords = perimeter_coords_tuples[start_idx:] + perimeter_coords_tuples[:start_idx]
+
+        # Step 4: Check and enforce Counter-Clockwise (CCW) direction
+        # A positive signed area means the path is already CCW.
+        # A negative signed area means it's CW, so we must reverse it.
+        path_points_vec = [Vec2(p) for p in reordered_coords]
+        signed_area = 0.5 * sum(p1.x * p2.y - p2.x * p1.y for p1, p2 in zip(path_points_vec, path_points_vec[1:] + [path_points_vec[0]]))
+
+        if signed_area < 0: # It's Clockwise, needs reversal
+            print("  -> Path was clockwise. Reversing to ensure counter-clockwise direction from bottom-right.")
+            # Keep the start point, but reverse the order of the rest of the points
+            final_ordered_coords = reordered_coords[0:1] + reordered_coords[1:][::-1]
+        else:
+            final_ordered_coords = reordered_coords
+
+        # Step 5: Build the final segment path
+        final_path = []
+        for i in range(len(final_ordered_coords)):
+            p1 = Vec2(final_ordered_coords[i])
+            p2 = Vec2(final_ordered_coords[(i + 1) % len(final_ordered_coords)])
+            final_path.append((p1, p2))
+            
+        return final_path
+
+    
+    # DXF_Controller.py, Line 4725 approx.
+
+    def get_boh_zone_wall_segment(self) -> dict:
+        """
+        [CORRECTED] Analyzes the BOH zone polygon, gets the raw segments, 
+        and then reduces the effective length based on corner geometry.
+        """
+        from ezdxf.math import Vec2
+        import math
+
+        print("\n--- 🧱 Analyzing BOH Zone Wall Segments (Bottom-Right, CCW) ---")
+
+        # 1. Get the ordered perimeter path (raw, unadjusted coordinates)
+        perimeter_path = self._get_boh_perimeter_path_from_bottom_right_ccw()
+        if not perimeter_path:
+            print("  -> WARNING: Could not generate a BOH perimeter path.")
+            return {}
+
+        # 2. GENERATE UNADJUSTED SEGMENT DATA
+        unadjusted_segments = {}
+        for i, (p1, p2) in enumerate(perimeter_path):
+            if p1.distance(p2) > 50:
+                unadjusted_segments[i] = {
+                    'start_point': (p1.x, p1.y), 
+                    'end_point': (p2.x, p2.y), 
+                    'length': p1.distance(p2), 
+                    'angle': math.degrees((p2 - p1).angle),
+                    'vector': (p2 - p1)
+                }
+
+        # 3. IDENTIFY INTERNAL CORNERS
+        # **** CRITICAL CHANGE: Pass the raw segment data to the corner finder ****
+        boh_internal_corners = self._find_internal_corners_from_raw_data(unadjusted_segments)
+        corner_points_set = {
+            (round(c['point'][0]), round(c['point'][1])) for c in boh_internal_corners
+        }
+
+        # 4. APPLY SEGMENT REDUCTION LOGIC
+        wall_segments_data = {}
+        CORNER_RESERVATION_MM = 300.0 
+        
+        for i in sorted(unadjusted_segments.keys()):
+            seg_data = unadjusted_segments[i]
+            p1 = Vec2(seg_data['start_point'])
+            p2 = Vec2(seg_data['end_point'])
+            segment_vector = seg_data['vector'].normalize()
+            
+            effective_p1 = p1
+            effective_p2 = p2
+
+            # Check if segment ENDS at an internal corner (p2 is the junction point)
+            if (round(p2.x), round(p2.y)) in corner_points_set:
+                effective_p2 = p2 - segment_vector * CORNER_RESERVATION_MM
+                print(f"  -> Segment {i} ENDS at internal corner. Reducing length by {CORNER_RESERVATION_MM}mm.")
+
+            # Check if segment STARTS at an internal corner (p1 is the junction point)
+            if (round(p1.x), round(p1.y)) in corner_points_set:
+                effective_p1 = p1 + segment_vector * CORNER_RESERVATION_MM
+                print(f"  -> Segment {i} STARTS at internal corner. Reducing length by {CORNER_RESERVATION_MM}mm.")
+            
+            # 5. STORE FINAL, ADJUSTED DATA
+            final_segment_length = effective_p1.distance(effective_p2)
+            
+            if final_segment_length > 450.0:
+                wall_segments_data[i] = {
+                    'start_point': (effective_p1.x, effective_p1.y),
+                    'end_point': (effective_p2.x, effective_p2.y),
+                    'length': final_segment_length,
+                    'angle': math.degrees(segment_vector.angle)
+                }
+
+        print(f"  -> ✅ Successfully identified {len(wall_segments_data)} wall segments with CORNER RESERVATION applied.")
+        return wall_segments_data
+
+    def get_boh_zone_wall_segment_og(self) -> dict:
+        """
+        [MODIFIED] Analyzes the BOH zone polygon and returns details for each of its wall segments,
+        starting from the bottom-right corner and proceeding counter-clockwise.
+        """
+        from ezdxf.math import Vec2
+        import math
+
+        print("\n--- 🧱 Analyzing BOH Zone Wall Segments (Bottom-Right, CCW) ---")
+
+        # 1. Get the ordered perimeter path using the new helper function
+        perimeter_path = self._get_boh_perimeter_path_from_bottom_right_ccw()
+        if not perimeter_path:
+            print("  -> WARNING: Could not generate a BOH perimeter path.")
+            return {}
+
+        wall_segments_data = {}
+        
+        # 2. Iterate through the correctly ordered segments
+        for i, (p1, p2) in enumerate(perimeter_path):
+            segment_length = p1.distance(p2)
+
+            if segment_length < 50:
+                continue
+
+            segment_vector = p2 - p1
+            segment_angle_deg = math.degrees(segment_vector.angle)
+
+            # 3. Store the collected data
+            wall_segments_data[i] = {
+                'start_point': (p1.x, p1.y),
+                'end_point': (p2.x, p2.y),
+                'length': segment_length,
+                'angle': segment_angle_deg
+            }
+
+        print(f"  -> ✅ Successfully identified {len(wall_segments_data)} wall segments, starting from the bottom-right.")
+        return wall_segments_data
+
+    def draw_boh_segment_order_for_validation_br_ccw(self):
+        """
+        [DEBUG HELPER] Draws numbered labels on the BOH inner wall segments,
+        starting from the bottom-right corner and proceeding counter-clockwise,
+        to visually confirm the processing order.
+        """
+        from ezdxf.math import Vec2
+        import math
+
+        print("\n--- 🎨 Drawing BOH Segment Order for Validation (Bottom-Right, CCW) ---")
+
+        # 1. Get the correctly ordered perimeter path using the helper function
+        perimeter_path = self._get_boh_perimeter_path_from_bottom_right_ccw()
+        if not perimeter_path:
+            print("  -> SKIPPED: No BOH perimeter path found to draw.")
+            return
+        
+        # 2. Define a new, highly visible layer for the debug drawings
+        layer_name = "DEBUG_BOH_SEGMENT_ORDER_BR_CCW"
+        if layer_name not in self.doc.layers:
+            self.doc.layers.add(name=layer_name, color=1) # ACI color 1 is Red
+
+        # 3. Loop through the segments and draw a label on each one
+        for i, (p1, p2) in enumerate(perimeter_path):
+            # Skip very short, insignificant segments
+            if p1.distance(p2) < 450:
+                continue
+
+            # Calculate the midpoint of the segment to place the label
+            mid_point = p1.lerp(p2)
+            
+            # Add a numbered text label
+            self.msp.add_mtext(
+                f"BOH-{i+1}",
+                dxfattribs={
+                    'char_height': 150,  # Adjust text size as needed
+                    'insert': mid_point,
+                    'layer': layer_name
+                }
+            )
+            
+        print(f"  -> ✅ Drew {len(perimeter_path)} numbered labels on layer '{layer_name}'. Check the DXF file.")
+
+    def get_boh_fixture_dimensions(self) -> dict:
+        """
+        Calculates and returns the width and height for all BOH (Back-of-House) fixtures.
+
+        This function iterates through the main fixture dictionary, filters for fixtures
+        of type 'boh', loads each one to get its bounding box dimensions, and
+        returns the data in a structured dictionary.
+
+        Returns:
+            A dictionary where keys are the BOH fixture names and values are
+            another dictionary containing 'width' and 'height'.
+            Example:
+            {
+                'storage_rack': {'width': 1200.0, 'height': 450.0},
+                'ups_rack': {'width': 600.0, 'height': 600.0}
+            }
+        """
+        # import Fixture # Ensure the Fixture class is available
+        print("\n--- 📏 Calculating Dimensions for BOH Fixtures ---")
+        
+        boh_dimensions = {}
+
+        # Iterate through the master dictionary of all available fixtures
+        for fixture_name, fixture_data in self.fixture_dict.items():
+            # Check if the fixture is categorized as 'boh'
+            if fixture_data.get("type") == "boh":
+                try:
+                    # Load the fixture object to access its geometric properties
+                    fxtr = Fixture.Fixture(fixture_name, fixture_data["path"])
+                    
+                    # Store the width and height in the results dictionary
+                    boh_dimensions[fixture_name] = {
+                        'width': fxtr.width,
+                        'height': fxtr.height
+                    }
+                except Exception as e:
+                    print(f"  -> ⚠️ WARNING: Could not load fixture '{fixture_name}' to get dimensions. Error: {e}")
+        
+        print(f"  -> ✅ Found dimensions for {len(boh_dimensions)} BOH fixtures.")
+        return boh_dimensions
+
+    # DXF_Controller.py, Add this helper function
+
+    def _find_internal_corners_from_raw_data(self, unadjusted_segment_data: dict) -> list:
+        """
+        [NEW HELPER] Analyzes the raw segment data (no length adjustment) to find 
+        internal (concave) corners. This breaks the recursion loop.
+        """
+        segments = sorted(unadjusted_segment_data.items())
+
+        if len(segments) < 2:
+            return []
+
+        internal_corners = []
+        # The segment data contains the segment key (0, 1, 2, ...) and the segment details dict.
+        for i in range(len(segments) - 1):
+            # Extract the actual segment data dictionary
+            segment_a = segments[i][1]
+            segment_b = segments[i+1][1]
+
+            angle_a = segment_a["angle"]
+            angle_b = segment_b["angle"]
+            
+            # The corner point is the end point of segment A
+            corner_point = segment_a["end_point"]
+
+            # Calculate the angular change, normalized to [-180, 180]
+            angle_difference = (angle_b - angle_a + 180) % 360 - 180
+            
+            # CRITERION: A right turn on a CCW path is an internal corner (negative angle).
+            # The original logic for CCW path (line 4945) had an error checking for positive angles.
+            # Correcting to check for a right turn (negative angle change).
+            if 0 < angle_difference < 360: # Tolerance for a right turn on CCW path
+                corner_details = {
+                    "point": corner_point,
+                    "angle_in": angle_a,
+                    "angle_out": angle_b,
+                    "angle_change": angle_difference
+                }
+                internal_corners.append(corner_details)
+
+        return internal_corners
+
+    # DXF_Controller.py, Line 4913 approx.
+
+    def find_internal_corners_boh_zone(self) -> list:
+        """
+        [CORRECTED WRAPPER] Retrieves the raw segment data and finds the internal corners.
+        This function no longer calls get_boh_zone_wall_segment() recursively.
+        """
+        print("\n--- 🔍 Finding Internal Corners of the BOH Zone (Wrapper) ---")
+
+        # 1. Get the ordered perimeter path (raw, unadjusted coordinates)
+        perimeter_path = self._get_boh_perimeter_path_from_bottom_right_ccw()
+        if not perimeter_path:
+            return []
+            
+        # 2. GENERATE UNADJUSTED SEGMENT DATA
+        unadjusted_segments = {}
+        for i, (p1, p2) in enumerate(perimeter_path):
+            if p1.distance(p2) > 50:
+                unadjusted_segments[i] = {
+                    'start_point': (p1.x, p1.y), 
+                    'end_point': (p2.x, p2.y), 
+                    'length': p1.distance(p2), 
+                    'angle': math.degrees((p2 - p1).angle),
+                    'vector': (p2 - p1)
+                }
+
+        # 3. Call the internal helper with the raw data
+        internal_corners = self._find_internal_corners_from_raw_data(unadjusted_segments)
+        
+        print(f"--- ✅ BOH Corner Finding Complete. Found {len(internal_corners)} internal corners. ---")
+        return internal_corners
+    
+
+    def classify_boh_zone_shape(self, tolerance_mm: float = 1000.0) -> Tuple[str, Optional[float], Optional[float]]:
+        """
+        Calculates the bounding box dimensions of the actual BOH zone (inner wall) 
+        and classifies it as 'Rectangular' ONLY if the dimension difference EXCEEDS the tolerance.
+        
+        Args:
+            tolerance_mm (float): The threshold in mm.
+
+        Returns:
+            Tuple[str, Optional[float], Optional[float]]: (classification, width_mm, height_mm)
+        """
+        print("\n--- 📐 Classifying BOH Zone Shape (Reversed Logic) ---")
+        
+        # 1. Find the BOH zone polygon (Robustly selecting the INNER perimeter)
+        boh_outlines = list(self.msp.query('LWPOLYLINE[layer=="BOH_WALL_VALID_OUTLINE"]'))
+        if not boh_outlines:
+            boh_outlines = list(self.msp.query('LWPOLYLINE[layer=="BOH_PARTITION_OUTLINE"]'))
+
+        if not boh_outlines:
+            print("  -> ERROR: BOH zone outline not found.")
+            return ("Unknown", None, None)
+            
+        polygons = [Polygon(list(p.get_points('xy'))) for p in boh_outlines]
+        if not polygons:
+            return ("Unknown", None, None)
+            
+        # CRITICAL FIX: The inner perimeter is the one with the smallest area
+        boh_placement_zone = min(polygons, key=lambda p: p.area)
+        
+        # 2. Get BOH zone bounding box dimensions from the selected INNER polygon
+        min_x, min_y, max_x, max_y = boh_placement_zone.bounds
+            
+        width = max_x - min_x
+        height = max_y - min_y
+        
+        # 3. Calculate the difference between the two dimensions
+        dimension_difference = abs(width - height)
+        
+        # 4. Classify the shape using the REVERSED logic
+        if dimension_difference > tolerance_mm:
+            classification = "Rectangular"
+            print(f"  -> Classification: {classification}")
+            print(f"  -> Difference ({dimension_difference:.0f}mm) EXCEEDS the {tolerance_mm:.0f}mm tolerance.")
+        else:
+            classification = "Irregular Polygon"
+            print(f"  -> Classification: {classification}")
+            print(f"  -> Difference ({dimension_difference:.0f}mm) is WITHIN the {tolerance_mm:.0f}mm tolerance.")
+
+        print(f"  -> BOH Zone Bounding Box: {width:.0f}mm (Width) x {height:.0f}mm (Height)")
+        return (classification, width, height)
+    
+
+    def plan_boh_fixture_placement(self) -> list:
+        """
+        [MODIFIED] Plans the placement of BOH fixtures by packing them along the BOH walls with no gaps.
+        - Applies a 200mm inset to subsequent segments to avoid corner overlaps.
+        - If a back-left room is detected, it SKIPS segment 0 and starts placement from segment 1.
+        """
+        # import Fixture
+        from ezdxf.math import Vec2
+        from shapely.geometry import Point
+        import math
+
+        print("\n--- 📝 Planning BOH Fixture Placement (Greedy Packing with Corner Insets) ---")
+
+        # --- 1. GATHER ALL NECESSARY DATA ---
+        boh_counts = self.fixtures.get("boh_fixtures", {})
+        boh_dimensions = self.get_boh_fixture_dimensions()
+        wall_segments = self.get_boh_zone_wall_segment() 
+
+        if not boh_counts or not boh_dimensions or not wall_segments:
+            print("  -> ⚠️ FAILED: Missing counts, dimensions, or wall segments. Cannot create a plan.")
+            return []
+
+        # --- 2. CREATE A PRIORITIZED "TO-DO" LIST OF FIXTURES ---
+        fixtures_to_plan = []
+        for name, count in boh_counts.items():
+            if count > 0 and name in boh_dimensions:
+                for _ in range(count):
+                    fixtures_to_plan.append({
+                        "name": name,
+                        "width": boh_dimensions[name]['width'],
+                        "height": boh_dimensions[name]['height']
+                    })
+        
+        fixtures_to_plan.sort(key=lambda f: f['width'], reverse=True)
+        print(f"  -> Prioritized {len(fixtures_to_plan)} BOH fixtures to plan, starting with the widest.")
+
+        # --- 3. EXECUTE THE PACKING ALGORITHM ---
+        placement_plan = []
+        margin_from_wall = 10.0 
+        boh_zone_poly = self._get_boh_zone_polygon()
+
+        # --- MODIFICATION START: Conditionally skip the first segment ---
+        segment_ids = sorted(wall_segments.keys())
+        segment_ids_to_process = segment_ids
+
+        # Check the stored back room location
+        if self.back_room_location == 'left' and len(segment_ids) > 1:
+            print("  -> Back-left room detected. SKIPPING segment 0 to start BOH placement from segment 1.")
+            # Create a new list of segments to process, starting from the second one
+            segment_ids_to_process = segment_ids[1:]
+        # --- MODIFICATION END ---
+        
+        # --- The loop now uses the potentially modified list ---
+        for seg_id in segment_ids_to_process:
+            segment = wall_segments[seg_id]
+            p1 = Vec2(segment['start_point'])
+            p2 = Vec2(segment['end_point'])
+            seg_len = segment['length']
+            seg_angle = segment['angle']
+            
+            wall_vector = (p2 - p1).normalize()
+            inward_normal = wall_vector.orthogonal()
+            if not boh_zone_poly.contains(Point(p1.lerp(p2) + inward_normal * 10)):
+                inward_normal = -inward_normal
+
+            # Inset logic now checks if it's the *first segment being processed*
+            inset_for_corners = 100.0
+            if seg_id == segment_ids_to_process[0]: # Check if this is the first item in our processing list
+                cursor = 0.0 
+                print(f"\n  -> Planning Segment {seg_id} (Length: {seg_len:.0f}mm) - Starting at edge.")
+            elif seg_id == segment_ids_to_process[3]: # Check if this is the first item in our processing list
+                cursor = 500.0 
+                print(f"\n  -> Planning Segment {seg_id} (Length: {seg_len:.0f}mm) - Starting at edge.")
+            else:
+                cursor = inset_for_corners
+                print(f"\n  -> Planning Segment {seg_id} (Length: {seg_len:.0f}mm) - Starting with {inset_for_corners}mm inset.")
+            
+            while True:
+                found_a_fixture_to_place = False
+                for i, fixture_data in enumerate(fixtures_to_plan):
+                    fixture_width = fixture_data['width']
+                    fixture_height = fixture_data['height']
+                    
+                    if fixture_width <= (seg_len - cursor):
+                        center_on_wall = p1 + wall_vector * (cursor + fixture_width / 2)
+                        target_center = center_on_wall + inward_normal * (margin_from_wall + fixture_height / 2)
+                        local_center_offset = Vec2(fixture_width / 2, fixture_height / 2)
+                        rotated_offset = local_center_offset.rotate(math.radians(seg_angle))
+                        final_insert_point = target_center - rotated_offset
+
+                        placement_plan.append({
+                            'fixture_name': fixture_data['name'],
+                            'x': final_insert_point.x,
+                            'y': final_insert_point.y,
+                            'angle': seg_angle,
+                            'segment_vector': [wall_vector.x, wall_vector.y]
+                        })
+                        
+                        cursor += fixture_width
+                        fixtures_to_plan.pop(i)
+                        found_a_fixture_to_place = True
+                        break 
+                
+                if not found_a_fixture_to_place:
+                    break 
+
+        # --- 4. FINALIZE AND RETURN THE PLAN ---
+        if fixtures_to_plan:
+            print(f"  -> ⚠️ WARNING: Could not plan for {len(fixtures_to_plan)} fixtures. Not enough wall space.")
+            for f in fixtures_to_plan:
+                print(f"      - Unplaced: {f['name']}")
+
+        print(f"\n--- ✅ BOH Placement Plan Complete. Generated {len(placement_plan)} placements. ---")
+        return placement_plan
+
+
+
+    def plan_boh_fixture_placement_rect(self) -> list:
+        """
+        Plans BOH fixture placement for a 'Rectangular' zone.
+        - Determines single-sided or double-sided placement based on the smallest dimension.
+        - Prioritizes placing on the largest available wall segments first, 
+          UNLESS height > width, in which case it prioritizes the right-most segment.
+        - Uses a NO-GAP packing strategy.
+        """
+        import math
+        from ezdxf.math import Vec2
+        from shapely.geometry import Point
+
+        print("\n--- 📝 Planning BOH Fixture Placement for RECTANGLE (Prioritized No-Gap Packing) ---")
+
+        # --- 1. GATHER ALL NECESSARY DATA ---
+        boh_counts = self.fixtures.get("boh_fixtures", {})
+        boh_dimensions = self.get_boh_fixture_dimensions()
+        wall_segments = self.get_boh_zone_wall_segment_og()
+        # wall_segments = self.get_boh_zone_wall_segment()
+
+        if not boh_counts or not boh_dimensions or not wall_segments:
+            print("  -> ⚠️ FAILED: Missing counts, dimensions, or wall segments. Cannot create a plan.")
+            return []
+
+        # --- 2. DETERMINE PLACEMENT MODE AND SHAPE ORIENTATION ---
+        _, width, height = self.classify_boh_zone_shape() 
+        
+        if width is None or height is None:
+             print("  -> ⚠️ FAILED: Could not determine BOH dimensions for mode selection.")
+             return []
+        
+        min_dim = min(width, height)
+        DOUBLE_SIDED_THRESHOLD = 1700.0
+        is_double_sided = min_dim > DOUBLE_SIDED_THRESHOLD
+        is_taller = height > width
+        
+        print(f"  -> BOH Shape: {'Taller' if is_taller else 'Wider'} ({height:.0f}H x {width:.0f}W)")
+        print(f"  -> Mode: {'DOUBLE-SIDED' if is_double_sided else 'SINGLE-SIDED'}")
+
+        # --- 3. CREATE A PRIORITIZED "TO-DO" LIST OF FIXTURES ---
+        fixtures_to_plan = []
+        for name, count in boh_counts.items():
+            if count > 0 and name in boh_dimensions:
+                for _ in range(count):
+                    fixtures_to_plan.append({
+                        "name": name,
+                        "width": boh_dimensions[name]['width'],
+                        "height": boh_dimensions[name]['height']
+                    })
+        
+        fixtures_to_plan.sort(key=lambda f: f['width'], reverse=True)
+        
+        # --- 4. DETERMINE SEGMENT PROCESSING ORDER (CUSTOMIZED) ---
+        segment_list = [(k, v) for k, v in wall_segments.items()]
+        
+        # Determine the initial segment (The "most prioritized" segment)
+        initial_segment_data = None
+        initial_segment_id = -1
+
+        if is_taller:
+            # New Rule: Start with the right-most vertical segment
+            print("  -> Prioritization: Starting with the RIGHT-MOST segment (Tall/Narrow BOH).")
+            
+            # Find the segment closest to the max_x value (right wall)
+            # Boh zone coordinates: (min_x, min_y, max_x, max_y)
+            boh_zone = self._get_boh_zone_polygon()
+            right_wall_x = boh_zone.bounds[2]
+
+            def is_vertical(segment_data):
+                p1 = Vec2(segment_data['start_point'])
+                p2 = Vec2(segment_data['end_point'])
+                return abs(p1.y - p2.y) > abs(p1.x - p2.x)
+
+            right_segments = [
+                (k, v) for k, v in wall_segments.items() 
+                if is_vertical(v) and abs((Vec2(v['start_point']).x + Vec2(v['end_point']).x)/2 - right_wall_x) < 500 
+            ]
+
+            if right_segments:
+                 # Find the segment closest to the top of the BOH wall (max_y) to ensure we start in a good location
+                 initial_segment_id, initial_segment_data = max(right_segments, key=lambda item: max(item[1]['start_point'][1], item[1]['end_point'][1]))
+            
+        
+        if initial_segment_id == -1 or not is_taller:
+            # Default or Fallback: Start with the largest segment
+            print("  -> Prioritization: Starting with the LARGEST segment (Wider BOH or Fallback).")
+            initial_segment_id, initial_segment_data = max(segment_list, key=lambda item: item[1]['length'])
+        
+        # Build the final processing order list
+        processing_order = []
+        if initial_segment_id != -1:
+            processing_order.append((initial_segment_id, initial_segment_data))
+            segment_list.remove((initial_segment_id, initial_segment_data))
+        
+        # Add the rest of the segments, sorted by length (largest remaining first)
+        segment_list.sort(key=lambda item: item[1]['length'], reverse=True)
+        processing_order.extend(segment_list)
+        
+        # In double-sided mode, restrict to the longest (max 2) walls
+        if is_double_sided and len(processing_order) > 2:
+            processing_order = processing_order[:2]
+            print("  -> Double-Sided mode active: Restricting to the top 2 longest walls.")
+
+        # --- 5. EXECUTE THE NO-GAP PACKING ALGORITHM ---
+        placement_plan = []
+        margin_from_wall = 0.0 
+        boh_zone_poly = self._get_boh_zone_polygon()
+        
+        # Temporary logic to place the pickup table on the shortest wall first (Unchanged from last step)
+        pickup_table_name = 'pickup_table'
+        if any(f['name'] == pickup_table_name for f in fixtures_to_plan):
+            # Check for the shortest segment among the *original* set
+            shortest_segment_id = min(wall_segments.keys(), key=lambda k: wall_segments[k]['length'])
+            shortest_segment = wall_segments[shortest_segment_id]
+            
+            p_table_data = next(f for f in fixtures_to_plan if f['name'] == pickup_table_name)
+            fixtures_to_plan.remove(p_table_data)
+            
+            p1 = Vec2(shortest_segment['start_point'])
+            p2 = Vec2(shortest_segment['end_point'])
+            seg_len = shortest_segment['length']
+            seg_angle = shortest_segment['angle']
+            
+            p_table_width = p_table_data['width']
+            p_table_height = p_table_data['height']
+            
+            if p_table_width <= seg_len:
+                wall_vector = (p2 - p1).normalize()
+                inward_normal = wall_vector.orthogonal()
+                if not boh_zone_poly.contains(Point(p1.lerp(p2) + inward_normal * 10)):
+                    inward_normal = -inward_normal
+                
+                cursor = (seg_len - p_table_width) / 2
+                center_on_wall = p1 + wall_vector * (cursor + p_table_width / 2)
+                target_center = center_on_wall + inward_normal * (margin_from_wall + p_table_height / 2)
+                local_center_offset = Vec2(p_table_width / 2, p_table_height / 2)
+                rotated_offset = local_center_offset.rotate(math.radians(seg_angle))
+                final_insert_point = target_center - rotated_offset
+
+                placement_plan.append({
+                    'fixture_name': p_table_data['name'],
+                    'x': final_insert_point.x,
+                    'y': final_insert_point.y,
+                    'angle': seg_angle,
+                    'segment_vector': [wall_vector.x, wall_vector.y]
+                })
+                print(f"  -> Placed '{p_table_data['name']}' centered on the shortest wall.")
+                
+            # Remove the shortest wall from the processing list to reserve it
+            # NOTE: This part needs to filter based on segment ID, not the tuple, due to reordering.
+            processing_order = [item for item in processing_order if item[0] != shortest_segment_id]
+
+        for seg_id, segment in processing_order:
+            if not fixtures_to_plan:
+                break
+                
+            p1 = Vec2(segment['start_point'])
+            p2 = Vec2(segment['end_point'])
+            seg_len = segment['length']
+            seg_angle = segment['angle']
+            
+            wall_vector = (p2 - p1).normalize()
+            inward_normal = wall_vector.orthogonal()
+            if not boh_zone_poly.contains(Point(p1.lerp(p2) + inward_normal * 10)):
+                inward_normal = -inward_normal
+
+            cursor = 0.0
+            print(f"\n  -> Planning Segment {seg_id} (Length: {seg_len:.0f}mm) - Starting at edge (No Gap).")
+
+            inset_for_corners = 500.0
+            # Determine inset based on segment properties
+            segment_index = next((i for i, (sid, _) in enumerate(processing_order) if sid == seg_id), -1)
+            if segment_index == 0:
+                cursor = inset_for_corners  # First segment: no inset
+                print(f"\n  -> Planning Segment {seg_id} (Length: {seg_len:.0f}mm) - Starting at edge.")
+            elif seg_len < 2000:  # Small segments get smaller inset
+                cursor = 0.0
+                print(f"\n  -> Planning Segment {seg_id} (Length: {seg_len:.0f}mm) - Starting with 50mm inset (small segment).")
+            else:
+                cursor = 0.0  # Standard inset for normal segments
+                print(f"\n  -> Planning Segment {seg_id} (Length: {seg_len:.0f}mm) - Starting with 100mm inset.")
+
+
+            while True:
+                found_a_fixture_to_place = False
+                # Iterate over a copy of the list to safely remove items
+                for i, fixture_data in enumerate(fixtures_to_plan): 
+                    fixture_width = fixture_data['width']
+                    fixture_height = fixture_data['height']
+                    
+                    if fixture_width <= (seg_len - cursor):
+                        center_on_wall = p1 + wall_vector * (cursor + fixture_width / 2)
+                        target_center = center_on_wall + inward_normal * (margin_from_wall + fixture_height / 2)
+                        local_center_offset = Vec2(fixture_width / 2, fixture_height / 2)
+                        rotated_offset = local_center_offset.rotate(math.radians(seg_angle))
+                        final_insert_point = target_center - rotated_offset
+
+                        placement_plan.append({
+                            'fixture_name': fixture_data['name'],
+                            'x': final_insert_point.x,
+                            'y': final_insert_point.y,
+                            'angle': seg_angle,
+                            'segment_vector': [wall_vector.x, wall_vector.y]
+                        })
+                        
+                        cursor += fixture_width 
+                        fixtures_to_plan.pop(i) # Remove the placed fixture
+                        found_a_fixture_to_place = True
+                        break 
+                
+                if not found_a_fixture_to_place:
+                    break 
+
+        # --- 6. FINALIZE AND RETURN THE PLAN ---
+        if fixtures_to_plan:
+            print(f"  -> ⚠️ WARNING: Could not plan for {len(fixtures_to_plan)} fixtures. Not enough wall space.")
+
+        print(f"\n--- ✅ BOH Placement Plan Complete. Generated {len(placement_plan)} placements. ---")
+        return placement_plan
+    
+    def execute_boh_placement_plan(self, placement_plan: list, placed_bboxes: list):
+        """
+        Executes a pre-computed BOH placement plan, drawing each fixture in the DXF.
+
+        This function iterates through the plan generated by 'plan_boh_fixture_placement'.
+        For each item in the plan, it:
+        1. Loads the specified fixture object.
+        2. Places it at the calculated (x, y) coordinates with the correct angle.
+        3. Calculates the bounding box of the newly placed fixture.
+        4. Adds this bounding box to the master 'placed_bboxes' list to prevent future overlaps.
+        """
+        from ezdxf.bbox import extents
+        # import Fixture
+
+        print("\n--- 🚀 Executing BOH Placement Plan ---")
+
+        if not placement_plan:
+            print("  -> No placement plan provided. Nothing to execute.")
+            return
+
+        placed_count = 0
+        for placement in placement_plan:
+            fixture_name = placement['fixture_name']
+            x = placement['x']
+            y = placement['y']
+            angle = placement['angle']
+
+            try:
+                # Load the fixture object
+                fxtr = Fixture.Fixture(fixture_name, self.fixture_dict[fixture_name]["path"])
+
+                # Place the fixture using the details from the plan
+                # We use rotated=True as these are wall-aligned fixtures
+                block_ref = self.place_fixture(fxtr, (x, y, 0), angle, rotated=True)
+
+                # After placing, calculate its bounding box and register it as an obstacle
+                if block_ref:
+                    try:
+                        bbox = extents([block_ref])
+                        placed_bboxes.append((bbox.extmin.x, bbox.extmin.y, bbox.extmax.x, bbox.extmax.y))
+                        placed_count += 1
+                    except (RuntimeError, TypeError):
+                        print(f"  -> ⚠️ WARNING: Could not calculate bounding box for placed fixture '{fixture_name}'.")
+
+            except Exception as e:
+                print(f"  -> ⚠️ WARNING: Could not place fixture '{fixture_name}'. Skipping. Error: {e}")
+                continue
+        
+        print(f"\n--- ✅ BOH Placement Execution Complete. Placed {placed_count} fixtures. ---")
+
+
+    def place_boh_fixtures(self, all_placed_bboxes: list):
+        """
+        Orchestrates the BOH fixture placement by classifying the zone shape
+        and calling the appropriate planning and execution functions.
+        """
+        BOH_WALL_SEGMENTS = self.get_boh_zone_wall_segment()
+        print(json.dumps(BOH_WALL_SEGMENTS, indent=4))
+        # self.draw_boh_segment_order_for_validation_br_ccw()
+        classification, width, height = self.classify_boh_zone_shape(tolerance_mm=1000.0)
+        print(f"\n[BOH SHAPE RESULT] The BOH zone is classified as: {classification}")
+        print(f"BOH Dimensions: {width:.0f}mm Width, {height:.0f}mm Height")
+        if classification == "Rectangular":
+            boh_placement_plan = self.plan_boh_fixture_placement_rect()
+        else:
+            # Use the original logic for irregular polygons
+            boh_placement_plan = self.plan_boh_fixture_placement()    
+
+        
+        # Step 2: Execute the plan to place the fixtures
+        self.execute_boh_placement_plan(boh_placement_plan, all_placed_bboxes)
+
+
+    
+
+    
+#---------------------------------NEW-WALK-BY-SEGMENT-PLACING-FOR-BOH-FIXTURES------------------------------
+#---------------------------------NEW-WALK-BY-SEGMENT-PLACING-FOR-BOH-FIXTURES------------------------------
+
 
     def place_boh_after_toilet(self, placed_bboxes):
         """
@@ -4124,7 +6050,7 @@ class DXF_Controller:
         2. Within each row, fixtures are sorted from widest to narrowest for efficient packing.
         3. Placement occurs within a "Smart BOH Zone" matching the floorplan's true shape.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import Point, box
         try:
             print("\n--- Attempting to place Back-of-House (BOH) Fixtures (Final Strategy) ---")
@@ -4148,7 +6074,7 @@ class DXF_Controller:
             def add_to_row(row, name, label):
                 if counts.get(name, 0) > 0:
                     try:
-                        fxtr = Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
+                        fxtr = Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
                         row.append((fxtr, counts[name], label))
                     except (KeyError, ValueError) as e:
                         print(f"WARNING: Could not load BOH fixture '{name}': {e}")
@@ -4253,7 +6179,7 @@ class DXF_Controller:
         - V14 (FINAL): The partition wall shape is now adjusted to "carve out"
           any existing fixtures (like clinics) to prevent overlaps.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import box, MultiPolygon, LineString, Point, Polygon
         from shapely.ops import unary_union
         import collections
@@ -4275,7 +6201,7 @@ class DXF_Controller:
         for name, count in boh_config.items():
             if count > 0:
                 try:
-                    fxtr = Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
+                    fxtr = Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
                     if name in storage_types:
                         fixtures_by_cat["storage"].extend([fxtr] * count)
                     elif name in workstation_types:
@@ -4406,7 +6332,7 @@ class DXF_Controller:
         from ezdxf.math import Matrix44, Vec2, BoundingBox2d
         import math
         import collections
-        from Fixture import Fixture
+        # from Fixture import Fixture
 
         print("\n--- 🏛️ Placing BOH with 'Top Corner Only' and Horizontal Flip ---")
 
@@ -4422,7 +6348,7 @@ class DXF_Controller:
         for name, count in boh_config.items():
             if count > 0:
                 try:
-                    fxtr = Fixture(name, self.fixture_dict[name]["path"])
+                    fxtr = Fixture.Fixture(name, self.fixture_dict[name]["path"])
                     cat = "other"
                     if name in storage_types: cat = "storage"
                     elif name in workstation_types: cat = "workstation"
@@ -4547,7 +6473,7 @@ class DXF_Controller:
         Primary strategy for placing clinics. Places them in an organized
         row or double row along the top wall of the floorplan.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         import collections
 
         print("\n--- 🏥 Placing Clinics at Top Wall ---")
@@ -4559,7 +6485,7 @@ class DXF_Controller:
         clinics_to_place = []
         for clinic_type, count in clinic_config.items():
             if count > 0:
-                fxtr = Fixture(self.fixture_dict[clinic_type]["name"], self.fixture_dict[clinic_type]["path"])
+                fxtr = Fixture.Fixture(self.fixture_dict[clinic_type]["name"], self.fixture_dict[clinic_type]["path"])
                 clinics_to_place.extend([fxtr] * count)
 
         remaining_clinics = self.place_clinics_along_top_wall(clinics_to_place, placed_bboxes)
@@ -4598,7 +6524,7 @@ class DXF_Controller:
         Finds the absolute best BOH preset and its placement using a dynamic
         "Top 40% Perimeter Walk" strategy, mirroring the logic of place_clinic.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import box, Point
         from ezdxf.math import Vec2
         import math
@@ -4642,7 +6568,7 @@ class DXF_Controller:
         for preset_name in available_presets:
             print(f"\n  -> Analyzing options for preset: '{preset_name}'...")
             try:
-                preset_fxtr = Fixture(preset_name, self.fixture_dict[preset_name]["path"])
+                preset_fxtr = Fixture.Fixture(preset_name, self.fixture_dict[preset_name]["path"])
             except Exception as e:
                 print(f"    -> 🔥 Could not load fixture file. Skipping. Error: {e}")
                 continue
@@ -4722,16 +6648,203 @@ class DXF_Controller:
 #----NEW-BOH-PLACEMENT-STRATEGY-BOH-AREA----
 #----NEW-BOH-PLACEMENT-STRATEGY-BOH-AREA----
 
-
-
-
     def place_boh_fixtures_in_room(self, placed_bboxes: List[tuple]):
+        """
+        [PERFECTED V11 - INNER WALL] Places fixtures against the BOH room's INNER wall.
+        - Uses vertical mirroring for placement calculations and double mirror for drawing.
+        - Includes a 10mm gap from the wall.
+        """
+        from shapely.geometry import Polygon, Point, LineString
+        from ezdxf.math import Vec2, BoundingBox2d, Matrix44
+        import collections
+        import math
+
+        print("\n--- 🛋️  Placing BOH Fixtures (Inner Wall Logic + Hybrid Mirror) ---")
+
+        # 1. FIND THE BOH PLACEMENT ZONE
+        boh_outlines = list(self.msp.query('LWPOLYLINE[layer=="BOH_WALL_VALID_OUTLINE"]'))
+        if not boh_outlines:
+            boh_outlines = list(self.msp.query('LWPOLYLINE[layer=="BOH_PARTITION_OUTLINE"]'))
+            if not boh_outlines:
+                print("  -> SKIPPED: No valid BOH room outline was found to place fixtures in.")
+                return
+
+        polygons = [Polygon(list(p.get_points('xy'))) for p in boh_outlines]
+        if not polygons: return
+        
+        # ***** CHANGE IS HERE: Use min() to select the inner boundary *****
+        if len(polygons) > 1:
+            boh_placement_zone = min(polygons, key=lambda p: p.area)
+            print("  -> Found multiple BOH boundaries. Selecting INNER wall for placement.")
+        else:
+            boh_placement_zone = polygons[0]
+        # ***************************************************************
+        
+        # 2. LOAD BOH FIXTURES (Unchanged)
+        boh_config = self.fixtures.get("boh_fixtures", {})
+        fixtures_to_place = []
+        for name, count in boh_config.items():
+            if count > 0:
+                try:
+                    fxtr = Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
+                    fixtures_to_place.extend([fxtr] * count)
+                except (KeyError, ValueError): continue
+        
+        if not fixtures_to_place:
+            print("  -> SKIPPED: No BOH fixtures specified in config.")
+            return
+                
+        fixture_queue = collections.deque(fixtures_to_place)
+        internal_boh_bboxes = []
+
+        # 3. --- PHASE 1: "WALL-HUGGING" PLACEMENT ---
+        print("  -> Phase 1: Placing fixtures with 10mm gap from perimeter walls...")
+        placement_cursors = {}
+        perimeter_path = []
+        perimeter_coords = list(boh_placement_zone.exterior.coords)
+        for i in range(len(perimeter_coords) - 1):
+            p1, p2 = Vec2(perimeter_coords[i]), Vec2(perimeter_coords[i+1])
+            if p1.distance(p2) > 100:
+                perimeter_path.append((p1, p2))
+                placement_cursors[i] = 50.0
+        
+        unplaced_after_walk = collections.deque()
+        while fixture_queue:
+            fixture_to_try = fixture_queue.popleft()
+            placed_this_fixture = False
+
+            for i, (segment_start, segment_end) in enumerate(perimeter_path):
+                segment_vector = (segment_end - segment_start).normalize()
+                segment_length = segment_start.distance(segment_end)
+                wall_angle_deg = math.degrees(segment_vector.angle)
+                
+                inward_normal = segment_vector.orthogonal(ccw=False)
+                test_point = segment_start + (segment_vector * 10) + inward_normal
+                if not boh_placement_zone.contains(Point(test_point.x, test_point.y)):
+                    inward_normal = segment_vector.orthogonal(ccw=True)
+
+                cursor = placement_cursors.get(i, 50.0)
+                
+                if cursor + fixture_to_try.width <= segment_length - 50.0:
+                    center_on_wall = segment_start + segment_vector * (cursor + fixture_to_try.width / 2)
+                    target_center = center_on_wall + inward_normal * (10.0 + fixture_to_try.height / 2)
+                    
+                    validation_transform = Matrix44.chain(
+                        Matrix44.translate(-fixture_to_try.bounding_box.center.x, -fixture_to_try.bounding_box.center.y, 0),
+                        Matrix44.scale(1.0, -1.0, 1.0),
+                        Matrix44.z_rotate(math.radians(wall_angle_deg)),
+                        Matrix44.translate(target_center.x, target_center.y, 0)
+                    )
+                    
+                    world_corners = list(validation_transform.transform_vertices(fixture_to_try.bounding_box.rect_vertices()))
+                    fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+                    aabb = BoundingBox2d(world_corners)
+
+                    is_inside = boh_placement_zone.contains(fixture_polygon.buffer(-1.0))
+                    is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+
+                    if is_inside and not is_overlapping:
+                        local_center_scaled = Vec2(fixture_to_try.bounding_box.center.x * -1.0, fixture_to_try.bounding_box.center.y * -1.0)
+                        rotated_offset = local_center_scaled.rotate(math.radians(wall_angle_deg))
+                        final_insert_point = target_center - rotated_offset
+                        self.place_fixture(fixture_to_try, (final_insert_point.x, final_insert_point.y, 0), wall_angle_deg, True, xscale=-1.0, yscale=-1.0)
+                        
+                        bbox_tuple = (aabb.extmin.x, aabb.extmin.y, aabb.extmax.x, aabb.extmax.y)
+                        placed_bboxes.append(bbox_tuple)
+                        internal_boh_bboxes.append(bbox_tuple)
+                        
+                        placement_cursors[i] = cursor + fixture_to_try.width
+
+                        placed_this_fixture = True
+                        print(f"    -> Placed '{fixture_to_try.name}' on wall.")
+                        break
+            
+            if not placed_this_fixture:
+                unplaced_after_walk.append(fixture_to_try)
+
+        # 4. --- PHASE 2: INTELLIGENT GRID SEARCH FALLBACK (Unchanged) ---
+        if unplaced_after_walk:
+            print(f"\n  -> Phase 2: Starting Intelligent Grid Search for {len(unplaced_after_walk)} items...")
+
+            fallback_queue = collections.deque(sorted(unplaced_after_walk, key=lambda f: f.width * f.height, reverse=True))
+            zone_bounds = boh_placement_zone.bounds
+            min_x, min_y, max_x, max_y = zone_bounds
+            step = 100.0
+
+            boh_segments = []
+            for p1_vec, p2_vec in perimeter_path:
+                boh_segments.append((LineString([(p1_vec.x, p1_vec.y), (p2_vec.x, p2_vec.y)]), p1_vec, p2_vec))
+
+            still_unplaced = collections.deque()
+            while fallback_queue:
+                fixture_to_place = fallback_queue.popleft()
+                placed_in_fallback = False
+
+                for y_try in range(int(max_y - fixture_to_place.height), int(min_y), -int(step)):
+                    for x_try in range(int(min_x), int(max_x - fixture_to_place.width), int(step)):
+                        
+                        target_center = Vec2(x_try + fixture_to_place.width / 2, y_try + fixture_to_place.height / 2)
+                        
+                        rotation_deg = 0.0
+                        if boh_segments:
+                            nearest_seg_data = min(boh_segments, key=lambda s: s[0].distance(Point(target_center.x, target_center.y)))
+                            p1_vec, p2_vec = nearest_seg_data[1], nearest_seg_data[2]
+                            wall_vec = (p2_vec - p1_vec).normalize()
+                            rotation_deg = math.degrees(wall_vec.angle)
+
+                        validation_transform = Matrix44.chain(
+                            Matrix44.translate(-fixture_to_place.bounding_box.center.x, -fixture_to_place.bounding_box.center.y, 0),
+                            Matrix44.scale(1.0, -1.0, 1.0),
+                            Matrix44.z_rotate(math.radians(rotation_deg)),
+                            Matrix44.translate(target_center.x, target_center.y, 0)
+                        )
+                        
+                        world_corners = list(validation_transform.transform_vertices(fixture_to_place.bounding_box.rect_vertices()))
+                        fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+                        aabb = BoundingBox2d(world_corners)
+
+                        is_inside = boh_placement_zone.contains(fixture_polygon.buffer(-1.0))
+                        is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+
+                        if is_inside and not is_overlapping:
+                            local_center_scaled = Vec2(fixture_to_place.bounding_box.center.x * -1.0, fixture_to_place.bounding_box.center.y * -1.0)
+                            rotated_offset = local_center_scaled.rotate(math.radians(rotation_deg))
+                            final_insert_point = target_center - rotated_offset
+                            self.place_fixture(fixture_to_place, (final_insert_point.x, final_insert_point.y, 0), rotation_deg, True, xscale=-1.0, yscale=-1.0)
+                            
+                            bbox_tuple = (aabb.extmin.x, aabb.extmin.y, aabb.extmax.x, aabb.extmax.y)
+                            placed_bboxes.append(bbox_tuple)
+                            internal_boh_bboxes.append(bbox_tuple)
+                            
+                            print(f"    -> Placed '{fixture_to_place.name}' in open space (rotated {rotation_deg:.0f}° to match wall).")
+                            placed_in_fallback = True
+                            break
+                    if placed_in_fallback:
+                        break
+                
+                if not placed_in_fallback:
+                    still_unplaced.append(fixture_to_place)
+
+            # 5. FINAL REPORT
+            if still_unplaced:
+                print(f"\n  -> ⚠️  Finished. Could not place all BOH fixtures. {len(still_unplaced)} items remain.")
+            else:
+                print("\n  -> ✅ Finished. All BOH fixtures were placed successfully.")
+        else:
+             print("\n  -> ✅ Finished. All BOH fixtures were placed successfully during Phase 1.")
+
+    
+    
+
+
+
+    def place_boh_fixtures_in_room_og(self, placed_bboxes: List[tuple]):
         """
         [MODIFIED] Finds the created BOH room and furnishes it using a two-phase strategy.
         - It now correctly checks against ALL previously placed fixtures (including the pickup_table)
           to prevent overlaps.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import Polygon, Point
         from ezdxf.math import Vec2, BoundingBox2d, Matrix44
         import collections
@@ -4755,7 +6868,7 @@ class DXF_Controller:
         for name, count in boh_config.items():
             if count > 0:
                 try:
-                    fxtr = Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
+                    fxtr = Fixture.Fixture(self.fixture_dict[name]["name"], self.fixture_dict[name]["path"])
                     fixtures_to_place.extend([fxtr] * count)
                 except (KeyError, ValueError): continue
         
@@ -4827,27 +6940,57 @@ class DXF_Controller:
         # 4. --- PHASE 2: FALLBACK GRID SEARCH ---
         if unplaced_after_walk:
             print(f"\n  -> Phase 2: Starting Fallback Grid Search for {len(unplaced_after_walk)} items...")
-            
+
             fallback_queue = collections.deque(sorted(unplaced_after_walk, key=lambda f: f.width * f.height, reverse=True))
             zone_bounds = boh_placement_zone.bounds
             min_x, min_y, max_x, max_y = zone_bounds
             step = 100.0
 
             still_unplaced = collections.deque()
+            # PRECOMPUTE BOH EXTERIOR SEGMENTS FOR ALIGNMENT
+            boh_exterior_coords = list(boh_placement_zone.exterior.coords)
+            boh_segments = []
+            for i in range(len(boh_exterior_coords) - 1):
+                p1 = boh_exterior_coords[i]
+                p2 = boh_exterior_coords[i + 1]
+                seg = LineString([p1, p2])
+                boh_segments.append((seg, Vec2(p1), Vec2(p2)))
+
             while fallback_queue:
                 fixture_to_place = fallback_queue.popleft()
                 placed_in_fallback = False
 
+                # iterate top-down so we attempt more valuable (higher) locations first
                 for y_try in range(int(max_y - fixture_to_place.height), int(min_y), -int(step)):
                     for x_try in range(int(min_x), int(max_x - fixture_to_place.width), int(step)):
-                        
+
+                        # compute candidate center
                         target_center = Vec2(x_try + fixture_to_place.width / 2, y_try + fixture_to_place.height / 2)
-                        
+                        # find nearest BOH exterior segment to align with
+                        nearest_seg = None
+                        nearest_dist = float('inf')
+                        nearest_angle_deg = 0.0
+                        for seg, p1_vec, p2_vec in boh_segments:
+                            d = seg.distance(Point(target_center.x, target_center.y))
+                            if d < nearest_dist:
+                                nearest_dist = d
+                                nearest_seg = (p1_vec, p2_vec)
+                        if nearest_seg:
+                            p1_vec, p2_vec = nearest_seg
+                            wall_vec = (p2_vec - p1_vec)
+                            if wall_vec.magnitude == 0:
+                                nearest_angle_deg = 0.0
+                            else:
+                                nearest_angle_deg = math.degrees(wall_vec.normalize().angle)
+                        else:
+                            nearest_angle_deg = 0.0
+
+                        # Build transform: apply same mirroring as previous code but rotate to wall direction
                         local_center = fixture_to_place.bounding_box.center
                         transform = Matrix44.chain(
                             Matrix44.translate(-local_center.x, -local_center.y, 0),
                             Matrix44.scale(-1.0, -1.0, 1.0),
-                            Matrix44.z_rotate(math.radians(0)),
+                            Matrix44.z_rotate(math.radians(nearest_angle_deg)),
                             Matrix44.translate(target_center.x, target_center.y, 0)
                         )
                         world_corners = list(transform.transform_vertices(fixture_to_place.bounding_box.rect_vertices()))
@@ -4855,27 +6998,26 @@ class DXF_Controller:
                         aabb = BoundingBox2d(world_corners)
 
                         is_inside = boh_placement_zone.contains(fixture_polygon.buffer(-1.0))
-
-                        # ******************** MODIFICATION 2 ********************
-                        # This also now checks against the main 'placed_bboxes' list.
                         is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
-                        # ********************************************************
 
                         if is_inside and not is_overlapping:
+                            # calculate final insertion point compatible with place_fixture expectations
                             local_center_scaled = Vec2(local_center.x * -1.0, local_center.y * -1.0)
-                            final_insert_point = target_center - local_center_scaled
-                            self.place_fixture(fixture_to_place, (final_insert_point.x, final_insert_point.y, 0), 0, True, xscale=-1.0, yscale=-1.0)
-                            
+                            rotated_offset = local_center_scaled.rotate(math.radians(nearest_angle_deg))
+                            final_insert_point = target_center - rotated_offset
+
+                            # place with rotation parallel to BOH boundary
+                            self.place_fixture(fixture_to_place, (final_insert_point.x, final_insert_point.y, 0), nearest_angle_deg, True, xscale=-1.0, yscale=-1.0)
+
                             bbox_tuple = (aabb.extmin.x, aabb.extmin.y, aabb.extmax.x, aabb.extmax.y)
-                            placed_bboxes.append(bbox_tuple) # Add to the main list
-                            internal_boh_bboxes.append(bbox_tuple) # Also add to the internal list
-                            
-                            print(f"    -> Placed '{fixture_to_place.name}' in open space (Fallback).")
+                            placed_bboxes.append(bbox_tuple)  # Add to master list
+                            internal_boh_bboxes.append(bbox_tuple)
+                            print(f"    -> Placed '{fixture_to_place.name}' rotated {nearest_angle_deg:.1f}° in fallback at ({x_try:.0f},{y_try:.0f}).")
                             placed_in_fallback = True
                             break
                     if placed_in_fallback:
                         break
-                
+
                 if not placed_in_fallback:
                     still_unplaced.append(fixture_to_place)
 
@@ -4885,7 +7027,73 @@ class DXF_Controller:
             else:
                 print("\n  -> ✅ Finished. All BOH fixtures were placed successfully.")
 
+
+        # # 4. --- PHASE 2: FALLBACK GRID SEARCH ---
+        # if unplaced_after_walk:
+        #     print(f"\n  -> Phase 2: Starting Fallback Grid Search for {len(unplaced_after_walk)} items...")
+            
+        #     fallback_queue = collections.deque(sorted(unplaced_after_walk, key=lambda f: f.width * f.height, reverse=True))
+        #     zone_bounds = boh_placement_zone.bounds
+        #     min_x, min_y, max_x, max_y = zone_bounds
+        #     step = 100.0
+
+        #     still_unplaced = collections.deque()
+        #     while fallback_queue:
+        #         fixture_to_place = fallback_queue.popleft()
+        #         placed_in_fallback = False
+
+        #         for y_try in range(int(max_y - fixture_to_place.height), int(min_y), -int(step)):
+        #             for x_try in range(int(min_x), int(max_x - fixture_to_place.width), int(step)):
+                        
+        #                 target_center = Vec2(x_try + fixture_to_place.width / 2, y_try + fixture_to_place.height / 2)
+                        
+        #                 local_center = fixture_to_place.bounding_box.center
+        #                 transform = Matrix44.chain(
+        #                     Matrix44.translate(-local_center.x, -local_center.y, 0),
+        #                     Matrix44.scale(-1.0, -1.0, 1.0),
+        #                     Matrix44.z_rotate(math.radians(0)),
+        #                     Matrix44.translate(target_center.x, target_center.y, 0)
+        #                 )
+        #                 world_corners = list(transform.transform_vertices(fixture_to_place.bounding_box.rect_vertices()))
+        #                 fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+        #                 aabb = BoundingBox2d(world_corners)
+
+        #                 is_inside = boh_placement_zone.contains(fixture_polygon.buffer(-1.0))
+
+        #                 # ******************** MODIFICATION 2 ********************
+        #                 # This also now checks against the main 'placed_bboxes' list.
+        #                 is_overlapping = any(aabb.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
+        #                 # ********************************************************
+
+        #                 if is_inside and not is_overlapping:
+        #                     local_center_scaled = Vec2(local_center.x * -1.0, local_center.y * -1.0)
+        #                     final_insert_point = target_center - local_center_scaled
+        #                     self.place_fixture(fixture_to_place, (final_insert_point.x, final_insert_point.y, 0), 0, True, xscale=-1.0, yscale=-1.0)
+                            
+        #                     bbox_tuple = (aabb.extmin.x, aabb.extmin.y, aabb.extmax.x, aabb.extmax.y)
+        #                     placed_bboxes.append(bbox_tuple) # Add to the main list
+        #                     internal_boh_bboxes.append(bbox_tuple) # Also add to the internal list
+                            
+        #                     print(f"    -> Placed '{fixture_to_place.name}' in open space (Fallback).")
+        #                     placed_in_fallback = True
+        #                     break
+        #             if placed_in_fallback:
+        #                 break
+                
+        #         if not placed_in_fallback:
+        #             still_unplaced.append(fixture_to_place)
+
+        #     # 5. FINAL REPORT
+        #     if still_unplaced:
+        #         print(f"\n  -> ⚠️  Finished. Could not place all BOH fixtures. {len(still_unplaced)} items remain.")
+        #     else:
+        #         print("\n  -> ✅ Finished. All BOH fixtures were placed successfully.")
+
+
     
+
+    
+
 
 #----NEW-BOH-PLACEMENT-STRATEGY-BOH-AREA----
 #----NEW-BOH-PLACEMENT-STRATEGY-BOH-AREA----
@@ -5207,7 +7415,7 @@ class DXF_Controller:
         # --- 2. Define Dimensions and Constants ---
         separator_line = self.msp.query('LINE[layer=="RETAIL_SEPARATOR"]').first
         GAP_BELOW_LINE = 10.0
-        GAP_FROM_WALL = 100.0
+        GAP_FROM_WALL = 500.0
 
         # ***** KEY CHANGE: Define rotated dimensions *****
         rotated_width = ar_fxtr.height
@@ -5410,1986 +7618,1092 @@ class DXF_Controller:
 #---CATEGORY :- Wall Fixtures/Euro Centers
 #---- CENTRAL FLOOR FIXTURE (EURO_CENTER,LENSBAR) PLACEMENT FUNCTION STARTED ----
 
-    def _calculate_dynamic_vertical_gap_strategy_2(self) -> float:
+#---------------------new--setup-for-findong-area-for-euro-center-placement--
+#---------------------new--setup-for-findong-area-for-euro-center-placement--
+
+
+    from typing import Optional
+    from shapely.geometry import Polygon, box
+    from shapely.ops import unary_union
+    from ezdxf.bbox import extents
+
+    def euro_center_placement_area(self) -> Optional[Polygon]:
         """
-        Calculates a dynamic vertical gap for portrait mode based on the floorplan's
-        total square footage. Smaller stores get tighter spacing, larger stores get more.
-        - MODIFIED: Now calculates the area internally.
+        [MODIFIED V5] Calculates the Euro Center placement zone with differential bottom margins.
+        - Facade Walls: Applies a 1850 mm keep-out zone from the absolute bottom segments.
+        - Normal Bottom Walls: Applies a 1350 mm keep-out zone from other bottom segments.
+        - Side/Top Walls: Uses standard logic (1350mm inset / standing table anchor).
         """
-        # --- NEW: Calculate the area directly inside this function ---
-        if not hasattr(self, 'floorplan_polygon') or self.floorplan_polygon.is_empty:
-            print("    -> WARNING: Floorplan polygon not found. Using default vertical gap.")
-            return 800.0  # Return a safe default if the polygon doesn't exist
-
-        area_sq_mm = self.floorplan_polygon.area
-        SQMM_PER_SQFT = 92903.04 
-        floor_area_sqft = area_sq_mm / SQMM_PER_SQFT
-        # --- End of New Logic ---
-
-        print(f"\n    -> Calculating dynamic VERTICAL ROW GAP based on area: {floor_area_sqft:.2f} sq. ft.")
-
-        if floor_area_sqft <= 500:
-            gap = 8.0
-            print(f"      -> Area is small (<= 500 sq. ft.). Using a tight gap of {gap} mm.")
-        elif floor_area_sqft <= 750:
-            gap = 8.0
-            print(f"      -> Area is medium-small (<= 750 sq. ft.). Using a gap of {gap} mm.")
-        elif floor_area_sqft <= 1000:
-            gap = 8.0
-            print(f"      -> Area is medium (<= 1000 sq. ft.). Using a standard gap of {gap} mm.")
-        elif floor_area_sqft <= 1250:
-            gap = 8.0
-            print(f"      -> Area is medium-large (<= 1250 sq. ft.). Using a wider gap of {gap} mm.")
-        elif floor_area_sqft <= 1500:
-            gap = 8.0
-            print(f"      -> Area is large (<= 1500 sq. ft.). Using a very wide gap of {gap} mm.")
-        else:  # for floorplans larger than 1500 sq. ft.
-            gap = 8.0
-            print(f"      -> Area is very large (> 1500 sq. ft.). Using a maximum gap of {gap} mm.")
-
-        return gap
-
-    def place_central_fixtures_portrait_strategy_2(self, placed_bboxes: List[tuple], bottom_margin_pct: float = 0.20) -> None:
-        """
-        Places central fixtures in a portrait orientation by creating and placing
-        vertical stacks. This function corrects the placement logic for rotated fixtures
-        to ensure proper alignment and avoid validation failures.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
+        from ezdxf.bbox import extents
+        from shapely.geometry import box, LineString, MultiPolygon
+        from shapely.ops import unary_union
         import math
-        import collections
 
-        print("\n--- 🧠 Placing Central Fixtures with Vertical Stacking (Portrait Mode) ---")
+        print("\n--- 📐 Defining Euro Center zone (with Differentiated Bottom Margins) ---")
 
-        # --- 1. SETUP & LOAD FIXTURES ---
-        GAP_EURO_TO_EURO = 2000.0
-        GAP_LENSBAR_TO_LENSBAR = 50.0 
+        # --- 1. Define Top Boundary (Unchanged) ---
+        st_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
+        if not st_entities:
+            print("  -> ⚠️ Could not find Standing Tables. Cannot create zone.")
+            return None
+        st_bbox = extents(st_entities)
+        top_boundary_y = st_bbox.extmin.y - 950.0
+
+         # --- 2. Inset the full floorplan polygon (Unchanged) ---
+        simplification_tolerance = 50.0
+        simplified_floorplan_polygon = self.floorplan_polygon.simplify(simplification_tolerance, preserve_topology=True)
+
+        wall_fixture_depth = 300.0
+        shopping_aisle_gap = 1050.0
+        total_side_gap = wall_fixture_depth + shopping_aisle_gap
         
-        
-        # We will use this to determine the maximum number of fixtures to try in a stack
-        # based on the total number of euros requested.
-        total_euros = self.fixtures.get("floor_fixtures", {}).get("Euro_centre", 0)
+        inset_polygon = simplified_floorplan_polygon.buffer(-total_side_gap, join_style=2)
+        print(f"  -> Inset the full floorplan polygon by {total_side_gap:.0f}mm from all walls.")
 
-        # A single dynamic variable to control all vertical spacing
-        # This keeps things consistent across the entire floorplan
-        vertical_row_spacing = self._calculate_dynamic_vertical_gap_strategy_2() # Add a buffer
+       ### --- START OF MODIFICATION: DYNAMIC BOTTOM BOUNDARY --- ###
 
-        config = self.fixtures.get("floor_fixtures", {})
-        euro_count = config.get("Euro_centre", 0)
-        lensbar_count = config.get("Lensbar", 0)
-        if euro_count + lensbar_count == 0:
-            return
+        # --- 3. Identify all "Bottom" Wall Segments ---
+        # Helper to find segments near the bottom of the floorplan
+        def find_bottom_segments(corners, slope_tol=0.1, y_band_height=500.0):
+            min_y_overall = min(c[1] for c in corners)
+            bottom_segments = []
+            for i in range(len(corners)):
+                p1 = corners[i]
+                p2 = corners[(i + 1) % len(corners)]
+                # Check if the segment is mostly horizontal and within the bottom band
+                is_horizontal = abs(p2[1] - p1[1]) < abs(p2[0] - p1[0]) * slope_tol
+                is_in_bottom_band = (p1[1] < min_y_overall + y_band_height) and \
+                                    (p2[1] < min_y_overall + y_band_height)
+                if is_horizontal and is_in_bottom_band:
+                    bottom_segments.append((p1, p2))
+            return bottom_segments
 
-        fixture_queue = collections.deque()
-        try:
-            euro_fxtr_template = Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"]) if euro_count > 0 else None
-            lensbar_fxtr_template = Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"]) if lensbar_count > 0 else None
-            if lensbar_count > 0:
-                fixture_queue.extend([lensbar_fxtr_template] * lensbar_count)
-            if euro_count > 0:
-                fixture_queue.extend([euro_fxtr_template] * euro_count)
-        except Exception as e:
-            print(f"🔥 FATAL: Could not load a central fixture: {e}")
-            return
+        bottom_segments = find_bottom_segments(self.cvc.corners)
+        if not bottom_segments:
+            print("  -> ⚠️ Could not identify any bottom wall segments.")
+            return None
+            
+        # --- 4. Differentiate Facade vs. Normal and Create Keep-Out Zones ---
+        facade_margin_V1 = self._calculate_dynamic_qms_margin() #1850.0
+        facade_margin = facade_margin_V1 + 510 
+        normal_bottom_margin = 1350.0
+        facade_y_threshold = min(c[1] for c in self.cvc.corners) + 100 # Segments very close to the absolute bottom are facades
 
-        # --- 2. DEFINE PLACEMENT ZONE & PARAMETERS ---
-        room_height = self.cvc.max_y - self.cvc.min_y
-        # This is a fixed margin from the bottom, no longer dynamic
-        aisle_buffer = room_height * bottom_margin_pct
-        
-        cursor_y = self.cvc.min_y + aisle_buffer
-        cursor_y_end = self.cvc.max_y - 5.0
-
-        print("  -> Configuring for PORTRAIT (Vertical Iteration, Horizontal Rows)")
-
-        def _is_rotated_row_valid(start_x, y, fixtures_in_row, gap):
-            current_x_in_row = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                candidate_box = box(current_x_in_row, y, current_x_in_row + rotated_width, y + rotated_height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in placed_bboxes):
-                    return False
-                if i < len(fixtures_in_row) - 1:
-                    current_x_in_row += rotated_width + gap
-            return True
-        
-        def _calculate_dynamic_euro_gap(num_in_stack):
-            """Calculates a dynamic horizontal gap for Euros based on stack size."""
-            if num_in_stack <= 1:
-                return 0.0
-            elif num_in_stack == 2:
-                return 1000.0
-            elif num_in_stack == 3:
-                return 1200.0
+        bottom_keep_out_zones = []
+        for p1, p2 in bottom_segments:
+            segment_line = LineString([p1, p2])
+            avg_y = (p1[1] + p2[1]) / 2
+            
+            # If the segment is a true facade (like your red line)
+            if avg_y < facade_y_threshold:
+                # Create a 1850mm buffer upwards from this line
+                keep_out_poly = segment_line.buffer(facade_margin, single_sided=True)
+                # Ensure the buffer goes "into" the floorplan
+                if not self.floorplan_polygon.contains(keep_out_poly.centroid):
+                    keep_out_poly = segment_line.buffer(-facade_margin, single_sided=True)
+                bottom_keep_out_zones.append(keep_out_poly)
+                print(f"  -> Identified FACADE segment, applying {facade_margin}mm keep-out zone.")
+            # If the segment is a normal bottom wall (like your yellow line)
             else:
-                # A tighter gap for more than 2 fixtures
-                return 1200
-        
-        def _find_best_stack_size(local_width, walking_margin, total_euros_in_queue, fixture_obj):
-            """
-            Finds the largest possible stack that fits within the available space.
-            Returns the stack size and the gap to use.1
-            """
-            max_to_try = 3
-            for n in range(min(max_to_try, total_euros_in_queue), 0, -1):
-                gap = _calculate_dynamic_euro_gap(n)
-                required_width = (fixture_obj.height * n) + (gap * (n - 1)) + walking_margin 
-                if required_width <= local_width:
-                    return n, gap
-            return 0, 0
+                keep_out_poly = segment_line.buffer(normal_bottom_margin, single_sided=True)
+                if not self.floorplan_polygon.contains(keep_out_poly.centroid):
+                    keep_out_poly = segment_line.buffer(-normal_bottom_margin, single_sided=True)
+                bottom_keep_out_zones.append(keep_out_poly)
+                print(f"  -> Identified NORMAL bottom segment, applying {normal_bottom_margin}mm keep-out zone.")
 
-
-        # --- 3. MAIN PLACEMENT LOOP ---
-        while fixture_queue:
-            if cursor_y > cursor_y_end:
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement.")
-                break
-
-            next_fxtr_obj = fixture_queue[0]
-            stack_width = next_fxtr_obj.height # The rotated dimension
-
-            # Get the available horizontal space at this vertical position
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (next_fxtr_obj.width / 2)), (self.cvc.max_x + 100, cursor_y + (next_fxtr_obj.width / 2))]))
-
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100
-                continue
-
-            local_space_bounds = intersection.bounds
-            local_width = local_space_bounds[2] - local_space_bounds[0]
-            local_start_x = local_space_bounds[0]
-
-            # Use a dynamic margin that shrinks as the available space gets tighter
-            walking_space_margin = max(300.0, local_width * 0.50)
-
-            # Determine the stack size and gap
-            num_to_place = 0
-            horizontal_gap = 0
-            if next_fxtr_obj.name == "Lensbar":
-                # Lensbars are typically placed one at a time
-                if next_fxtr_obj.height + walking_space_margin <= local_width:
-                    num_to_place = 1
-            elif next_fxtr_obj.name == "Euro_centre":
-                num_to_place, horizontal_gap = _find_best_stack_size(local_width, walking_space_margin, len(fixture_queue), next_fxtr_obj)
-
-            if num_to_place == 0:
-                cursor_y += 100
-                continue
-
-            # --- 4. EXECUTION WITH RESILIENT SEARCH ---
-            fixtures_for_this_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (stack_width * num_to_place) + (horizontal_gap * (num_to_place - 1))
-            
-            ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-            
-            valid_start_x = None
-            search_offset = 0
-            # Search out from the ideal center until a spot is found
-            while valid_start_x is None and search_offset < local_width / 2:
-                for sign in [1, -1]:
-                    test_x = ideal_start_x + (search_offset * sign) - 5
-                    if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                        valid_start_x = test_x
-                        break
-                search_offset += 100
-            
-            if valid_start_x is None:
-                print(f"    -> ⚠️ Could not find a valid horizontal spot for the row. Skipping.")
-                cursor_y += 100
-                continue
-
-            current_x_in_row = valid_start_x
-            for i in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                
-                target_center_x = current_x_in_row + (rotated_width / 2)
-                target_center_y = cursor_y + (rotated_height / 2)
-                
-                if self._validate_and_place_at_point(fxtr, Vec2(target_center_x, target_center_y), 90, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x_in_row:.0f}, {cursor_y:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}' during placement.")
-                
-                current_x_in_row += rotated_width + horizontal_gap
-
-            cursor_y += rotated_height + vertical_row_spacing
-
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures ---")
+        # --- 5. Combine and Apply Bottom Keep-Out Zones ---
+        if bottom_keep_out_zones:
+            combined_bottom_keep_out = unary_union(bottom_keep_out_zones)
+            # Carve the keep-out zones from the already side-inset polygon
+            zone_after_bottom_inset = inset_polygon.difference(combined_bottom_keep_out)
         else:
-            print("\n--- ✅ Finished Dynamic Central Fixture Placement ---")
+            zone_after_bottom_inset = inset_polygon
 
+        if zone_after_bottom_inset.is_empty:
+            print("  -> ⚠️ Zone is empty after applying bottom keep-out zones.")
+            return None
 
-    def _calculate_dynamic_vertical_gap(self) -> float:
-        """
-        Calculates a dynamic vertical gap for portrait mode based on the floorplan's
-        total square footage. Smaller stores get tighter spacing, larger stores get more.
-        - MODIFIED: Now calculates the area internally.
-        """
-        # --- NEW: Calculate the area directly inside this function ---
-        if not hasattr(self, 'floorplan_polygon') or self.floorplan_polygon.is_empty:
-            print("    -> WARNING: Floorplan polygon not found. Using default vertical gap.")
-            return 800.0  # Return a safe default if the polygon doesn't exist
+        ### --- END OF MODIFICATION --- ###
 
-        area_sq_mm = self.floorplan_polygon.area
-        SQMM_PER_SQFT = 92903.04 
-        floor_area_sqft = area_sq_mm / SQMM_PER_SQFT
-        # --- End of New Logic ---
+        # --- 6. Apply Vertical Top Constraint & Subtract Obstacles (Largely Unchanged) ---
+        # The bottom_boundary_y is no longer needed; it's handled by the shape subtraction.
+        final_slicer = box(self.cvc.min_x - 1000, self.cvc.min_y - 1000, self.cvc.max_x + 1000, top_boundary_y)
+        zone_before_obstacles = zone_after_bottom_inset.intersection(final_slicer)
 
-        print(f"\n    -> Calculating dynamic VERTICAL ROW GAP based on area: {floor_area_sqft:.2f} sq. ft.")
-
-        if floor_area_sqft <= 500:
-            gap = 200.0
-            print(f"      -> Area is small (<= 500 sq. ft.). Using a tight gap of {gap} mm.")
-        elif floor_area_sqft <= 750:
-            gap = 600.0
-            print(f"      -> Area is medium-small (<= 750 sq. ft.). Using a gap of {gap} mm.")
-        elif floor_area_sqft <= 1000:
-            gap = 1200.0
-            print(f"      -> Area is medium (<= 1000 sq. ft.). Using a standard gap of {gap} mm.")
-        elif floor_area_sqft <= 1250:
-            gap = 1200.0
-            print(f"      -> Area is medium-large (<= 1250 sq. ft.). Using a wider gap of {gap} mm.")
-        elif floor_area_sqft <= 1500:
-            gap = 1200.0
-            print(f"      -> Area is large (<= 1500 sq. ft.). Using a very wide gap of {gap} mm.")
-        else:  # for floorplans larger than 1500 sq. ft.
-            gap = 1200.0
-            print(f"      -> Area is very large (> 1500 sq. ft.). Using a maximum gap of {gap} mm.")
-
-        return gap
-
-    def place_central_fixtures_portrait(self, placed_bboxes: List[tuple], bottom_margin_pct: float = 0.20) -> None:
-        """
-        Places central fixtures in a portrait orientation using an adaptive strategy.
-        - MODIFIED: Now dynamically calculates the number of fixtures per row based on available width.
-        """
-        # Import necessary libraries for geometry and data structures.
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-
-        print("\n--- 🧠 Placing Central Fixtures with DYNAMIC ROW SIZING (Portrait Mode) ---")
-
-        # --- Define Horizontal Gaps ---
-        # These constants define the fixed spacing between fixtures when they are placed side-by-side in a row.
-        GAP_EURO_TO_EURO = 5.0       # The gap between two Euro_centre fixtures. (horizontal gap)
-        GAP_LENSBAR_TO_LENSBAR = 50.0 # The gap between two Lensbar fixtures.
+        if zone_before_obstacles.is_empty:
+            print("  -> ⚠️ Zone is empty after slicing with top boundary.")
+            return None
+            
+        # (The rest of the obstacle subtraction logic remains the same)
+        all_obstacle_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
+        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
+        qms_bboxes_tuples = [(b.extmin.x, b.extmin.y, b.extmax.x, b.extmax.y) for e in qms_entities if (b := extents([e]))]
+        st_bboxes_tuples = [(b.extmin.x, b.extmin.y, b.extmax.x, b.extmax.y) for e in st_entities if (b := extents([e]))]
+        zone_defining_bboxes = set(qms_bboxes_tuples + st_bboxes_tuples)
+        other_obstacles = [b for b in all_obstacle_bboxes if b not in zone_defining_bboxes]
         
-        
-        # This variable controls the vertical spacing BETWEEN each row of fixtures.
-        # It's calculated dynamically based on the store's size to ensure good proportions.
-        VERTICAL_ROW_GAP = self._calculate_dynamic_vertical_gap()
+        if other_obstacles:
+            zone_after_fixture_buffer = zone_before_obstacles
+        else:
+            zone_after_fixture_buffer = zone_before_obstacles
 
-        # 1. SETUP & LOAD FIXTURES
-        # --------------------------
-        # Load the fixture counts (e.g., 5 Euro_centre, 2 Lensbar) from the main configuration.
-        config = self.fixtures.get("floor_fixtures", {})
-        euro_count = config.get("Euro_centre", 0)
-        lensbar_count = config.get("Lensbar", 0)
-        # If no central fixtures are requested, exit the function early.
-        if euro_count + lensbar_count == 0: return
+        internal_partitions = self.cvc.get_internal_wall_partitions(50,670, 0)
+        if internal_partitions:
+            partition_polygons = [box(*bbox) for bbox in internal_partitions]
+            final_zone = zone_after_fixture_buffer.difference(unary_union(partition_polygons))
+        else:
+            final_zone = zone_after_fixture_buffer
 
-        # A deque (a double-ended queue) is used as an efficient "to-do list" of fixtures.
-        fixture_queue = collections.deque()
-        try:
-            # Load the fixture data (like dimensions and file path) for each type.
-            euro_fxtr_template = Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"]) if euro_count > 0 else None
-            lensbar_fxtr_template = Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"]) if lensbar_count > 0 else None
+        if final_zone.is_empty:
+            print("  -> ⚠️ Final zone is empty after subtracting all obstacles.")
+            return None
             
-            # Add the requested number of fixture objects to our to-do list.
-            if lensbar_count > 0:
-                fixture_queue.extend([lensbar_fxtr_template] * lensbar_count)
-            if euro_count > 0:
-                fixture_queue.extend([euro_fxtr_template] * euro_count)
-        except Exception as e:
-            print(f"🔥 FATAL: Could not load a central fixture: {e}")
-            return
+        zone_bounds = final_zone.bounds
+        zone_width = zone_bounds[2] - zone_bounds[0]
+        zone_height = zone_bounds[3] - zone_bounds[1]
+        print(f"  -> ✅ Successfully defined final placement zone (W: {zone_width:.0f}mm x H: {zone_height:.0f}mm)")
+        return final_zone
+    
+    
 
-        # 2. DEFINE PORTRAIT-SPECIFIC PARAMETERS
-        # --------------------------------------
-        print("  -> Configuring for PORTRAIT (Vertical Iteration, Horizontal Rows)")
-        # Calculate the total height of the room available for placement.
-        room_height = self.cvc.max_y - self.cvc.min_y
-        # Create a buffer at the bottom of the room to act as a main aisle.
-        aisle_buffer = room_height * bottom_margin_pct
-        
-        # Set up a "cursor" that will move from the bottom of the room upwards.
-        # This defines the vertical zone where fixtures can be placed.
-        cursor_pos = self.cvc.min_y + aisle_buffer
-        cursor_end = self.cvc.max_y - 50.0 # this we can set as a fixed top margin to make good retail  space adjusting
-        # A quick helper function to find out how wide the floorplan is at any given height (y-coordinate).
-        get_local_space = lambda y: self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, y), (self.cvc.max_x + 100, y)]))
+    def draw_euro_center_placement_zone(self):
+        """
+        Calls the main logic function to get the Euro Center zone and then
+        draws its boundary on the DXF for visual validation.
+        """
+        print("\n--- 🎨 Drawing Euro Center Placement Zone for Validation ---")
 
-        def _is_row_valid(start_x, y, fixtures_in_row, gap):
-            """
-            Checks if a proposed row of fixtures would fit without going outside 
-            the floorplan boundary or overlapping any already-placed objects.
-            """
-            current_x = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                # Create a virtual box representing the fixture's position.
-                candidate_box = box(current_x, y, current_x + fxtr.width, y + fxtr.height)
-                # If the box is outside the floorplan or hits another object, the row is invalid.
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in placed_bboxes):
-                    return False
-                # Move the virtual cursor to the right for the next fixture in the row.
-                if i < len(fixtures_in_row) - 1:
-                    current_x += fxtr.width + gap
-            return True
+        # MODIFIED: This now calls the corrected, stable function
+        placement_zone_poly = self.euro_center_placement_area()
 
-        # ⭐ --- THIS IS THE CORE DECISION-MAKING LOGIC --- ⭐
-        def _find_best_row_size(available_width, margin, fixtures_in_queue, fixture_obj, gap):
-            """
-            Finds the largest number of fixtures that can fit in a standard horizontal row.
-            This is adapted from strategy_2 but uses fixture.width (no rotation).
-            """
-            # Set a hard limit on the maximum number of fixtures allowed in a single row.
-            max_fixtures_to_try = 3 
-
-            # This loop implements the "greedy" or "count down" strategy.
-            # It starts by trying to fit the maximum possible number (e.g., 3) and works down to 1.
-            # The first number that fits is guaranteed to be the best (largest) option.
-            for n in range(min(max_fixtures_to_try, fixtures_in_queue), 0, -1):
-                # Calculate the total space needed for 'n' fixtures.
-                # This is: (total width of all fixtures) + (total width of all gaps) + (a safety margin).
-                required_width = (fixture_obj.width * n) + (gap * (n - 1)) + margin
-                
-                # If the space we need is less than or equal to the space we have...
-                if required_width <= available_width:
-                    print(f"  -> Determined that {n} fixtures can fit in the available space.")
-                    return n # ...then we've found our answer. Return this number and stop checking.
+        # Check if the zone was successfully calculated
+        if placement_zone_poly and not placement_zone_poly.is_empty:
             
-            # If the loop finishes without finding a fit, it means not even one fixture could be placed.
-            return 0 
-
-        # 3. ADAPTIVE PLACEMENT LOOP
-        # --------------------------
-        # This is the main loop that continues as long as there are fixtures in our "to-do list".
-        while fixture_queue:
-            # Safety check: if our vertical cursor goes past the top boundary, stop.
-            if cursor_pos > cursor_end:
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement.")
-                break
-
-            # Peek at the next fixture in line to get its dimensions, without removing it yet.
-            next_fxtr_obj = fixture_queue[0]
-            # The "footprint" of a row is determined by the height of the fixtures in it.
-            footprint = next_fxtr_obj.height
-            # Get the available horizontal space at the current vertical position of our cursor.
-            intersection = get_local_space(cursor_pos + (footprint / 2))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_pos += 100 # If there's no space here, nudge the cursor up and try again.
-                continue
-
-            # Get the exact start and end coordinates of the available horizontal space.
-            local_space_bounds = intersection.bounds
-            local_width = local_space_bounds[2] - local_space_bounds[0]
-            local_start_x = local_space_bounds[0]
-
-            # 4. ⭐ --- DYNAMIC DECISION LOGIC --- ⭐
-            # ------------------------------------
-            # The margin for walking space is a percentage of the room's width,
-            # so it automatically adapts to narrower or wider areas of the floorplan.
-            walking_space_margin = max(300.0, local_width * 0.60) 
+            # Get the area from the polygon object and print it.
+            area_in_sq_mm = placement_zone_poly.area
+            print(f"  -> 📏 Calculated Area of the Zone: {area_in_sq_mm:,.2f} mm^2")
             
-            # Get the name of the next fixture (e.g., "Euro_centre").
-            fixture_type = next_fxtr_obj.name
-            
-            # We only want to group fixtures of the same type (e.g., a row of Euros).
-            # This loop counts how many fixtures of the same type are at the front of the queue.
-            count_of_same_type_in_queue = 0
-            for f in fixture_queue:
-                if f.name == fixture_type:
-                    count_of_same_type_in_queue += 1
-                else:
-                    break
-            
-            # Determine which horizontal gap value to use based on the fixture type.
-            horizontal_gap = 0
-            if fixture_type == "Euro_centre":
-                horizontal_gap = GAP_EURO_TO_EURO
-            elif fixture_type == "Lensbar":
-                horizontal_gap = GAP_LENSBAR_TO_LENSBAR
+            # Define a new layer for the debug drawing
+            layer_name = "DEBUG_PLACEMENT_ZONE"
+            if layer_name not in self.doc.layers:
+                self.doc.layers.add(
+                    name=layer_name,
+                    color=6  # ACI color 6 is Magenta, which is highly visible
+                )
 
-            # This is the crucial call to our helper function. Based on the available width and fixture
-            # dimensions, it decides exactly how many fixtures (`num_to_place`) we should attempt to place in this row.
-            num_to_place = _find_best_row_size(
-                local_width, 
-                walking_space_margin, 
-                count_of_same_type_in_queue, 
-                next_fxtr_obj, 
-                horizontal_gap
+            # Get the coordinates of the polygon's boundary
+            zone_boundary_coords = list(placement_zone_poly.exterior.coords)
+
+            # Add the polygon outline to the modelspace
+            self.msp.add_lwpolyline(
+                zone_boundary_coords,
+                close=True,
+                dxfattribs={"layer": layer_name, "lineweight": 35} # Make the line slightly thicker
             )
             
-            # If the helper function returned 0, it means nothing could fit.
-            # We nudge the cursor up and continue to the next iteration of the main loop.
-            if num_to_place == 0:
-                cursor_pos += 100
-                continue
+            print(f"  -> ✅ Zone boundary drawn on layer '{layer_name}' for validation.")
+        
+        else:
+            print("  -> ⚠️ SKIPPED DRAWING: The placement zone could not be calculated.")
 
-            # 5. EXECUTION WITH RESILIENT SEARCH
-            # ----------------------------------
-            # Get the list of fixtures we are about to place in this row.
-            fixtures_for_this_row = [fixture_queue[i] for i in range(num_to_place)]
-            # If we're only placing one fixture, there's no gap needed.
-            current_gap = horizontal_gap if num_to_place > 1 else 0
-            # Calculate the exact total width of our new row.
-            total_row_width = sum(f.width for f in fixtures_for_this_row) + (current_gap * (num_to_place - 1))
-            
-            # Calculate the starting X-coordinate that would perfectly center the row.
-            ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-            
-            # The ideal center spot might be blocked. This "resilient search" loop will
-            # check the center, then slightly to the right, then slightly to the left,
-            # expanding outwards until it finds a clear spot for the entire row.
-            valid_start_x = None
-            search_offset = 0
-            max_search = local_width / 2
 
-            while search_offset < max_search:
-                for sign in [1, -1]: # sign=1 checks right, sign=-1 checks left
-                    if sign == -1 and search_offset == 0: continue
-                    test_x = ideal_start_x + (search_offset * sign)
-                    # Use our validation helper to see if this spot is clear.
-                    if _is_row_valid(test_x, cursor_pos, fixtures_for_this_row, current_gap):
-                        valid_start_x = test_x # If it's clear, we've found our spot!
+    #---------GRID-ZONE-FOR-EURO-CENTER-PLACEMENT-----------------
+    #---------GRID-ZONE-FOR-EURO-CENTER-PLACEMENT-------------------
+    #---------GRID-ZONE-FOR-EURO-CENTER-PLACEMENT-------------------
+
+    def generate_row_wise_grid_og(self) -> List[Tuple[float, float]]:
+        """
+        Calculates a grid for 0° rotation and iteratively centers it within its
+        local available space to handle irregular zones correctly.
+        """
+        from shapely.geometry import box, LineString
+
+        print("\n--- MATRIX Generating ROW-WISE grid (0° Rotation) with Local Centering ---")
+        zone = self.euro_center_placement_area()
+        if not zone or zone.is_empty: return []
+
+        cell_width = 1040.0
+        cell_height = 1175.0
+        
+        initial_grid_points = []
+        min_x_zone, min_y_zone, max_x_zone, max_y_zone = zone.bounds
+        current_y = min_y_zone
+        while current_y + cell_height <= max_y_zone:
+            current_x = min_x_zone
+            while current_x + cell_width <= max_x_zone:
+                cell_box = box(current_x, current_y, current_x + cell_width, current_y + cell_height)
+                if zone.contains(cell_box.centroid):
+                    initial_grid_points.append((current_x, current_y))
+                current_x += cell_width
+            current_y += cell_height
+            
+        if not initial_grid_points: return []
+
+        # --- FINAL: Iterative LOCAL Centering Logic ---
+        min_x_grid = min(p[0] for p in initial_grid_points)
+        min_y_grid = min(p[1] for p in initial_grid_points)
+        max_x_grid = max(p[0] for p in initial_grid_points) + cell_width
+        max_y_grid = max(p[1] for p in initial_grid_points) + cell_height
+        grid_center_x = (min_x_grid + max_x_grid) / 2
+        grid_center_y = (min_y_grid + max_y_grid) / 2
+
+        # Find available space at the grid's center level
+        h_slice = zone.intersection(LineString([(min_x_zone - 100, grid_center_y), (max_x_zone + 100, grid_center_y)]))
+        local_x_min, _, local_x_max, _ = h_slice.bounds
+        target_center_x = (local_x_min + local_x_max) / 2
+        
+        v_slice = zone.intersection(LineString([(grid_center_x, min_y_zone - 100), (grid_center_x, max_y_zone + 100)]))
+        _, local_y_min, _, local_y_max = v_slice.bounds
+        target_center_y = (local_y_min + local_y_max) / 2
+        
+        total_offset_x = target_center_x - grid_center_x
+        total_offset_y = target_center_y - grid_center_y
+        
+        current_grid_points = list(initial_grid_points)
+        
+        # Iteratively nudge on X-axis
+        nudge_step = 50.0
+        num_steps_x = int(abs(total_offset_x) / nudge_step)
+        step_x = nudge_step if total_offset_x > 0 else -nudge_step
+        for _ in range(num_steps_x):
+            proposed_points = [(p[0] + step_x, p[1]) for p in current_grid_points]
+            if all(zone.contains(box(x, y, x + cell_width, y + cell_height).centroid) for x, y in proposed_points):
+                current_grid_points = proposed_points
+            else:
+                break
+
+        # Iteratively nudge on Y-axis
+        num_steps_y = int(abs(total_offset_y) / nudge_step)
+        step_y = nudge_step if total_offset_y > 0 else -nudge_step
+        for _ in range(num_steps_y):
+            proposed_points = [(p[0], p[1] + step_y) for p in current_grid_points]
+            if all(zone.contains(box(x, y, x + cell_width, y + cell_height).centroid) for x, y in proposed_points):
+                current_grid_points = proposed_points
+            else:
+                break
+                
+        final_grid_points = current_grid_points
+        print(f"  -> ✅ Locally centered {len(final_grid_points)} spots for row-wise placement.")
+        return final_grid_points
+    
+    def generate_column_wise_grid_og(self) -> List[Tuple[float, float]]:
+        """
+        [CORRECTED to use full box containment]
+        Calculates a centered grid for placing fixtures horizontally in vertical columns.
+        Cell dimensions: 1175 (width) x 1040 (height).
+        """
+        from shapely.geometry import box, LineString
+
+        print("\n--- MATRIX Generating COLUMN-WISE grid (90° Rotation) with Local Centering ---")
+        zone = self.euro_center_placement_area()
+        if not zone or zone.is_empty:
+            print("  -> SKIPPED: The placement zone is not defined.")
+            return []
+
+        # Swapped dimensions for rotated fixtures
+        cell_width = 1175.0
+        cell_height = 1040.0
+        min_x_zone, min_y_zone, max_x_zone, max_y_zone = zone.bounds
+        
+        initial_grid_points = []
+        current_y = min_y_zone
+        while current_y + cell_height <= max_y_zone:
+            current_x = min_x_zone
+            while current_x + cell_width <= max_x_zone:
+                cell_box = box(current_x, current_y, current_x + cell_width, current_y + cell_height)
+                if zone.contains(cell_box.centroid):
+                    initial_grid_points.append((current_x, current_y))
+                current_x += cell_width
+            current_y += cell_height
+            
+        if not initial_grid_points:
+            return []
+
+        # --- Iterative LOCAL Centering Logic ---
+        min_x_grid = min(p[0] for p in initial_grid_points)
+        min_y_grid = min(p[1] for p in initial_grid_points)
+        max_x_grid = max(p[0] for p in initial_grid_points) + cell_width
+        max_y_grid = max(p[1] for p in initial_grid_points) + cell_height
+        grid_center_x = (min_x_grid + max_x_grid) / 2
+        grid_center_y = (min_y_grid + max_y_grid) / 2
+
+        h_slice = zone.intersection(LineString([(min_x_zone - 100, grid_center_y), (max_x_zone + 100, grid_center_y)]))
+        local_x_min, _, local_x_max, _ = h_slice.bounds
+        target_center_x = (local_x_min + local_x_max) / 2
+        
+        v_slice = zone.intersection(LineString([(grid_center_x, min_y_zone - 100), (grid_center_x, max_y_zone + 100)]))
+        _, local_y_min, _, local_y_max = v_slice.bounds
+        target_center_y = (local_y_min + local_y_max) / 2
+        
+        total_offset_x = target_center_x - grid_center_x
+        total_offset_y = target_center_y - grid_center_y
+        
+        current_grid_points = list(initial_grid_points)
+        
+        # Iteratively nudge on X-axis
+        nudge_step = 50.0
+        num_steps_x = int(abs(total_offset_x) / nudge_step)
+        step_x = nudge_step if total_offset_x > 0 else -nudge_step
+        for _ in range(num_steps_x):
+            proposed_points = [(p[0] + step_x, p[1]) for p in current_grid_points]
+            # ### --- FIX APPLIED HERE --- ###
+            if all(zone.contains(box(x, y, x + cell_width, y + cell_height)) for x, y in proposed_points):
+                current_grid_points = proposed_points
+            else:
+                break
+
+        # Iteratively nudge on Y-axis
+        num_steps_y = int(abs(total_offset_y) / nudge_step)
+        step_y = nudge_step if total_offset_y > 0 else -nudge_step
+        for _ in range(num_steps_y):
+            proposed_points = [(p[0], p[1] + step_y) for p in current_grid_points]
+            # ### --- FIX APPLIED HERE --- ###
+            if all(zone.contains(box(x, y, x + cell_width, y + cell_height)) for x, y in proposed_points):
+                current_grid_points = proposed_points
+            else:
+                break
+                
+        final_grid_points = current_grid_points
+
+        print(f"  -> ✅ Calculated {len(final_grid_points)} spots for column-wise placement.")
+        return final_grid_points
+
+    def generate_row_wise_grid(self) -> List[Tuple[float, float]]:
+        """
+        Calculates a grid for 0° rotation without any centering logic.
+        The grid is aligned to the bottom-left of the placement zone's bounding box.
+        """
+        from shapely.geometry import box
+
+        print("\n--- MATRIX Generating ROW-WISE grid (0° Rotation) - No Centering ---")
+        zone = self.euro_center_placement_area()
+        if not zone or zone.is_empty:
+            return []
+
+        cell_width = 1040.0
+        cell_height = 1175.0
+        
+        final_grid_points = []
+        min_x_zone, min_y_zone, max_x_zone, max_y_zone = zone.bounds
+        
+        current_y = min_y_zone
+        while current_y + cell_height <= max_y_zone:
+            current_x = min_x_zone
+            while current_x + cell_width <= max_x_zone:
+                # Create a box for the potential fixture placement
+                cell_box = box(current_x, current_y, current_x + cell_width, current_y + cell_height)
+                
+                # Check if the center of the cell is within the valid zone
+                if zone.contains(cell_box.centroid):
+                    final_grid_points.append((current_x, current_y))
+                
+                current_x += cell_width
+            current_y += cell_height
+            
+        print(f"  -> ✅ Generated {len(final_grid_points)} spots for row-wise placement (no centering).")
+        return final_grid_points
+    
+    def generate_column_wise_grid(self) -> List[Tuple[float, float]]:
+        """
+        Calculates a grid for 90° rotation without any centering logic.
+        The grid is aligned to the bottom-left of the placement zone's bounding box.
+        """
+        from shapely.geometry import box
+
+        print("\n--- MATRIX Generating COLUMN-WISE grid (90° Rotation) - No Centering ---")
+        zone = self.euro_center_placement_area()
+        if not zone or zone.is_empty:
+            return []
+
+        # Swapped dimensions for rotated fixtures
+        cell_width = 1175.0
+        cell_height = 1040.0
+        
+        final_grid_points = []
+        min_x_zone, min_y_zone, max_x_zone, max_y_zone = zone.bounds
+        
+        current_y = min_y_zone
+        while current_y + cell_height <= max_y_zone:
+            current_x = min_x_zone
+            while current_x + cell_width <= max_x_zone:
+                # Create a box for the potential fixture placement
+                cell_box = box(current_x, current_y, current_x + cell_width, current_y + cell_height)
+                
+                # Check if the center of the cell is within the valid zone
+                if zone.contains(cell_box.centroid):
+                    final_grid_points.append((current_x, current_y))
+
+                current_x += cell_width
+            current_y += cell_height
+                
+        print(f"  -> ✅ Generated {len(final_grid_points)} spots for column-wise placement (no centering).")
+        return final_grid_points
+
+    
+
+    def draw_grid_for_validation(self, grid_points: List[Tuple[float, float]], cell_width: float, cell_height: float, layer_name: str, color: int):
+        """
+        Draws a calculated placement grid onto a specified layer for visualization.
+        """
+        if not grid_points:
+            return
+
+        print(f"--- 🎨 Drawing the '{layer_name}' grid for validation ---")
+        if layer_name not in self.doc.layers:
+            self.doc.layers.add(name=layer_name, color=color)
+
+        for x, y in grid_points:
+            points = [(x, y), (x + cell_width, y), (x + cell_width, y + cell_height), (x, y + cell_height)]
+            self.msp.add_lwpolyline(points, close=True, dxfattribs={"layer": layer_name})
+        
+        print(f"  -> ✅ Drew {len(grid_points)} grid cells on layer '{layer_name}'.")
+
+
+    #---------GRID-ZONE-FOR-EURO-CENTER-PLACEMENT----NEW-SETUP---------------
+    #---------GRID-ZONE-FOR-EURO-CENTER-PLACEMENT----NEW-SETUP---------------
+    
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--COUNT---------------
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--COUNT---------------
+    
+    def _create_grid_matrix(self, grid_points: List[Tuple[float, float]]) -> Tuple[List[List[int]], List[float], List[float]]:
+        """
+        Private helper to convert a list of (x,y) grid points into a 2D matrix (0s and 1s).
+        NOW ALSO returns the sorted lists of unique coordinates that define the grid.
+        """
+        if not grid_points:
+            return [], [], []
+
+        unique_y = sorted(list(set(p[1] for p in grid_points)))
+        unique_x = sorted(list(set(p[0] for p in grid_points)))
+
+        y_to_row_idx = {y: i for i, y in enumerate(unique_y)}
+        x_to_col_idx = {x: i for i, x in enumerate(unique_x)}
+
+        num_rows = len(unique_y)
+        num_cols = len(unique_x)
+        matrix = [[0] * num_cols for _ in range(num_rows)]
+
+        for x, y in grid_points:
+            row_idx = y_to_row_idx[y]
+            col_idx = x_to_col_idx[x]
+            matrix[row_idx][col_idx] = 1
+
+        return matrix, unique_y, unique_x
+
+    
+    def analyze_placement_patterns_best_only(self) -> Dict[str, Any]:
+        """
+        Analyzes placement patterns, finds the best one, and returns a dictionary
+        containing the exact coordinates for fixture placement based on that pattern.
+        """
+        print("\n--- 📊 Analyzing patterns and generating final placement coordinates ---")
+        
+        analysis_results = {
+            'row_wise_even_rows': 0, 'row_wise_odd_rows': 0,
+            'column_wise_even_cols': 0, 'column_wise_odd_cols': 0,
+        }
+        
+        # --- Phase 1: Analyze Row-Wise Grid (0° Rotation) ---
+        row_points = self.generate_row_wise_grid()
+        row_matrix, _, _ = self._create_grid_matrix(row_points)
+        if row_matrix:
+            for i, row in enumerate(row_matrix):
+                if i % 2 == 0:
+                    analysis_results['row_wise_even_rows'] += sum(row)
+                else:
+                    analysis_results['row_wise_odd_rows'] += sum(row)
+        
+        # --- Phase 2: Analyze Column-Wise Grid (90° Rotation) ---
+        col_points = self.generate_column_wise_grid()
+        col_matrix, _, _ = self._create_grid_matrix(col_points)
+        if col_matrix:
+            num_rows = len(col_matrix)
+            num_cols = len(col_matrix[0])
+            for j in range(num_cols):
+                col_sum = sum(col_matrix[i][j] for i in range(num_rows))
+                if j % 2 == 0:
+                    analysis_results['column_wise_even_cols'] += col_sum
+                else:
+                    analysis_results['column_wise_odd_cols'] += col_sum
+
+        # --- Phase 3: Find the Best Pattern ---
+        best_pattern_name = max(analysis_results, key=analysis_results.get)
+        max_fixtures = analysis_results[best_pattern_name]
+
+        print("---  Analysis Complete ---")
+        print(f"  -> Even Rows (0°): {analysis_results['row_wise_even_rows']} fixtures")
+        print(f"  -> Odd Rows (0°):  {analysis_results['row_wise_odd_rows']} fixtures")
+        print(f"  -> Even Columns (90°): {analysis_results['column_wise_even_cols']} fixtures")
+        print(f"  -> Odd Columns (90°):  {analysis_results['column_wise_odd_cols']} fixtures")
+        print(f"  ->  BEST PATTERN: '{best_pattern_name}' with {max_fixtures} fixtures.")
+
+        # --- Phase 4: Get the coordinates for the BEST pattern ---
+        coordinates_for_placement = []
+        
+        if 'row_wise' in best_pattern_name:
+            matrix, unique_y, unique_x = self._create_grid_matrix(row_points)
+            is_even_pattern = 'even' in best_pattern_name
+            for i, row in enumerate(matrix):
+                if (is_even_pattern and i % 2 == 0) or (not is_even_pattern and i % 2 != 0):
+                    for j, cell in enumerate(row):
+                        if cell == 1:
+                            coordinates_for_placement.append((unique_x[j], unique_y[i]))
+
+        elif 'column_wise' in best_pattern_name:
+            matrix, unique_y, unique_x = self._create_grid_matrix(col_points)
+            is_even_pattern = 'even' in best_pattern_name
+            if matrix:
+                num_rows, num_cols = len(matrix), len(matrix[0])
+                for j in range(num_cols):
+                    if (is_even_pattern and j % 2 == 0) or (not is_even_pattern and j % 2 != 0):
+                        for i in range(num_rows):
+                            if matrix[i][j] == 1:
+                                coordinates_for_placement.append((unique_x[j], unique_y[i]))
+        
+        # --- Phase 5: Format the final output dictionary ---
+        euro_place_dict = {}
+        # Sort coordinates primarily by Y (row), then by X (column) for predictable numbering
+        coordinates_for_placement.sort(key=lambda p: (p[1], p[0]))
+        for i, (x, y) in enumerate(coordinates_for_placement, start=1):
+            euro_place_dict[f"count_{i}"] = {"coordinates": [x, y]}
+            
+        final_output = {"euro_place": euro_place_dict}
+        print(f"  -> Returning coordinates for {len(euro_place_dict)} placements.")
+
+        placements_dict = {}
+        coordinates_for_placement.sort(key=lambda p: (p[1], p[0]))
+        for i, (x, y) in enumerate(coordinates_for_placement, start=1):
+            placements_dict[f"count_{i}"] = {"coordinates": [x, y]}
+        
+        print(f"  -> Returning blueprint for {len(placements_dict)} placements.")
+        
+        # return final_output
+        return {
+            "best_pattern_name": best_pattern_name,
+            "placements": placements_dict
+        }
+    
+    def analyze_placement_patterns(self) -> Dict[str, Any]:
+        """
+        [MODIFIED V2] Analyzes all four placement patterns and returns a comprehensive
+        dictionary containing counts and ID-tagged coordinates for ALL options,
+        as well as identifying the best one.
+        """
+        print("\n--- 📊 Analyzing ALL placement patterns and generating blueprints ---")
+        
+        all_patterns_data = {}
+        
+        row_points = self.generate_row_wise_grid()
+        col_points = self.generate_column_wise_grid()
+
+        pattern_names = [
+            'row_wise_even_rows', 'row_wise_odd_rows',
+            'column_wise_even_cols', 'column_wise_odd_cols'
+        ]
+
+        for pattern_name in pattern_names:
+            coordinates_for_placement = []
+            
+            if 'row_wise' in pattern_name:
+                matrix, unique_y, unique_x = self._create_grid_matrix(row_points)
+                if not matrix: continue
+                is_even_pattern = 'even' in pattern_name
+                
+                for i, row in enumerate(matrix):
+                    if (is_even_pattern and i % 2 == 0) or (not is_even_pattern and i % 2 != 0):
+                        for j, cell in enumerate(row):
+                            if cell == 1:
+                                coordinates_for_placement.append((unique_x[j], unique_y[i]))
+
+            elif 'column_wise' in pattern_name:
+                matrix, unique_y, unique_x = self._create_grid_matrix(col_points)
+                if not matrix: continue
+                is_even_pattern = 'even' in pattern_name
+                
+                num_rows, num_cols = len(matrix), len(matrix[0])
+                for j in range(num_cols):
+                    if (is_even_pattern and j % 2 == 0) or (not is_even_pattern and j % 2 != 0):
+                        for i in range(num_rows):
+                            if matrix[i][j] == 1:
+                                coordinates_for_placement.append((unique_x[j], unique_y[i]))
+            
+            # =================== MODIFICATION IS HERE ===================
+            # This block converts the list of coordinates into the requested dictionary format.
+            
+            # Sort coordinates for a predictable "count_1", "count_2" order.
+            coordinates_for_placement.sort(key=lambda p: (p[1], p[0])) 
+            
+            placements_dict = {}
+            for i, coords in enumerate(coordinates_for_placement, start=1):
+                placements_dict[f"count_{i}"] = {"coordinates": coords}
+
+            all_patterns_data[pattern_name] = {
+                "count": len(placements_dict),
+                "placements": placements_dict # Store the new dictionary structure
+            }
+            # ============================================================
+
+        # if not all_patterns_data:
+        #     best_pattern_name = "None"
+        # else:
+        #     best_pattern_name = max(all_patterns_data, key=lambda p: all_patterns_data[p]["count"])
+        
+        if not all_patterns_data:
+            best_pattern_name = "None"
+        else:
+            # Prioritize by count, then by 'column_wise' pattern in case of a tie.
+            best_pattern_name = max(
+                all_patterns_data,
+                key=lambda p: (all_patterns_data[p]["count"], 'column' in p)
+            )
+            
+        print("---  Analysis Complete ---")
+        for name, data in all_patterns_data.items():
+            print(f"  -> Pattern '{name}': {data['count']} fixtures")
+        print(f"  ->  BEST PATTERN: '{best_pattern_name}' with {all_patterns_data.get(best_pattern_name, {}).get('count', 0)} fixtures.")
+
+        return {
+            "best_pattern_name": best_pattern_name,
+            "all_options": all_patterns_data
+        }
+
+
+    
+
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--AREA---------------
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--AREA---------------
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--PLACEMENT--SETUP---------------
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--PLACEMENT--SETUP---------------
+
+    
+    def place_euro_centers_from_blueprint(self, placement_blueprint: dict, display_calcs: dict, placed_bboxes: list):
+        """
+        Orchestrates the placement of Euro Centre fixtures based on a comparison between
+        the required count and the maximum optimal capacity of the floor space.
+
+        Args:
+            placement_blueprint (dict): The output from analyze_placement_patterns().
+            display_calcs (dict): The output from display_count_calc(), providing the base count.
+            placed_bboxes (list): The master list of bounding boxes for all placed objects.
+        """
+        # from Fixture import Fixture
+        from ezdxf.math import Vec2
+        import json
+
+        print("\n--- 💶 Placing Euro Centre Fixtures from Blueprint ---")
+        # --- NEW MODIFICATION TO IGNORE THE SEPARATOR LINE DURING PLACEMENT ---
+        temp_obstacles = list(placed_bboxes) # Create a temporary copy
+    
+        partitions = self.cvc.get_internal_wall_partitions(min_length=50, max_length=670.0, thickness=0.0)
+        if partitions:
+            temp_obstacles.extend(partitions)
+            print(f"  -> ✅ Added {len(partitions)} small partitions to the obstacle list for validation.")
+        # --- END OF NEW CODE ---
+        separator_line = self.msp.query('LINE[layer=="RETAIL_SEPARATOR"]').first
+        if separator_line:
+            start_pt = separator_line.dxf.start
+            end_pt = separator_line.dxf.end
+            separator_bbox = (
+                min(start_pt.x, end_pt.x),
+                min(start_pt.y, end_pt.y) - 1,
+                max(start_pt.x, end_pt.x),
+                max(start_pt.y, end_pt.y) + 1
+            )
+            if separator_bbox in temp_obstacles:
+                temp_obstacles.remove(separator_bbox)
+                print("  -> ✅ Temporarily ignored 'RETAIL_SEPARATOR' line for validation.")
+        # --- END OF MODIFICATION ---
+
+        # --- CORRECTED LOGIC (V3) ---
+        # The required count is taken directly from the 'display_calcs' dictionary.
+        # NOTE: For the overflow count from wall fixtures to be included, you must call
+        # a wall placement orchestration function (like 'orchestrate_wall_and_overflow_placement')
+        # before this function. The current main.py script does not do this.
+        total_required_euros = display_calcs.get('floor_fixtures', 0)
+        
+        
+        # As a fallback, if display_calcs gives 0, check the original fixture list from the merch mix.
+        if total_required_euros == 0:
+            print("  -> 'display_calcs' reported 0 floor fixtures. Checking original merch mix count as a fallback.")
+            total_required_euros = self.fixtures.get("floor_fixtures", {}).get("Euro_centre", 0)
+
+        if total_required_euros <= 0:
+            print("  -> SKIPPED: No Euro Centre fixtures required based on calculations and merch mix.")
+            return
+
+        print(f"  -> Total required Euro Centres to place: {total_required_euros}")
+
+        # --- The rest of the function remains the same ---
+        best_pattern_name = placement_blueprint.get("best_pattern_name", "None")
+
+        if best_pattern_name == "None":
+            print("  -> ⚠️ FAILED: Could not determine an optimal placement pattern. No fixtures will be placed.")
+            self.overflow_fixture_count = total_required_euros
+            print(f"  -> Overflow fixtures: {self.overflow_fixture_count}")
+            return
+
+        best_pattern_info = placement_blueprint["all_options"][best_pattern_name]
+        max_count = best_pattern_info.get("count", 0)
+        placements = best_pattern_info.get("placements", {})
+
+        print(f"  -> Maximum optimal capacity found: {max_count} fixtures using pattern '{best_pattern_name}'.")
+
+        num_to_place = 0
+        self.overflow_fixture_count = 0
+
+        if max_count <= total_required_euros:
+            print("  -> Strategy: Space is limited. Placing maximum possible number of fixtures.")
+            num_to_place = max_count
+            self.overflow_fixture_count = total_required_euros - max_count
+            print(f"  -> Overflow fixtures to be handled later: {self.overflow_fixture_count}")
+        else:
+            print("  -> Strategy: Ample space available. Placing the required number of fixtures.")
+            num_to_place = total_required_euros
+
+        # --- CAP: Place at most 7 Euro Centre fixtures here; add the rest to overflow
+        EURO_PLACEMENT_CAP = 9
+        if num_to_place == 0:
+            print("  -> No fixtures to place based on the chosen strategy.")
+            self.overflow_fixture_count = getattr(self, 'overflow_fixture_count', 0)
+            self.remaining_floor_fixtures = getattr(self, 'remaining_floor_fixtures', 0)
+            return
+
+        if num_to_place > EURO_PLACEMENT_CAP:
+            original_num = num_to_place
+            num_to_place = EURO_PLACEMENT_CAP
+            # remaining (not-placed) fixtures should be recorded for later handling
+            remaining_after_cap = original_num - EURO_PLACEMENT_CAP
+            # keep existing overflow and add this remaining
+            self.overflow_fixture_count = getattr(self, 'overflow_fixture_count', 0) + remaining_after_cap
+            # also record a convenience property for other parts of the app
+            self.remaining_floor_fixtures = getattr(self, 'remaining_floor_fixtures', 0) + remaining_after_cap
+            print(f"  -> NOTE: Capped placement to {EURO_PLACEMENT_CAP}. Added {remaining_after_cap} fixtures to overflow/remaining.")
+
+        try:
+            fxtr = Fixture.Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])
+        except Exception as e:
+            print(f"  -> 🔥 FATAL: Could not load Euro_centre fixture: {e}")
+            return
+
+        is_rotated = 'column_wise' in best_pattern_name
+        rotation = 90.0 if is_rotated else 0.0
+        cell_width = 1175.0 if is_rotated else 1040.0
+        cell_height = 1040.0 if is_rotated else 1175.0
+
+        placement_coords = []
+        for i in range(1, len(placements) + 1):
+            key = f"count_{i}"
+            if key in placements:
+                coords = placements[key]["coordinates"]
+                placement_coords.append(tuple(coords))
+
+        placed_count = 0
+        for i in range(num_to_place):
+            if i >= len(placement_coords):
+                break
+            x, y = placement_coords[i]
+            target_center = Vec2(x + (cell_width / 2), y + (cell_height / 2))
+
+            # --- NEW: Look ahead for the next fixture's target center ---
+            next_target_center = None
+            if i + 1 < len(placement_coords):
+                next_x, next_y = placement_coords[i + 1]
+                # Calculate the center of the next cell
+                next_target_center = Vec2(next_x + (cell_width / 2), next_y + (cell_height / 2))
+            # --- END OF NEW LOGIC ---
+
+            
+            if self._validate_and_place_at_point_euro(fxtr, target_center, rotation, temp_obstacles, debug_draw=False,next_target_center=next_target_center):
+                print(f"    -> Placed Euro_centre #{placed_count + 1} at ({x:.0f}, {y:.0f}) with {rotation}° rotation.")
+                placed_count += 1
+            else:
+                print(f"    -> ⚠️ WARNING: Spot at ({x:.0f}, {y:.0f}) was blocked, skipping.")
+
+        print(f"\n--- ✅ Finished Euro Centre Placement: Placed {placed_count} of {num_to_place} planned fixtures. ---")
+
+
+    
+    def _validate_and_place_at_point_euro(self, fixture, target_center, angle_deg, placed_bboxes, debug_draw=False, next_target_center: Optional[Vec2] = None):
+        """
+        [V9 - ROBUST SINGLE-FIXTURE NUDGE] Validates and places a fixture.
+        - If the single-direction search is not possible (e.g., for the last or only fixture),
+          it now FALLS BACK to a simple 4-directional search to find a clear spot.
+        """
+        from shapely.geometry import Polygon, box, Point
+        from ezdxf.math import Matrix44, BoundingBox2d, Vec2
+        import math
+
+        # --- The internal 'check_spot' helper function remains unchanged ---
+        def check_spot(center_point):
+            AISLE_OVERLAP_TOLERANCE_AREA = 600000.0
+            BODY_OVERLAP_TOLERANCE_AREA = 1000.0
+            transform = Matrix44.chain(Matrix44.translate(-fixture.bounding_box.center.x, -fixture.bounding_box.center.y, 0), Matrix44.z_rotate(math.radians(angle_deg)), Matrix44.translate(center_point.x, center_point.y, 0))
+            world_corners = list(transform.transform_vertices(fixture.bounding_box.rect_vertices()))
+            current_aabb = BoundingBox2d(world_corners)
+            fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+            if not self.floorplan_polygon.contains(fixture_polygon): return None, None
+            for b in placed_bboxes:
+                obstacle_poly = box(*b)
+                if fixture_polygon.intersects(obstacle_poly):
+                    if fixture_polygon.intersection(obstacle_poly).area > BODY_OVERLAP_TOLERANCE_AREA: return None, None
+            if "euro_centre" in fixture.name.lower():
+                clearance = 1050.0
+                def is_aisle_significantly_blocked(clearance_poly):
+                    for b in placed_bboxes:
+                        obstacle_poly = box(*b)
+                        if clearance_poly.intersects(obstacle_poly) and clearance_poly.intersection(obstacle_poly).area > AISLE_OVERLAP_TOLERANCE_AREA: return True
+                    return False
+                if 85 < angle_deg < 95 or 265 < angle_deg < 275:
+                    left_aisle = box(current_aabb.extmin.x - clearance, current_aabb.extmin.y + 100, current_aabb.extmin.x, current_aabb.extmax.y - 100)
+                    right_aisle = box(current_aabb.extmax.x, current_aabb.extmin.y + 100, current_aabb.extmax.x + clearance, current_aabb.extmax.y - 100)
+                    if is_aisle_significantly_blocked(left_aisle) or is_aisle_significantly_blocked(right_aisle): return None, None
+                else:
+                    top_aisle = box(current_aabb.extmin.x + 100, current_aabb.extmax.y, current_aabb.extmax.x - 100, current_aabb.extmax.y + clearance)
+                    bottom_aisle = box(current_aabb.extmin.x + 100, current_aabb.extmin.y - clearance, current_aabb.extmax.x - 100, current_aabb.extmin.y)
+                    if is_aisle_significantly_blocked(top_aisle) or is_aisle_significantly_blocked(bottom_aisle): return None, None
+            return current_aabb, center_point
+
+        # --- Main Function Logic ---
+        final_aabb, final_center = check_spot(target_center)
+
+        if final_aabb is None:
+            print(f"    -> Initial spot at ({target_center.x:.0f}, {target_center.y:.0f}) is blocked. Starting search...")
+
+            # --- MODIFICATION START ---
+            zone = self.euro_center_placement_area()
+            if not zone or zone.is_empty:
+                print("      -> Search failed: Cannot search without a valid placement zone.")
+                return False
+
+            # **PRIMARY SEARCH**: Use the "next fixture" direction if available
+            if next_target_center:
+                search_vector = (next_target_center - target_center).normalize()
+                print(f"      -> Searching ONLY in the direction of the next fixture: {search_vector}")
+                step = 50
+                current_offset = step
+                while True:
+                    test_center = target_center + (search_vector * current_offset)
+                    if not zone.contains(Point(test_center.x, test_center.y)):
+                        print("      -> Search stopped: Reached placement zone boundary.")
                         break
-                if valid_start_x is not None:
+                    found_aabb, found_center = check_spot(test_center)
+                    if found_aabb:
+                        final_aabb, final_center = found_aabb, found_center
+                        break
+                    current_offset += step
+
+            # **FALLBACK SEARCH**: If no next fixture, perform a 4-directional search
+            else:
+                print("      -> No next fixture target provided. FALLING BACK to 4-directional search.")
+                search_vectors = [Vec2(1, 0), Vec2(-1, 0), Vec2(0, 1), Vec2(0, -1)] # Right, Left, Up, Down
+                search_radius = 1000  # Max distance to search
+                step = 50
+
+                for move_vec in search_vectors:
+                    for i in range(1, int(search_radius / step) + 1):
+                        offset_vec = move_vec * (i * step)
+                        test_center = target_center + offset_vec
+
+                        # Check if the test point is still in the valid zone before checking the spot
+                        if not zone.contains(Point(test_center.x, test_center.y)):
+                            continue # Skip points outside the zone
+
+                        found_aabb, found_center = check_spot(test_center)
+                        if found_aabb:
+                            final_aabb, final_center = found_aabb, found_center
+                            break # Found a spot, stop searching this direction
+                    if final_aabb:
+                        break # Found a spot, stop searching all directions
+            # --- MODIFICATION END ---
+
+        if final_aabb is None:
+            return False
+
+        if final_center: # Ensure final_center is not None before proceeding
+            rotated_offset = fixture.bounding_box.center.rotate(math.radians(angle_deg))
+            final_insert_point = final_center - rotated_offset
+            self.place_fixture(fixture, (final_insert_point.x, final_insert_point.y, 0), angle_deg, True)
+            placed_bboxes.append((final_aabb.extmin.x, final_aabb.extmin.y, final_aabb.extmax.x, final_aabb.extmax.y))
+            return True
+        else:
+            # This case might happen if check_spot returns a valid aabb but None for center, though unlikely.
+            return False
+
+
+
+    def _validate_and_place_at_point_euro_og(self, fixture, target_center, angle_deg, placed_bboxes, debug_draw=False, next_target_center: Optional[Vec2] = None):
+        """
+        [V4 - FINAL] Validates and places a fixture with two-tiered overlap rules:
+        - ZERO TOLERANCE: Any overlap on the fixture's physical body is a failure.
+        - TOLERANCE: Minor overlaps on the 1050mm clearance aisles are ignored.
+        """
+        from shapely.geometry import Polygon, box
+        from ezdxf.math import Matrix44, BoundingBox2d
+        import math
+
+        # --- Internal helper function to check any given spot ---
+        def check_spot(center_point):
+            """
+            [MODIFIED] Performs a two-step validation check.
+            """
+            OVERLAP_TOLERANCE_AREA = 60000.0 # 10cm x 10cm
+
+            # 1. Calculate fixture's footprint (unchanged)
+            transform = Matrix44.chain(
+                Matrix44.translate(-fixture.bounding_box.center.x, -fixture.bounding_box.center.y, 0),
+                Matrix44.z_rotate(math.radians(angle_deg)),
+                Matrix44.translate(center_point.x, center_point.y, 0)
+            )
+            world_corners = list(transform.transform_vertices(fixture.bounding_box.rect_vertices()))
+            current_aabb = BoundingBox2d(world_corners)
+            fixture_polygon = Polygon([(p.x, p.y) for p in world_corners])
+
+            # 2. Perform standard validation (is it inside the room?)
+            is_inside = self.floorplan_polygon.buffer(-1.0).contains(fixture_polygon)
+            if not is_inside:
+                return None, None
+
+            # --- NEW LOGIC: STEP 1 - Check Fixture Body with ZERO Tolerance ---
+            is_body_overlapping = False
+            for b in placed_bboxes:
+                obstacle_poly = box(*b)
+                # Use a simple, direct intersection check. Any overlap is a failure.
+                if fixture_polygon.intersects(obstacle_poly):
+                    is_body_overlapping = True
                     break
-                search_offset += 100 # If not clear, increase the offset and search further out.
             
-            # If the search completes and we couldn't find a valid spot, skip this row.
-            if valid_start_x is None:
-                print(f"    -> ⚠️ Could not find a valid horizontal spot for the row. Skipping.")
-                cursor_pos += 100
-                continue
+            if is_body_overlapping:
+                return None, None # Fail immediately if the body is touched
+            # --- END OF NEW LOGIC ---
 
-            # If we found a valid spot, this loop actually places the fixtures.
-            current_x_in_row = valid_start_x
-            for i in range(num_to_place):
-                # Take the fixture off the "to-do list".
-                fxtr = fixture_queue.popleft()
-                x1, y1 = current_x_in_row, cursor_pos
-                # This function draws the fixture in the DXF file and records its position.
-                if self._validate_and_place_at_point(fxtr, Vec2(x1 + fxtr.width/2, y1 + fxtr.height/2), 0, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({x1:.0f}, {y1:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}' during placement.")
+            # 3. Perform special Euro Centre clearance validation
+            if "euro_centre" in fixture.name.lower():
+                clearance = 1050.0
                 
-                # Move the horizontal cursor for the next fixture in this same row.
-                current_x_in_row += fxtr.width + current_gap
+                # --- NEW LOGIC: STEP 2 - Check Aisles WITH Tolerance ---
+                # This helper function still uses the area tolerance
+                def is_aisle_significantly_blocked(clearance_poly):
+                    for b in placed_bboxes:
+                        obstacle_poly = box(*b)
+                        if clearance_poly.intersects(obstacle_poly):
+                            intersection_area = clearance_poly.intersection(obstacle_poly).area
+                            if intersection_area > OVERLAP_TOLERANCE_AREA:
+                                return True # Aisle is significantly blocked
+                    return False # Aisle is clear or only has minor overlaps
 
-            # After the row is finished, move the main vertical cursor up to prepare for the next row.
-            cursor_pos += footprint + VERTICAL_ROW_GAP
+                if 85 < angle_deg < 95 or 265 < angle_deg < 275: # Rotated
+                    left_aisle = box(current_aabb.extmin.x - clearance, current_aabb.extmin.y + 100, current_aabb.extmin.x, current_aabb.extmax.y - 100)
+                    right_aisle = box(current_aabb.extmax.x, current_aabb.extmin.y + 100, current_aabb.extmax.x + clearance, current_aabb.extmax.y - 100)
+                    if is_aisle_significantly_blocked(left_aisle) or is_aisle_significantly_blocked(right_aisle):
+                        return None, None
+                else: # Not rotated
+                    top_aisle = box(current_aabb.extmin.x + 100, current_aabb.extmax.y, current_aabb.extmax.x - 100, current_aabb.extmax.y + clearance)
+                    bottom_aisle = box(current_aabb.extmin.x + 100, current_aabb.extmin.y - clearance, current_aabb.extmax.x - 100, current_aabb.extmin.y)
+                    if is_aisle_significantly_blocked(top_aisle) or is_aisle_significantly_blocked(bottom_aisle):
+                        return None, None
+                # --- END OF NEW LOGIC ---
 
-        # After the main `while` loop finishes, check if there are any fixtures left.
-        if fixture_queue:
-            # If the queue isn't empty, it means we ran out of space.
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures ---")
-        else:
-            # If the queue is empty, all fixtures were placed successfully.
-            print("\n--- ✅ Finished Dynamic Central Fixture Placement ---")
-           
-    
-    def _calculate_dynamic_bottom_margin_percentage(self) -> float:
-        """
-        Calculates a dynamic BOTTOM MARGIN percentage for portrait mode based on
-        a collaborative assessment of both vertical fixture congestion and total floor area.
-        """
-        print("\n    -> Calculating dynamic BOTTOM MARGIN based on fixture count and floor area...")
+            # If all checks pass, return the valid data.
+            return current_aabb, center_point
 
-        try:
-            # --- STEP 1: Get the total floor area ---
-            # This new step retrieves the store's size in square feet.
-            floor_area_sqft = self.calculate_area_sqft()
-
-            # --- STEP 2: Count all fixtures that will be stacked vertically ---
-            total_vertical_units = 0
-            
-            # Central fixtures are the primary consumers of vertical space
-            total_vertical_units += self.fixtures.get("floor_fixtures", {}).get("Euro_centre", 0)
-            total_vertical_units += self.fixtures.get("floor_fixtures", {}).get("Lensbar", 0)
-
-            # A Corian set is a large vertical block
-            total_vertical_units += self.fixtures.get("Corian_table_set", {}).get("Corian_table", 0) * 2 # Count as 2 units
-            
-            # The POS/AR/Sofa stack is another major vertical block
-            if any(self.fixtures.get("POS", {}).values()) or any("sofa" in k.lower() for k in self.fixtures.get("loose_furniture", {})):
-                total_vertical_units += 2 # Count the whole stack as 2 units
-
-
-            print(f"      -> Total vertical fixture units: {total_vertical_units}")
-            print(f"      -> Total floor area: {floor_area_sqft:.0f} sq. ft.")
-
-            # --- STEP 3: Choose a margin percentage using BOTH area and congestion ---
-            margin_pct = 0.25 # A safe default
-
-            # Logic for SMALL stores (e.g., less than 500 sq. ft.)
-            if floor_area_sqft < 500:
-                print("      -> Store size is SMALL.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.20
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.15
-                else:                              # High congestion
-                    margin_pct = 0.10
-
-            elif floor_area_sqft <= 750:
-                print("      -> Store size is SMALL.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.30
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.30
-                else:                              # High congestion
-                    margin_pct = 0.30
-            
-            # Logic for MEDIUM stores (e.g., 750 to 1250 sq. ft.)
-            elif floor_area_sqft <= 1250:
-                print("      -> Store size is MEDIUM.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.15
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.20
-                else:                              # High congestion
-                    margin_pct = 0.20
-
-            elif floor_area_sqft <= 2500:
-                print("      -> Store size is MEDIUM.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.15
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.15
-                else:                              # High congestion
-                    margin_pct = 0.10
-
-            # Logic for LARGE stores (e.g., more than 1250 sq. ft.)
-            else:
-                print("      -> Store size is LARGE.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.15
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.10
-                else:                              # High congestion
-                    margin_pct = 0.05
-            
-            print(f"      -> Final dynamic margin selected: {margin_pct:.0%}")
-            return margin_pct
-
-        except Exception as e:
-            print(f"    -> ⚠️ Could not calculate dynamic margin due to an error: {e}")
-            return 0.20 # Return a safe default
-    
-    
-    def _calculate_dynamic_bottom_margin_percentage_str(self) -> float:
-        """
-        Calculates a dynamic BOTTOM MARGIN percentage for portrait mode based on
-        a collaborative assessment of both vertical fixture congestion and total floor area.
-        """
-        print("\n    -> Calculating dynamic BOTTOM MARGIN based on fixture count and floor area...")
-
-        try:
-            # --- STEP 1: Get the total floor area ---
-            # This new step retrieves the store's size in square feet.
-            floor_area_sqft = self.calculate_area_sqft()
-
-            # --- STEP 2: Count all fixtures that will be stacked vertically ---
-            total_vertical_units = 0
-            
-            # Central fixtures are the primary consumers of vertical space
-            total_vertical_units += self.fixtures.get("floor_fixtures", {}).get("Euro_centre", 0)
-            total_vertical_units += self.fixtures.get("floor_fixtures", {}).get("Lensbar", 0)
-
-            # A Corian set is a large vertical block
-            total_vertical_units += self.fixtures.get("Corian_table_set", {}).get("Corian_table", 0) * 2 # Count as 2 units
-            
-            # The POS/AR/Sofa stack is another major vertical block
-            if any(self.fixtures.get("POS", {}).values()) or any("sofa" in k.lower() for k in self.fixtures.get("loose_furniture", {})):
-                total_vertical_units += 2 # Count the whole stack as 2 units
-
-
-            print(f"      -> Total vertical fixture units: {total_vertical_units}")
-            print(f"      -> Total floor area: {floor_area_sqft:.0f} sq. ft.")
-
-            # --- STEP 3: Choose a margin percentage using BOTH area and congestion ---
-            margin_pct = 0.25 # A safe default
-
-            # Logic for SMALL stores (e.g., less than 500 sq. ft.)
-            if floor_area_sqft < 500:
-                print("      -> Store size is SMALL.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.20
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.15
-                else:                              # High congestion
-                    margin_pct = 0.10
-
-            elif floor_area_sqft <= 750:
-                print("      -> Store size is SMALL.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.30
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.30
-                else:                              # High congestion
-                    margin_pct = 0.30
-            
-            # Logic for MEDIUM stores (e.g., 750 to 1250 sq. ft.)
-            elif floor_area_sqft <= 1250:
-                print("      -> Store size is MEDIUM.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.15
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.15
-                else:                              # High congestion
-                    margin_pct = 0.15
-
-            elif floor_area_sqft <= 2500:
-                print("      -> Store size is MEDIUM.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.15
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.15
-                else:                              # High congestion
-                    margin_pct = 0.10
-
-            # Logic for LARGE stores (e.g., more than 1250 sq. ft.)
-            else:
-                print("      -> Store size is LARGE.")
-                if total_vertical_units <= 4:      # Low congestion
-                    margin_pct = 0.15
-                elif total_vertical_units <= 8:    # Medium congestion
-                    margin_pct = 0.10
-                else:                              # High congestion
-                    margin_pct = 0.05
-            
-            print(f"      -> Final dynamic margin selected: {margin_pct:.0%}")
-            return margin_pct
-
-        except Exception as e:
-            print(f"    -> ⚠️ Could not calculate dynamic margin due to an error: {e}")
-            return 0.20 # Return a safe default
-
-
-#---------------------new  test for euro center placement
-#---------------------new  test for euro center placement
-
-
-    def place_central_fixtures_from_qms(self, placed_bboxes: List[tuple]) -> None:
-        """
-        Places central fixtures by anchoring them a fixed distance above the
-        highest placed QMS/Greeter desk, instead of the bottom wall.
-        The placement stops before hitting standing tables or the top wall.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-        from ezdxf.bbox import extents
-
-        print("\n--- 🧠 Placing Central Fixtures Anchored to QMS Desk ---")
-
-        # --- 1. SETUP & LOAD FIXTURES (Unchanged) ---
-        vertical_row_spacing = self._calculate_dynamic_vertical_gap_strategy_2()
-        config = self.fixtures.get("floor_fixtures", {})
-        euro_count = config.get("Euro_centre", 0)
-        lensbar_count = config.get("Lensbar", 0)
-        if euro_count + lensbar_count == 0:
-            return
-
-        fixture_queue = collections.deque()
-        try:
-            if lensbar_count > 0:
-                fixture_queue.extend([Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"])] * lensbar_count)
-            if euro_count > 0:
-                fixture_queue.extend([Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])] * euro_count)
-        except Exception as e:
-            print(f"🔥 FATAL: Could not load a central fixture: {e}")
-            return
-
-        # --- 2. DEFINE PLACEMENT ZONE (MODIFIED) ---
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
+        # --- Main Function Logic (This part remains unchanged) ---
         
-        if not qms_entities:
-            print("    -> ⚠️ Could not find a QMS Desk to anchor to. Aborting placement.")
-            return
+        final_aabb, final_center = check_spot(target_center)
 
-        qms_bbox = extents(qms_entities)
-        qms_top_y = qms_bbox.extmax.y
-        
-        GAP_ABOVE_QMS = 800.0
-        cursor_y = qms_top_y + GAP_ABOVE_QMS
-        
-        
-        # =================== THIS SECTION HAS BEEN CHANGED ===================
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-
-        if standing_table_entities:
-            # Get a representative fixture to know the height of the rows to be placed.
-            if not fixture_queue:
-                # Fallback if the queue is somehow empty
-                cursor_y_end = self.cvc.max_y - 50.0
-            else:
-                representative_fixture = fixture_queue[0]
-                # When rotated 90 degrees, the fixture's width becomes its effective height.
-                fixture_row_height = representative_fixture.width
-                
-                standing_tables_bbox = extents(standing_table_entities)
-                standing_tables_bottom_y = standing_tables_bbox.extmin.y
-                
-                # The final visual gap you want to see.
-                FINAL_VISUAL_GAP = 1050.0
-                
-                # Adjust the "Do Not Cross" line to account for the fixture's height AND the gap.
-                cursor_y_end = standing_tables_bottom_y - FINAL_VISUAL_GAP - fixture_row_height
-                
-                print(f"  -> Standing Tables found. Adjusting end point for a fixed {FINAL_VISUAL_GAP}mm gap.")
-                print(f"    -> Final placement will stop before y={cursor_y_end:.0f}.")
-        else:
-            # Fallback to the old logic if no standing tables are present.
-            cursor_y_end = self.cvc.max_y - 50.0
-            print(f"  -> No Standing Tables found. Using top wall as placement end point at y={cursor_y_end:.0f}.")
-        # =================== END OF MODIFICATION ===================
-
-
-
-
-        print(f"  -> Anchoring to QMS Desk. Starting placement at y={cursor_y:.0f}.")
-
-        # --- Helper functions (Unchanged) ---
-        def _is_rotated_row_valid(start_x, y, fixtures_in_row, gap):
-            current_x_in_row = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                candidate_box = box(current_x_in_row, y, current_x_in_row + rotated_width, y + rotated_height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in placed_bboxes):
-                    return False
-                if i < len(fixtures_in_row) - 1:
-                    current_x_in_row += rotated_width + gap
-            return True
-        
-        def _calculate_dynamic_euro_gap(num_in_stack):
-            if num_in_stack <= 1: return 0.0
-            elif num_in_stack == 2: return 1000.0
-            elif num_in_stack == 3: return 1200.0
-            else: return 1200.0
-        
-        def _find_best_stack_size(local_width, walking_margin, total_euros_in_queue, fixture_obj):
-            max_to_try = 3
-            for n in range(min(max_to_try, total_euros_in_queue), 0, -1):
-                gap = _calculate_dynamic_euro_gap(n)
-                required_width = (fixture_obj.height * n) + (gap * (n - 1)) + walking_margin 
-                if required_width <= local_width:
-                    return n, gap
-            return 0, 0
-
-        # --- 3. MAIN PLACEMENT LOOP (Unchanged) ---
-        while fixture_queue:
-            if cursor_y > cursor_y_end:
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement.")
-                break
-
-            next_fxtr_obj = fixture_queue[0]
-            stack_width = next_fxtr_obj.height
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (next_fxtr_obj.width / 2)), (self.cvc.max_x + 100, cursor_y + (next_fxtr_obj.width / 2))]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100
-                continue
-            local_space_bounds = intersection.bounds
-            # local_width = local_space_bounds[2] - local_bounds[0]
-            local_width = local_space_bounds[2] - local_space_bounds[0]
-            local_start_x = local_space_bounds[0]
-            walking_space_margin = max(300.0, local_width * 0.50)
-            num_to_place, horizontal_gap = 0, 0
-            if next_fxtr_obj.name == "Lensbar":
-                if next_fxtr_obj.height + walking_space_margin <= local_width:
-                    num_to_place = 1
-            elif next_fxtr_obj.name == "Euro_centre":
-                num_to_place, horizontal_gap = _find_best_stack_size(local_width, walking_space_margin, len(fixture_queue), next_fxtr_obj)
-            if num_to_place == 0:
-                cursor_y += 100
-                continue
-            fixtures_for_this_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (stack_width * num_to_place) + (horizontal_gap * (num_to_place - 1))
-            ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-            valid_start_x = None
-            search_offset = 0
-            while valid_start_x is None and search_offset < local_width / 2:
-                for sign in [1, -1]:
-                    test_x = ideal_start_x + (search_offset * sign) - 5
-                    if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                        valid_start_x = test_x
-                        break
-                search_offset += 100
-            if valid_start_x is None:
-                cursor_y += 100
-                continue
-            current_x_in_row = valid_start_x
-            for i in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                target_center_x = current_x_in_row + (rotated_width / 2)
-                target_center_y = cursor_y + (rotated_height / 2)
-                if self._validate_and_place_at_point(fxtr, Vec2(target_center_x, target_center_y), 90, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x_in_row:.0f}, {cursor_y:.0f})")
+        if final_aabb is None:
+            print(f"    -> Initial spot at ({target_center.x:.0f}, {target_center.y:.0f}) is blocked. Starting directional search...")
+            
+            primary_direction = None
+            if next_target_center:
+                direction_vector = (next_target_center - target_center).normalize()
+                if abs(direction_vector.x) > abs(direction_vector.y):
+                    primary_direction = Vec2(1, 0) if direction_vector.x > 0 else Vec2(-1, 0)
+                    print(f"      -> Prioritizing search in HORIZONTAL direction towards next fixture.")
                 else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}' during placement.")
-                current_x_in_row += rotated_width + horizontal_gap
-            cursor_y += rotated_height + vertical_row_spacing
+                    primary_direction = Vec2(0, 1) if direction_vector.y > 0 else Vec2(0, -1)
+                    print(f"      -> Prioritizing search in VERTICAL direction towards next fixture.")
 
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures ---")
+            if not primary_direction:
+                is_rotated = 85 < angle_deg < 95 or 265 < angle_deg < 275
+                primary_direction = Vec2(0, 1) if is_rotated else Vec2(1, 0)
+                print(f"      -> No next target given. Falling back to default search based on rotation.")
+            
+            secondary_direction = primary_direction.orthogonal()
+            reverse_primary = -primary_direction
+            reverse_secondary = -secondary_direction
+            search_vectors = [primary_direction, secondary_direction, reverse_secondary, reverse_primary]
+
+            search_radius = 1000
+            step = 50
+
+            for move_vec in search_vectors:
+                for i in range(1, int(search_radius / step) + 1):
+                    offset_vec = move_vec * (i * step)
+                    test_center = target_center + offset_vec
+                    
+                    found_aabb, found_center = check_spot(test_center)
+                    if found_aabb:
+                        print(f"    -> ✅ Found valid spot after nudging by ({offset_vec.x}mm, {offset_vec.y}mm). New center: ({found_center.x:.0f}, {found_center.y:.0f})")
+                        final_aabb = found_aabb
+                        final_center = found_center
+                        break 
+                if final_aabb:
+                    break
+        
+        if final_aabb is None:
+            return False
+
+        if debug_draw:
+            self._draw_euro_clearance_zones_for_validation(final_aabb, angle_deg)
+        
+        rotated_offset = fixture.bounding_box.center.rotate(math.radians(angle_deg))
+        final_insert_point = final_center - rotated_offset
+        self.place_fixture(fixture, (final_insert_point.x, final_insert_point.y, 0), angle_deg, True)
+        
+        placed_bboxes.append((final_aabb.extmin.x, final_aabb.extmin.y, final_aabb.extmax.x, final_aabb.extmax.y))
+        
+        return True
+
+    def _draw_euro_clearance_zones_for_validation(self, aabb, angle_deg, layer_name="DEBUG_EURO_CLEARANCE", color=30):
+        """
+        [DEBUG HELPER] Draws the 1050mm customer clearance zones for a Euro Centre.
+        """
+        from shapely.geometry import box
+
+        if layer_name not in self.doc.layers:
+            self.doc.layers.add(name=layer_name, color=color) # ACI color 30 is a shade of orange
+
+        clearance = 1050.0
+        
+        # Rotated (Column-wise): Access is left and right
+        if 85 < angle_deg < 95 or 265 < angle_deg < 275:
+            left_box = box(aabb.extmin.x - clearance, aabb.extmin.y + 100, aabb.extmin.x, aabb.extmax.y - 100)
+            self.msp.add_lwpolyline(list(left_box.exterior.coords), close=True, dxfattribs={"layer": layer_name})
+
+            right_box = box(aabb.extmax.x, aabb.extmin.y + 100, aabb.extmax.x + clearance, aabb.extmax.y - 100)
+            self.msp.add_lwpolyline(list(right_box.exterior.coords), close=True, dxfattribs={"layer": layer_name})
+            
+        # Not rotated (Row-wise): Access is top and bottom
         else:
-            print("\n--- ✅ Finished Dynamic Central Fixture Placement ---")
+            top_box = box(aabb.extmin.x + 100, aabb.extmax.y, aabb.extmax.x - 100, aabb.extmax.y + clearance)
+            self.msp.add_lwpolyline(list(top_box.exterior.coords), close=True, dxfattribs={"layer": layer_name})
 
-
-
-    def calculate_max_euro_capacity(self) -> int:
-        """
-        Calculates the maximum possible number of Euro_centre fixtures that can fit
-        in the designated zone between the QMS desk and the Standing Tables.
-        This function is a simulation and does not place any fixtures.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import LineString
-        from ezdxf.bbox import extents
-        import collections
-
-        print("\n--- 🔬 Simulating Euro Centre Capacity ---")
-
-        # --- 1. Load a representative fixture to get dimensions ---
-        try:
-            euro_fxtr = Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])
-            # When rotated 90 degrees, the fixture's width becomes its height
-            fixture_row_height = euro_fxtr.width 
-            vertical_row_spacing = self._calculate_dynamic_vertical_gap_strategy_2()
-        except Exception as e:
-            print(f"  -> 🔥 Could not load Euro_centre fixture for simulation: {e}")
-            return 0
-
-        # --- 2. Define the Vertical Placement Zone ---
-        # Find START of zone (above QMS desk)
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities:
-            print("  -> ⚠️ Cannot calculate capacity: QMS Desk not found.")
-            return 0
-        qms_top_y = extents(qms_entities).extmax.y
-        start_y = qms_top_y + 50.0
-
-        # Find END of zone (below standing tables)
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        if not standing_table_entities:
-            print("  -> ⚠️ Cannot calculate capacity: Standing Tables not found.")
-            return 0
-        standing_tables_bottom_y = extents(standing_table_entities).extmin.y
-        end_y = standing_tables_bottom_y - 1050.0 - fixture_row_height
-
-        print(f"  -> Simulation Zone: y={start_y:.0f} to y={end_y:.0f}")
-
-        if start_y >= end_y:
-            print("  -> No vertical space available between QMS and Standing Tables.")
-            return 0
-
-        # --- 3. Loop through the zone and count fixtures ---
-        total_euro_count = 0
-        cursor_y = start_y
-
-        while cursor_y < end_y:
-            # Measure local width at the current cursor position
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (fixture_row_height / 2)), (self.cvc.max_x + 100, cursor_y + (fixture_row_height / 2))]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100 # Nudge up if no valid space
-                continue
-            
-            local_width = intersection.bounds[2] - intersection.bounds[0]
-            walking_space_margin = max(300.0, local_width * 0.50)
-
-            def _calculate_dynamic_euro_gap(num_in_stack):
-                if num_in_stack <= 1: return 0.0
-                elif num_in_stack == 2: return 1000.0
-                elif num_in_stack == 3: return 1200.0
-                else: return 1200.0
-            
-            # Calculate how many can fit in this row
-            def _find_best_stack_size(local_width, walking_margin, total_euros_in_queue, fixture_obj):
-                max_to_try = 3
-                for n in range(min(max_to_try, total_euros_in_queue), 0, -1):
-                    gap = _calculate_dynamic_euro_gap(n)
-                    required_width = (fixture_obj.height * n) + (gap * (n - 1)) + walking_margin 
-                    if required_width <= local_width:
-                        return n, gap
-                return 0, 0
-            num_to_place, _ = _find_best_stack_size(local_width, walking_space_margin, 100, euro_fxtr) 
-            
-
-            if num_to_place > 0:
-                print(f"    -> Row at y={cursor_y:.0f} can fit {num_to_place} Euro(s).")
-                total_euro_count += num_to_place
-                # Advance the cursor to the next available row position
-                cursor_y += fixture_row_height + vertical_row_spacing
-            else:
-                # If no fixtures fit, nudge the cursor up slightly to check the next spot
-                cursor_y += 100
-
-        print(f"\n--- ✅ Simulation Complete ---")
-        print(f"--- Maximum Euro Centre Capacity: {total_euro_count} ---")
-        return total_euro_count
-
-#---------------------new  test for euro center placement
-#---------------------new  test for euro center placement
-
-#---------------------new  test for euro center placement-zero-rotation
-#---------------------new  test for euro center placement-zero-rotation
-
-    def place_central_fixtures_from_qms_v2(self, placed_bboxes: List[tuple]) -> None:
-        """
-        [V2] Places central fixtures anchored to the QMS desk with ZERO rotation.
-        - Fixtures are placed in horizontal rows (un-rotated).
-        - Vertical gap between rows is fixed at 2000mm.
-        - Horizontal gap between fixtures in a row is fixed at 5mm.
-        - The placement corridor is still defined between the QMS desk and Standing Tables.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-        from ezdxf.bbox import extents
-
-        print("\n--- 🧠 Placing Central Fixtures Anchored to QMS Desk (V2 - Zero Rotation) ---")
-
-        # --- 1. SETUP & LOAD FIXTURES ---
-        vertical_row_spacing = 1200.0  # CHANGED: Fixed vertical gap
-        horizontal_gap = 5.0  # CHANGED: Fixed horizontal gap
-
-        config = self.fixtures.get("floor_fixtures", {})
-        euro_count = config.get("Euro_centre", 0)
-        lensbar_count = config.get("Lensbar", 0)
-        if euro_count + lensbar_count == 0:
-            return
-
-        fixture_queue = collections.deque()
-        try:
-            if lensbar_count > 0:
-                fixture_queue.extend([Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"])] * lensbar_count)
-            if euro_count > 0:
-                fixture_queue.extend([Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])] * euro_count)
-        except Exception as e:
-            print(f"🔥 FATAL: Could not load a central fixture: {e}")
-            return
-
-        # --- 2. DEFINE PLACEMENT ZONE ---
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities:
-            print("    -> ⚠️ Could not find a QMS Desk to anchor to. Aborting placement.")
-            return
-
-        qms_bbox = extents(qms_entities)
-        qms_top_y = qms_bbox.extmax.y
+            bottom_box = box(aabb.extmin.x + 100, aabb.extmin.y - clearance, aabb.extmax.x - 100, aabb.extmin.y)
+            self.msp.add_lwpolyline(list(bottom_box.exterior.coords), close=True, dxfattribs={"layer": layer_name})
         
-        GAP_ABOVE_QMS = 800.0
-        cursor_y = qms_top_y + GAP_ABOVE_QMS
-        
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        if standing_table_entities:
-            representative_fixture = fixture_queue[0]
-            # CHANGED: The effective row height is now the fixture's actual height.
-            fixture_row_height = representative_fixture.height
-            
-            standing_tables_bbox = extents(standing_table_entities)
-            standing_tables_bottom_y = standing_tables_bbox.extmin.y
-            
-            FINAL_VISUAL_GAP = 1050.0
-            cursor_y_end = standing_tables_bottom_y - FINAL_VISUAL_GAP - fixture_row_height
-            
-            print(f"  -> Standing Tables found. Adjusting end point for a fixed {FINAL_VISUAL_GAP}mm gap.")
-            print(f"    -> Final placement will stop before y={cursor_y_end:.0f}.")
-        else:
-            cursor_y_end = self.cvc.max_y - 50.0
-            print(f"  -> No Standing Tables found. Using top wall as placement end point at y={cursor_y_end:.0f}.")
 
-        print(f"  -> Anchoring to QMS Desk. Starting placement at y={cursor_y:.0f}.")
 
-        # --- Helper functions (adapted for zero rotation) ---
-        def _is_row_valid(start_x, y, fixtures_in_row, gap):
-            current_x_in_row = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                # CHANGED: Use standard width and height
-                width, height = fxtr.width, fxtr.height
-                candidate_box = box(current_x_in_row, y, current_x_in_row + width, y + height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in placed_bboxes):
-                    return False
-                if i < len(fixtures_in_row) - 1:
-                    current_x_in_row += width + gap
-            return True
-        
-        def _find_best_row_size(local_width, walking_margin, total_fixtures_in_queue, fixture_obj, gap):
-            max_to_try = 5 # Allow more fixtures per row since they are narrower
-            for n in range(min(max_to_try, total_fixtures_in_queue), 0, -1):
-                # CHANGED: Use standard fixture width for calculation
-                required_width = (fixture_obj.width * n) + (gap * (n - 1)) + walking_margin 
-                if required_width <= local_width:
-                    return n
-            return 0
-
-        # --- 3. MAIN PLACEMENT LOOP (adapted for zero rotation) ---
-        while fixture_queue:
-            if cursor_y > cursor_y_end:
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement.")
-                break
-
-            next_fxtr_obj = fixture_queue[0]
-            # CHANGED: The height of the row is now the fixture's height
-            row_height = next_fxtr_obj.height
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (row_height / 2)), (self.cvc.max_x + 100, cursor_y + (row_height / 2))]))
-            
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100
-                continue
-
-            local_space_bounds = intersection.bounds
-            local_width = local_space_bounds[2] - local_space_bounds[0]
-            local_start_x = local_space_bounds[0]
-            walking_space_margin = max(300.0, local_width * 0.70)
-
-            # Determine how many of the same type are available to be placed in a row
-            fixture_type = next_fxtr_obj.name
-            count_of_same_type = sum(1 for f in fixture_queue if f.name == fixture_type)
-
-            num_to_place = _find_best_row_size(local_width, walking_space_margin, count_of_same_type, next_fxtr_obj, horizontal_gap)
-
-            if num_to_place == 0:
-                cursor_y += 100
-                continue
-
-            fixtures_for_this_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (next_fxtr_obj.width * num_to_place) + (horizontal_gap * (num_to_place - 1))
-            
-            ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-            
-            valid_start_x = None
-            search_offset = 0
-            while valid_start_x is None and search_offset < local_width / 2:
-                for sign in [1, -1]:
-                    test_x = ideal_start_x + (search_offset * sign)
-                    if _is_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                        valid_start_x = test_x
-                        break
-                search_offset += 100
-            
-            if valid_start_x is None:
-                cursor_y += 100
-                continue
-
-            current_x_in_row = valid_start_x
-            for i in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                # CHANGED: Use standard width and height for placement
-                width, height = fxtr.width, fxtr.height
-                
-                target_center_x = current_x_in_row + (width / 2)
-                target_center_y = cursor_y + (height / 2)
-
-                # CHANGED: Use rotation=0
-                if self._validate_and_place_at_point(fxtr, Vec2(target_center_x, target_center_y), 0, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x_in_row:.0f}, {cursor_y:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}' during placement.")
-                
-                current_x_in_row += width + horizontal_gap
-
-            # CHANGED: Advance cursor by the row's actual height
-            cursor_y += row_height + vertical_row_spacing
-
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures ---")
-        else:
-            print("\n--- ✅ Finished Dynamic Central Fixture Placement (V2) ---")
-
-    def calculate_max_euro_capacity_v2(self) -> int:
-        """
-        [V2] Calculates the maximum possible number of Euro_centre fixtures based on
-        the logic of place_central_fixtures_from_qms_v2() (zero rotation).
-        This function is a simulation and does not place any fixtures.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import LineString
-        from ezdxf.bbox import extents
-        import collections
-
-        print("\n--- 🔬 Simulating Euro Centre Capacity (V2 - Zero Rotation) ---")
-
-        # --- 1. Load a representative fixture to get dimensions ---
-        try:
-            euro_fxtr = Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])
-            # CHANGED: The row height is the fixture's actual height (no rotation)
-            fixture_row_height = euro_fxtr.height
-            # CHANGED: The vertical gap is now a fixed value
-            vertical_row_spacing = 1200.0
-        except Exception as e:
-            print(f"  -> 🔥 Could not load Euro_centre fixture for simulation: {e}")
-            return 0
-
-        # --- 2. Define the Vertical Placement Zone (Logic remains the same) ---
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities:
-            print("  -> ⚠️ Cannot calculate capacity: QMS Desk not found.")
-            return 0
-        qms_top_y = extents(qms_entities).extmax.y
-        start_y = qms_top_y + 800.0
-
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        if not standing_table_entities:
-            print("  -> ⚠️ Cannot calculate capacity: Standing Tables not found.")
-            return 0
-        standing_tables_bottom_y = extents(standing_table_entities).extmin.y
-        # Note: This calculation is correct because fixture_row_height was updated above
-        end_y = standing_tables_bottom_y - 1050.0 - fixture_row_height
-
-        print(f"  -> Simulation Zone: y={start_y:.0f} to y={end_y:.0f}")
-
-        if start_y >= end_y:
-            print("  -> No vertical space available between QMS and Standing Tables.")
-            return 0
-
-        # --- 3. Loop through the zone and count fixtures ---
-        total_euro_count = 0
-        cursor_y = start_y
-
-        while cursor_y < end_y:
-            # Note: This calculation is correct because fixture_row_height was updated
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (fixture_row_height / 2)), (self.cvc.max_x + 100, cursor_y + (fixture_row_height / 2))]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100
-                continue
-            
-            local_width = intersection.bounds[2] - intersection.bounds[0]
-            walking_space_margin = max(300.0, local_width * 0.50)
-
-            # CHANGED: Helper function adapted for zero rotation and fixed gap
-            def _find_best_row_size(local_width, walking_margin, total_fixtures_in_queue, fixture_obj):
-                max_to_try = 5  # Allow more fixtures per row since they are narrower
-                gap = 5.0  # Fixed horizontal gap
-                for n in range(min(max_to_try, total_fixtures_in_queue), 0, -1):
-                    # Use standard width for calculation
-                    required_width = (fixture_obj.width * n) + (gap * (n - 1)) + walking_margin
-                    if required_width <= local_width:
-                        return n  # Only need to return the count
-                return 0
-            
-            # We pass 100 as a large number for total_fixtures_in_queue to find the absolute max
-            num_to_place = _find_best_row_size(local_width, walking_space_margin, 100, euro_fxtr)
-            
-            if num_to_place > 0:
-                print(f"    -> Row at y={cursor_y:.0f} can fit {num_to_place} Euro(s).")
-                total_euro_count += num_to_place
-                # Advance the cursor using the updated row height and spacing
-                cursor_y += fixture_row_height + vertical_row_spacing
-            else:
-                cursor_y += 100
-
-        print(f"\n--- ✅ Simulation Complete (V2) ---")
-        print(f"--- Maximum Euro Centre Capacity (Zero Rotation): {total_euro_count} ---")
-        return total_euro_count
-
-#---------------------new  test for euro center placement-zero-rotation
-#---------------------new  test for euro center placement-zero-rotation
-#---------------------new  test for euro center placement--new_setup of centering
-#---------------------new  test for euro center placement--new_setup of centering
-
-    def place_central_fixtures_from_qms_lane_strategy(self, placed_bboxes: List[tuple]) -> None:
-        """
-        Places central fixtures using an intelligent "lane" strategy.
-        - The first row establishes a horizontal "lane".
-        - Subsequent rows try to stay in that lane.
-        - If a blockage occurs, it finds a new lane and continues from there.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-        from ezdxf.bbox import extents
-
-        print("\n--- 🧠 Placing Central Fixtures with 'Lane' Strategy ---")
-
-        # --- 1. SETUP & LOAD FIXTURES (Unchanged) ---
-        vertical_row_spacing = self._calculate_dynamic_vertical_gap_strategy_2()
-        config = self.fixtures.get("floor_fixtures", {})
-        euro_count = config.get("Euro_centre", 0)
-        lensbar_count = config.get("Lensbar", 0)
-        if euro_count + lensbar_count == 0:
-            return
-
-        fixture_queue = collections.deque()
-        try:
-            if lensbar_count > 0:
-                fixture_queue.extend([Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"])] * lensbar_count)
-            if euro_count > 0:
-                fixture_queue.extend([Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])] * euro_count)
-        except Exception as e:
-            print(f"🔥 FATAL: Could not load a central fixture: {e}")
-            return
-
-        # --- 2. DEFINE PLACEMENT ZONE (Unchanged) ---
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities:
-            print("    -> ⚠️ Could not find a QMS Desk to anchor to. Aborting placement.")
-            return
-        qms_bbox = extents(qms_entities)
-        qms_top_y = qms_bbox.extmax.y
-        GAP_ABOVE_QMS = 800.0
-        cursor_y = qms_top_y + GAP_ABOVE_QMS
-        
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        if standing_table_entities:
-            representative_fixture = fixture_queue[0]
-            fixture_row_height = representative_fixture.width
-            standing_tables_bbox = extents(standing_table_entities)
-            standing_tables_bottom_y = standing_tables_bbox.extmin.y
-            FINAL_VISUAL_GAP = 1050.0
-            cursor_y_end = standing_tables_bottom_y - FINAL_VISUAL_GAP - fixture_row_height
-        else:
-            cursor_y_end = self.cvc.max_y - 50.0
-        
-        # Helper functions (Unchanged)
-        def _is_rotated_row_valid(start_x, y, fixtures_in_row, gap):
-            current_x_in_row = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                candidate_box = box(current_x_in_row, y, current_x_in_row + rotated_width, y + rotated_height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in placed_bboxes):
-                    return False
-                if i < len(fixtures_in_row) - 1:
-                    current_x_in_row += rotated_width + gap
-            return True
-        
-        def _calculate_dynamic_euro_gap(num_in_stack):
-            if num_in_stack <= 1: return 0.0
-            elif num_in_stack == 2: return 1000.0
-            elif num_in_stack == 3: return 1200.0
-            else: return 1200.0
-        
-        def _find_best_stack_size(local_width, walking_margin, total_euros_in_queue, fixture_obj):
-            max_to_try = 3
-            for n in range(min(max_to_try, total_euros_in_queue), 0, -1):
-                gap = _calculate_dynamic_euro_gap(n)
-                required_width = (fixture_obj.height * n) + (gap * (n - 1)) + walking_margin 
-                if required_width <= local_width:
-                    return n, gap
-            return 0, 0
-            
-        # <<< --- NEW LANE LOGIC START --- >>>
-        lane_start_x = None  # This will store the X-coordinate of our current lane
-        # <<< --- NEW LANE LOGIC END --- >>>
-
-        # --- 3. MAIN PLACEMENT LOOP ---
-        while fixture_queue:
-            if cursor_y > cursor_y_end:
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement.")
-                break
-
-            # (The logic to determine num_to_place, gaps, etc. is unchanged)
-            next_fxtr_obj = fixture_queue[0]
-            stack_width = next_fxtr_obj.height
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (next_fxtr_obj.width / 2)), (self.cvc.max_x + 100, cursor_y + (next_fxtr_obj.width / 2))]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100; continue
-            local_space_bounds = intersection.bounds
-            local_width = local_space_bounds[2] - local_space_bounds[0]
-            local_start_x = local_space_bounds[0]
-            walking_space_margin = max(300.0, local_width * 0.50)
-            num_to_place, horizontal_gap = 0, 0
-            if next_fxtr_obj.name == "Lensbar":
-                if next_fxtr_obj.height + walking_space_margin <= local_width: num_to_place = 1
-            elif next_fxtr_obj.name == "Euro_centre":
-                num_to_place, horizontal_gap = _find_best_stack_size(local_width, walking_space_margin, len(fixture_queue), next_fxtr_obj)
-            if num_to_place == 0:
-                cursor_y += 100; continue
-            
-            fixtures_for_this_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (stack_width * num_to_place) + (horizontal_gap * (num_to_place - 1))
-            
-            # <<< --- MODIFIED CENTERING & PLACEMENT LOGIC START --- >>>
-            valid_start_x = None
-
-            if lane_start_x is None:
-                # This is the FIRST row. Find the initial lane using the resilient search.
-                print("    -> Establishing initial placement lane...")
-                ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-                search_offset = 0
-                while valid_start_x is None and search_offset < local_width / 2:
-                    for sign in [1, -1]:
-                        test_x = ideal_start_x + (search_offset * sign)
-                        if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                            valid_start_x = test_x
-                            lane_start_x = valid_start_x  # << SET THE LANE!
-                            print(f"    -> Initial lane established at x={lane_start_x:.0f}")
-                            break
-                    search_offset += 100
-            else:
-                # For SUBSEQUENT rows, first try to stay in the established lane.
-                if _is_rotated_row_valid(lane_start_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                    valid_start_x = lane_start_x # Success! Stay in the lane.
-                else:
-                    # BLOCKAGE! The current lane is blocked. Find a new one.
-                    print(f"    -> ⚠️ Blockage detected at x={lane_start_x:.0f}! Searching for a new lane...")
-                    ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-                    search_offset = 0
-                    while valid_start_x is None and search_offset < local_width / 2:
-                        for sign in [1, -1]:
-                            test_x = ideal_start_x + (search_offset * sign)
-                            if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                                valid_start_x = test_x
-                                lane_start_x = valid_start_x  # << SET THE NEW LANE!
-                                print(f"    -> New lane established at x={lane_start_x:.0f}")
-                                break
-                        search_offset += 100
-            
-            # --- This part is the final execution, which remains the same ---
-            if valid_start_x is None:
-                print(f"    -> ⚠️ Could not find any valid horizontal spot for the row. Skipping.")
-                cursor_y += 100
-                continue
-
-            current_x_in_row = valid_start_x
-            for i in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                target_center_x = current_x_in_row + (rotated_width / 2)
-                target_center_y = cursor_y + (rotated_height / 2)
-                if self._validate_and_place_at_point(fxtr, Vec2(target_center_x, target_center_y), 90, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x_in_row:.0f}, {cursor_y:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}' during placement.")
-                current_x_in_row += rotated_width + horizontal_gap
-            
-            cursor_y += rotated_height + vertical_row_spacing
-            # <<< --- MODIFIED CENTERING & PLACEMENT LOGIC END --- >>>
-
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures ---")
-        else:
-            print("\n--- ✅ Finished Dynamic Central Fixture Placement ('Lane' Strategy) ---")
-
-    def place_central_fixtures_from_qms_v1_og(self, placed_bboxes: List[tuple]) -> None:
-        """
-        [V2] Places central fixtures using an advanced "lane" strategy.
-        - Re-centers and establishes a new lane WHENEVER the optimal number
-          of fixtures per row changes, or when a hard blockage is hit.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-        from ezdxf.bbox import extents
-
-        print("\n--- 🧠 Placing Central Fixtures with Advanced 'Lane' Strategy (V2) ---")
-
-        # --- 1. SETUP & LOAD FIXTURES (Unchanged) ---
-        # (This section is identical to the previous version)
-        vertical_row_spacing = self._calculate_dynamic_vertical_gap_strategy_2()
-        config = self.fixtures.get("floor_fixtures", {})
-        euro_count = config.get("Euro_centre", 0)
-        lensbar_count = config.get("Lensbar", 0)
-        if euro_count + lensbar_count == 0:
-            return
-        fixture_queue = collections.deque()
-        try:
-            if lensbar_count > 0:
-                fixture_queue.extend([Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"])] * lensbar_count)
-            if euro_count > 0:
-                fixture_queue.extend([Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])] * euro_count)
-        except Exception as e:
-            print(f"🔥 FATAL: Could not load a central fixture: {e}"); return
-
-        # --- 2. DEFINE PLACEMENT ZONE (Unchanged) ---
-        # (This section is identical to the previous version)
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities:
-            print("    -> ⚠️ Could not find a QMS Desk to anchor to. Aborting placement."); return
-        qms_bbox = extents(qms_entities)
-        qms_top_y = qms_bbox.extmax.y
-        GAP_ABOVE_QMS = 50.0
-        cursor_y = qms_top_y + GAP_ABOVE_QMS
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        if standing_table_entities:
-            representative_fixture = fixture_queue[0]
-            fixture_row_height = representative_fixture.width
-            standing_tables_bbox = extents(standing_table_entities)
-            standing_tables_bottom_y = standing_tables_bbox.extmin.y
-            FINAL_VISUAL_GAP = 1050.0
-            cursor_y_end = standing_tables_bottom_y - FINAL_VISUAL_GAP - fixture_row_height
-        else:
-            cursor_y_end = self.cvc.max_y - 50.0
-        
-        # Helper functions (Unchanged)
-        def _is_rotated_row_valid(start_x, y, fixtures_in_row, gap):
-            current_x_in_row = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                candidate_box = box(current_x_in_row, y, current_x_in_row + rotated_width, y + rotated_height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in placed_bboxes): return False
-                if i < len(fixtures_in_row) - 1: current_x_in_row += rotated_width + gap
-            return True
-        def _calculate_dynamic_euro_gap(num_in_stack):
-            if num_in_stack <= 1: return 0.0
-            elif num_in_stack == 2: return 1000.0
-            elif num_in_stack == 3: return 1200.0
-            else: return 1200.0
-        def _find_best_stack_size(local_width, walking_margin, total_euros_in_queue, fixture_obj):
-            max_to_try = 3
-            for n in range(min(max_to_try, total_euros_in_queue), 0, -1):
-                gap = _calculate_dynamic_euro_gap(n)
-                required_width = (fixture_obj.height * n) + (gap * (n - 1)) + walking_margin 
-                if required_width <= local_width: return n, gap
-            return 0, 0
-            
-        # <<< --- NEW STATE VARIABLES --- >>>
-        lane_start_x = None
-        lane_fixture_count = 0 # Track the number of fixtures the lane is based on
-        # <<< --- END NEW STATE VARIABLES --- >>>
-
-        # --- 3. MAIN PLACEMENT LOOP ---
-        while fixture_queue:
-            if cursor_y > cursor_y_end:
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement."); break
-
-            # (Logic to determine num_to_place is unchanged)
-            next_fxtr_obj = fixture_queue[0]
-            stack_width = next_fxtr_obj.height
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (next_fxtr_obj.width / 2)), (self.cvc.max_x + 100, cursor_y + (next_fxtr_obj.width / 2))]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100; continue
-            local_space_bounds = intersection.bounds
-            local_width = local_space_bounds[2] - local_space_bounds[0]
-            local_start_x = local_space_bounds[0]
-            walking_space_margin = max(300.0, local_width * 0.50)
-            num_to_place, horizontal_gap = 0, 0
-            if next_fxtr_obj.name == "Lensbar":
-                if next_fxtr_obj.height + walking_space_margin <= local_width: num_to_place = 1
-            elif next_fxtr_obj.name == "Euro_centre":
-                num_to_place, horizontal_gap = _find_best_stack_size(local_width, walking_space_margin, len(fixture_queue), next_fxtr_obj)
-            if num_to_place == 0:
-                cursor_y += 100; continue
-            
-            fixtures_for_this_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (stack_width * num_to_place) + (horizontal_gap * (num_to_place - 1))
-            
-            # <<< --- V2: MODIFIED RE-CENTERING TRIGGER --- >>>
-            valid_start_x = None
-
-            # This condition now triggers for the first row OR if the row size changes.
-            if lane_start_x is None or num_to_place != lane_fixture_count:
-                if lane_start_x is not None: # This means the row size changed
-                    print(f"    -> Row size changed from {lane_fixture_count} to {num_to_place}. Re-centering and establishing new lane...")
-                else: # This is the first row
-                    print("    -> Establishing initial placement lane...")
-
-                # Perform the full resilient search to find the best center for the NEW group size.
-                ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-                search_offset = 0
-                while valid_start_x is None and search_offset < local_width / 2:
-                    for sign in [1, -1]:
-                        test_x = ideal_start_x + (search_offset * sign)
-                        if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                            valid_start_x = test_x
-                            lane_start_x = valid_start_x       # Set the new lane X
-                            lane_fixture_count = num_to_place  # Set the new lane count
-                            print(f"    -> New lane for {lane_fixture_count} fixture(s) established at x={lane_start_x:.0f}")
-                            break
-                    if valid_start_x is not None: break
-                    search_offset += 100
-            else:
-                # Row size is the same, so try to stay in the established lane.
-                if _is_rotated_row_valid(lane_start_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                    valid_start_x = lane_start_x # Success! Stay in the lane.
-                else:
-                    # BLOCKAGE! The lane is blocked even with the same number of fixtures.
-                    print(f"    -> ⚠️ Blockage detected in lane at x={lane_start_x:.0f}! Searching for a new lane...")
-                    ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-                    search_offset = 0
-                    while valid_start_x is None and search_offset < local_width / 2:
-                        for sign in [1, -1]:
-                            test_x = ideal_start_x + (search_offset * sign)
-                            if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                                valid_start_x = test_x
-                                lane_start_x = valid_start_x       # Set the new lane X
-                                # lane_fixture_count is already correct
-                                print(f"    -> New lane for {lane_fixture_count} fixture(s) established at x={lane_start_x:.0f}")
-                                break
-                        if valid_start_x is not None: break
-                        search_offset += 100
-            
-            # --- Final Execution (Unchanged) ---
-            if valid_start_x is None:
-                print(f"    -> ⚠️ Could not find any valid horizontal spot for the row. Skipping."); cursor_y += 100; continue
-
-            current_x_in_row = valid_start_x
-            for i in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                target_center_x = current_x_in_row + (rotated_width / 2)
-                target_center_y = cursor_y + (rotated_height / 2)
-                if self._validate_and_place_at_point(fxtr, Vec2(target_center_x, target_center_y), 90, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x_in_row:.0f}, {cursor_y:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}' during placement.")
-                current_x_in_row += rotated_width + horizontal_gap
-            
-            cursor_y += rotated_height + vertical_row_spacing
-
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures ---")
-
-
-        else:
-            print("\n--- ✅ Finished Dynamic Central Fixture Placement ('Advanced Lane' Strategy V2) ---")
-
-    def place_central_fixtures_from_qms_v1(self, placed_bboxes: List[tuple]) -> None:
-        """
-        [V3] Places central fixtures using a continuous "lane" strategy.
-        - Grants placement "privilege" to ignore standing tables when the cursor is in their zone.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-        from ezdxf.bbox import extents
-
-        print("\n--- 🧠 Placing Central Fixtures with Continuous Lane Strategy (V1 - Rotated) ---")
-
-        # --- 1. SETUP & LOAD FIXTURES ---
-        vertical_row_spacing = self._calculate_dynamic_vertical_gap_strategy_2()
-        config = self.fixtures.get("floor_fixtures", {})
-        fixture_queue = collections.deque([
-            Fixture(name, self.fixture_dict[name]["path"])
-            for name, count in config.items() if count > 0 for _ in range(count)
-        ])
-        if not fixture_queue: return
-
-        # --- 2. DEFINE PLACEMENT ZONE & BOUNDARIES ---
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities:
-            print("    -> ⚠️ Could not find QMS Desk to anchor. Aborting."); return
-        cursor_y = extents(qms_entities).extmax.y + 50.0
-
-        separator_line = self.msp.query('LINE[layer=="RETAIL_SEPARATOR"]').first
-        cursor_y_end = separator_line.dxf.start.y - 1050.0 if separator_line else self.cvc.max_y - 50.0
-        
-        # --- 3. SETUP THE "PRIVILEGE ZONE" ---
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        fallback_obstacles = list(placed_bboxes)
-        standing_tables_bbox = None
-        if standing_table_entities:
-            standing_tables_bbox = extents(standing_table_entities)
-            standing_table_bboxes_to_ignore = [(b.extmin.x, b.extmin.y, b.extmax.x, b.extmax.y) for e in standing_table_entities if (b := extents([e]))]
-            fallback_obstacles = [b for b in placed_bboxes if b not in standing_table_bboxes_to_ignore]
-            print(f"  -> Standing tables detected. Will grant placement privilege between y={standing_tables_bbox.extmin.y:.0f} and y={standing_tables_bbox.extmax.y:.0f}.")
-
-        # --- 4. HELPERS ---
-        def _is_rotated_row_valid(start_x, y, fixtures_in_row, gap, obstacles_to_check):
-            current_x_in_row = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                rotated_width, rotated_height = fxtr.height, fxtr.width
-                candidate_box = box(current_x_in_row, y, current_x_in_row + rotated_width, y + rotated_height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in obstacles_to_check): return False
-                if i < len(fixtures_in_row) - 1: current_x_in_row += rotated_width + gap
-            return True
-
-        def _calculate_dynamic_euro_gap(num_in_stack):
-            if num_in_stack <= 1: return 0.0
-            elif num_in_stack == 2: return 1000.0
-            else: return 1200.0
-
-        def _find_best_stack_size(local_width, walking_margin, total_euros, fxtr_obj):
-            max_to_try = 3
-            for n in range(min(max_to_try, total_euros), 0, -1):
-                gap = _calculate_dynamic_euro_gap(n)
-                required = (fxtr_obj.height * n) + (gap * (n - 1)) + walking_margin
-                if required <= local_width: return n, gap
-            return 0, 0
-
-        lane_start_x, lane_fixture_count = None, 0
-
-        # --- 5. UNIFIED PLACEMENT LOOP ---
-        while fixture_queue:
-            fixture_row_height = fixture_queue[0].width
-            if cursor_y > (cursor_y_end - fixture_row_height):
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement."); break
-
-            # DYNAMICALLY CHOOSE OBSTACLE LIST
-            active_obstacles = placed_bboxes
-            if standing_tables_bbox and standing_tables_bbox.extmin.y <= cursor_y <= standing_tables_bbox.extmax.y:
-                active_obstacles = fallback_obstacles
-            
-            # (Rest of the loop logic is the same, but uses active_obstacles)
-            next_fxtr_obj = fixture_queue[0]
-            stack_width = next_fxtr_obj.height
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (next_fxtr_obj.width/2)), (self.cvc.max_x + 100, cursor_y + (next_fxtr_obj.width/2))]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100; continue
-            local_bounds = intersection.bounds
-            local_width, local_start_x = local_bounds[2] - local_bounds[0], local_bounds[0]
-            walking_margin = max(300.0, local_width * 0.50)
-            num_to_place, h_gap = 0, 0
-            if next_fxtr_obj.name == "Lensbar":
-                if next_fxtr_obj.height + walking_margin <= local_width: num_to_place = 1
-            else:
-                num_to_place, h_gap = _find_best_stack_size(local_width, walking_margin, len(fixture_queue), next_fxtr_obj)
-            if num_to_place == 0:
-                cursor_y += 100; continue
-                
-            fixtures_for_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (stack_width * num_to_place) + (h_gap * (num_to_place - 1))
-            
-            valid_start_x = None
-            if lane_start_x is None or num_to_place != lane_fixture_count:
-                if lane_start_x: print(f"    -> Row size changed. Re-centering...")
-                else: print("    -> Establishing initial placement lane...")
-                ideal_x = local_start_x + (local_width - total_row_width) / 2
-                offset = 0
-                while valid_start_x is None and offset < local_width / 2:
-                    for sign in [1, -1]:
-                        test_x = ideal_x + (offset * sign)
-                        if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_row, h_gap, active_obstacles):
-                            valid_start_x = test_x; lane_start_x = valid_start_x; lane_fixture_count = num_to_place
-                            print(f"    -> New lane for {lane_fixture_count} fixture(s) established at x={lane_start_x:.0f}"); break
-                    if valid_start_x: break
-                    offset += 100
-            else:
-                if _is_rotated_row_valid(lane_start_x, cursor_y, fixtures_for_row, h_gap, active_obstacles):
-                    valid_start_x = lane_start_x
-                else:
-                    print(f"    -> ⚠️ Blockage in lane! Searching for new lane..."); ideal_x = local_start_x + (local_width - total_row_width) / 2; offset = 0
-                    while valid_start_x is None and offset < local_width / 2:
-                        for sign in [1, -1]:
-                            test_x = ideal_x + (offset * sign)
-                            if _is_rotated_row_valid(test_x, cursor_y, fixtures_for_row, h_gap, active_obstacles):
-                                valid_start_x = test_x; lane_start_x = valid_start_x
-                                print(f"    -> New lane established at x={lane_start_x:.0f}"); break
-                        if valid_start_x: break
-                        offset += 100
-            
-            if valid_start_x is None:
-                cursor_y += 100; continue
-                
-            current_x = valid_start_x
-            for _ in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                rw, rh = fxtr.height, fxtr.width
-                center_x, center_y = current_x + (rw / 2), cursor_y + (rh / 2)
-                if self._validate_and_place_at_point(fxtr, Vec2(center_x, center_y), 90, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x:.0f}, {cursor_y:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}'.")
-                current_x += rw + h_gap
-            cursor_y += rh + vertical_row_spacing
-
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures. ---")
-        else:
-            print("\n--- ✅ All central fixtures placed successfully. ---")
-            
-    def place_central_fixtures_from_qms_v2_(self, placed_bboxes: List[tuple]) -> None:
-        """
-        [LANE STRATEGY V3] Places central fixtures with ZERO rotation,
-        using a continuous lane strategy that has privilege to place over standing tables.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-        from ezdxf.bbox import extents
-
-        print("\n--- 🧠 Placing Central Fixtures (V2 - Zero Rotation) with Continuous Lane Strategy ---")
-        
-        # (Setup and Main Placement Loop remain the same)
-        vertical_row_spacing = 1200.0; horizontal_gap = 5.0
-        config = self.fixtures.get("floor_fixtures", {});
-        fixture_queue = collections.deque([Fixture(n, self.fixture_dict[n]["path"]) for n, c in config.items() if c > 0 for _ in range(c)])
-        if not fixture_queue: return
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities: print("    -> ⚠️ Could not find QMS Desk to anchor. Aborting."); return
-        cursor_y = extents(qms_entities).extmax.y + 800.0
-        separator_line = self.msp.query('LINE[layer=="RETAIL_SEPARATOR"]').first
-        cursor_y_end = separator_line.dxf.start.y - 1050.0 if separator_line else self.cvc.max_y - 50.0
-
-        # SETUP THE "PRIVILEGE ZONE"
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        fallback_obstacles = list(placed_bboxes)
-        standing_tables_bbox = None
-        if standing_table_entities:
-            standing_tables_bbox = extents(standing_table_entities)
-            standing_table_bboxes_to_ignore = [(b.extmin.x, b.extmin.y, b.extmax.x, b.extmax.y) for e in standing_table_entities if (b := extents([e]))]
-            fallback_obstacles = [b for b in placed_bboxes if b not in standing_table_bboxes_to_ignore]
-            print(f"  -> Standing tables detected. Will grant placement privilege between y={standing_tables_bbox.extmin.y:.0f} and y={standing_tables_bbox.extmax.y:.0f}.")
-        
-        # HELPERS
-        def _is_row_valid(start_x, y, fixtures_in_row, gap, obstacles_to_check):
-            current_x = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                w, h = fxtr.width, fxtr.height
-                cb = box(current_x, y, current_x + w, y + h)
-                if not self.floorplan_polygon.contains(cb.buffer(-1.0)) or any(cb.intersects(box(*b)) for b in obstacles_to_check): return False
-                if i < len(fixtures_in_row) - 1: current_x += w + gap
-            return True
-        def _find_best_row_size(local_width, walking_margin, total_fixtures, fxtr_obj, gap):
-            max_to_try = 5
-            for n in range(min(max_to_try, total_fixtures), 0, -1):
-                if (fxtr_obj.width * n) + (gap * (n - 1)) + walking_margin <= local_width: return n
-            return 0
-
-        lane_start_x, lane_fixture_count = None, 0
-        while fixture_queue:
-            row_height = fixture_queue[0].height
-            if cursor_y > (cursor_y_end - row_height):
-                print("    -> ⚠️ Ran out of vertical space."); break
-            
-            active_obstacles = placed_bboxes
-            if standing_tables_bbox and standing_tables_bbox.extmin.y <= cursor_y <= standing_tables_bbox.extmax.y:
-                active_obstacles = fallback_obstacles
-            
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x-100, cursor_y + (row_height/2)), (self.cvc.max_x+100, cursor_y + (row_height/2))]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100; continue
-            local_bounds = intersection.bounds
-            local_width, local_start_x = local_bounds[2] - local_bounds[0], local_bounds[0]
-            walking_margin = max(300.0, local_width * 0.70)
-            next_fxtr_obj = fixture_queue[0]
-            count_of_same_type = sum(1 for f in fixture_queue if f.name == next_fxtr_obj.name)
-            num_to_place = _find_best_row_size(local_width, walking_margin, count_of_same_type, next_fxtr_obj, horizontal_gap)
-            if num_to_place == 0:
-                cursor_y += 100; continue
-                
-            fixtures_for_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (next_fxtr_obj.width * num_to_place) + (horizontal_gap * (num_to_place - 1))
-            
-            valid_start_x = None
-            if lane_start_x is None or num_to_place != lane_fixture_count:
-                if lane_start_x: print(f"    -> Row size changed. Re-centering...")
-                else: print("    -> Establishing initial placement lane...")
-                ideal_x = local_start_x + (local_width - total_row_width) / 2; offset = 0
-                while valid_start_x is None and offset < local_width / 2:
-                    for sign in [1, -1]:
-                        test_x = ideal_x + (offset * sign)
-                        if _is_row_valid(test_x, cursor_y, fixtures_for_row, horizontal_gap, active_obstacles):
-                            valid_start_x = test_x; lane_start_x = valid_start_x; lane_fixture_count = num_to_place
-                            print(f"    -> New lane for {lane_fixture_count} fixture(s) established at x={lane_start_x:.0f}"); break
-                    if valid_start_x: break
-                    offset += 100
-            else:
-                if _is_row_valid(lane_start_x, cursor_y, fixtures_for_row, horizontal_gap, active_obstacles):
-                    valid_start_x = lane_start_x
-                else:
-                    print(f"    -> ⚠️ Blockage in lane! Searching for new lane..."); ideal_x = local_start_x + (local_width - total_row_width) / 2; offset = 0
-                    while valid_start_x is None and offset < local_width / 2:
-                        for sign in [1, -1]:
-                            test_x = ideal_x + (offset * sign)
-                            if _is_row_valid(test_x, cursor_y, fixtures_for_row, horizontal_gap, active_obstacles):
-                                valid_start_x = test_x; lane_start_x = valid_start_x
-                                print(f"    -> New lane established at x={lane_start_x:.0f}"); break
-                        if valid_start_x: break
-                        offset += 100
-            if valid_start_x is None:
-                cursor_y += 100; continue
-            
-            current_x = valid_start_x
-            for _ in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                w, h = fxtr.width, fxtr.height
-                center_x, center_y = current_x + (w / 2), cursor_y + (h / 2)
-                if self._validate_and_place_at_point(fxtr, Vec2(center_x, center_y), 0, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x:.0f}, {cursor_y:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}'.")
-                current_x += w + horizontal_gap
-            cursor_y += row_height + vertical_row_spacing
-
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures. ---")
-        else:
-            print("\n--- ✅ All central fixtures placed successfully. ---")
-
-
-    def place_central_fixtures_from_qms_v2_og(self, placed_bboxes: List[tuple]) -> None:
-        """
-        [LANE STRATEGY FOR V2] Places central fixtures with ZERO rotation,
-        using the advanced lane strategy to re-center only when the row size
-        changes or a blockage is hit.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import box, LineString
-        import math
-        import collections
-        from ezdxf.bbox import extents
-
-        print("\n--- 🧠 Placing Central Fixtures (V2 - Zero Rotation) with Advanced 'Lane' Strategy ---")
-
-        # --- 1. SETUP & LOAD FIXTURES (from v2) ---
-        vertical_row_spacing = 1200#2000.0
-        horizontal_gap = 5.0
-
-        config = self.fixtures.get("floor_fixtures", {})
-        euro_count = config.get("Euro_centre", 0)
-        lensbar_count = config.get("Lensbar", 0)
-        if euro_count + lensbar_count == 0:
-            return
-
-        fixture_queue = collections.deque()
-        try:
-            if lensbar_count > 0:
-                fixture_queue.extend([Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"])] * lensbar_count)
-            if euro_count > 0:
-                fixture_queue.extend([Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])] * euro_count)
-        except Exception as e:
-            print(f"🔥 FATAL: Could not load a central fixture: {e}")
-            return
-
-        # --- 2. DEFINE PLACEMENT ZONE (from v2) ---
-        qms_entities = [e for e in self.msp.query('INSERT') if "QMS_DESK" in e.dxf.name.upper()]
-        if not qms_entities:
-            print("    -> ⚠️ Could not find a QMS Desk to anchor to. Aborting placement.")
-            return
-
-        qms_bbox = extents(qms_entities)
-        qms_top_y = qms_bbox.extmax.y
-        GAP_ABOVE_QMS = 800.0
-        cursor_y = qms_top_y + GAP_ABOVE_QMS
-        
-        standing_table_entities = [e for e in self.msp.query('INSERT') if "STANDING_TABLE" in e.dxf.name.upper()]
-        if standing_table_entities:
-            representative_fixture = fixture_queue[0]
-            fixture_row_height = representative_fixture.height # Using un-rotated height
-            
-            standing_tables_bbox = extents(standing_table_entities)
-            standing_tables_bottom_y = standing_tables_bbox.extmin.y
-            
-            FINAL_VISUAL_GAP = 1050.0
-            cursor_y_end = standing_tables_bottom_y - FINAL_VISUAL_GAP - fixture_row_height
-        else:
-            cursor_y_end = self.cvc.max_y - 50.0
-
-        # --- Helper functions (adapted for zero rotation) ---
-        def _is_row_valid(start_x, y, fixtures_in_row, gap):
-            current_x_in_row = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                width, height = fxtr.width, fxtr.height
-                candidate_box = box(current_x_in_row, y, current_x_in_row + width, y + height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in placed_bboxes):
-                    return False
-                if i < len(fixtures_in_row) - 1:
-                    current_x_in_row += width + gap
-            return True
-        
-        def _find_best_row_size(local_width, walking_margin, total_fixtures_in_queue, fixture_obj, gap):
-            max_to_try = 5
-            for n in range(min(max_to_try, total_fixtures_in_queue), 0, -1):
-                required_width = (fixture_obj.width * n) + (gap * (n - 1)) + walking_margin 
-                if required_width <= local_width:
-                    return n
-            return 0
-
-        # <<< --- NEW STATE VARIABLES (from lane_strategy_v2) --- >>>
-        lane_start_x = None
-        lane_fixture_count = 0
-        # <<< --- END NEW STATE VARIABLES --- >>>
-
-        # --- 3. MAIN PLACEMENT LOOP ---
-        while fixture_queue:
-            if cursor_y > cursor_y_end:
-                print("    -> ⚠️ Ran out of vertical space. Stopping placement.")
-                break
-
-            next_fxtr_obj = fixture_queue[0]
-            row_height = next_fxtr_obj.height
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, cursor_y + (row_height / 2)), (self.cvc.max_x + 100, cursor_y + (row_height / 2))]))
-            
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                cursor_y += 100
-                continue
-
-            local_space_bounds = intersection.bounds
-            local_width = local_space_bounds[2] - local_space_bounds[0]
-            local_start_x = local_space_bounds[0]
-            walking_space_margin = max(300.0, local_width * 0.70)
-            fixture_type = next_fxtr_obj.name
-            count_of_same_type = sum(1 for f in fixture_queue if f.name == fixture_type)
-            num_to_place = _find_best_row_size(local_width, walking_space_margin, count_of_same_type, next_fxtr_obj, horizontal_gap)
-
-            if num_to_place == 0:
-                cursor_y += 100
-                continue
-
-            fixtures_for_this_row = [fixture_queue[i] for i in range(num_to_place)]
-            total_row_width = (next_fxtr_obj.width * num_to_place) + (horizontal_gap * (num_to_place - 1))
-            
-            # <<< --- MODIFIED RE-CENTERING TRIGGER (from lane_strategy_v2) --- >>>
-            valid_start_x = None
-            if lane_start_x is None or num_to_place != lane_fixture_count:
-                if lane_start_x is not None:
-                    print(f"    -> Row size changed from {lane_fixture_count} to {num_to_place}. Re-centering and establishing new lane...")
-                else:
-                    print("    -> Establishing initial placement lane...")
-                
-                ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-                search_offset = 0
-                while valid_start_x is None and search_offset < local_width / 2:
-                    for sign in [1, -1]:
-                        test_x = ideal_start_x + (search_offset * sign)
-                        if _is_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                            valid_start_x = test_x
-                            lane_start_x = valid_start_x
-                            lane_fixture_count = num_to_place
-                            print(f"    -> New lane for {lane_fixture_count} fixture(s) established at x={lane_start_x:.0f}")
-                            break
-                    if valid_start_x is not None: break
-                    search_offset += 100
-            else:
-                if _is_row_valid(lane_start_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                    valid_start_x = lane_start_x
-                else:
-                    print(f"    -> ⚠️ Blockage detected in lane at x={lane_start_x:.0f}! Searching for a new lane...")
-                    ideal_start_x = local_start_x + (local_width - total_row_width) / 2
-                    search_offset = 0
-                    while valid_start_x is None and search_offset < local_width / 2:
-                        for sign in [1, -1]:
-                            test_x = ideal_start_x + (search_offset * sign)
-                            if _is_row_valid(test_x, cursor_y, fixtures_for_this_row, horizontal_gap):
-                                valid_start_x = test_x
-                                lane_start_x = valid_start_x
-                                print(f"    -> New lane for {lane_fixture_count} fixture(s) established at x={lane_start_x:.0f}")
-                                break
-                        if valid_start_x is not None: break
-                        search_offset += 100
-            
-            # --- Final Execution ---
-            if valid_start_x is None:
-                cursor_y += 100
-                continue
-
-            current_x_in_row = valid_start_x
-            for i in range(num_to_place):
-                fxtr = fixture_queue.popleft()
-                width, height = fxtr.width, fxtr.height
-                target_center_x = current_x_in_row + (width / 2)
-                target_center_y = cursor_y + (height / 2)
-                if self._validate_and_place_at_point(fxtr, Vec2(target_center_x, target_center_y), 0, placed_bboxes):
-                    print(f"    -> Placed '{fxtr.name}' at ({current_x_in_row:.0f}, {cursor_y:.0f})")
-                else:
-                    print(f"    -> ⚠️ Final validation failed for '{fxtr.name}' during placement.")
-                current_x_in_row += width + horizontal_gap
-            
-            cursor_y += row_height + vertical_row_spacing
-
-        if fixture_queue:
-            print(f"\n--- ⚠️ Finished with {len(fixture_queue)} unplaced fixtures ---")
-        else:
-            print("\n--- ✅ Finished Dynamic Central Fixture Placement (V2 with Lane Strategy) ---")
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--PLACEMENT--SETUP---------------
+    #---------GRID-ZONE-FOR-MAX--EURO-CENTER-CALCULATION--PLACEMENT--SETUP---------------
+ 
 
     
-#---------------------new  test for euro center placement--new_setup of centering
-#---------------------new  test for euro center placement--new_setup of centering
+        
+#---------------------new--setup-for-findong-area-for-euro-center-placement--
+#---------------------new--setup-for-findong-area-for-euro-center-placement--
+
+
+
 #---- CENTRAL FLOOR FIXTURE (EURO_CENTER,LENSBAR) PLACEMENT FUNCTION FINISHED ----
 
 
@@ -7398,6 +8712,7 @@ class DXF_Controller:
 
 #-----------------------wall_fixture placement PLACEMENT FUNCTION STARTED------------------------------------------------------------------------------------
 #-----------------------new  for wall_fixture placement---------------------------------------------------------------------------------------
+
 
 
         
@@ -7459,89 +8774,254 @@ class DXF_Controller:
                  perimeter_path.append((p1_coords, p2_coords))
         
         return perimeter_path
+   
+    def _get_perimeter_path_from_facade_left_start(self):
+        """
+        [NEW ROBUST METHOD]
+        Identifies the "facade" wall (the segment that gets the bottom_epsilon)
+        and starts a counter-clockwise perimeter path from its leftmost point.
+        """
+        import math
+        from ezdxf.math import Vec2
+        print("  -> Dynamically finding facade's left corner to start perimeter path...")
+
+        corners = self.cvc.corners
+        if len(corners) < 3:
+            return []
+
+        # --- Step 1: Isolate the logic to find the bottom/facade segment ---
+        # This is the exact helper function used by offset_polygon_with_bottom_gap
+        def find_bottom_chain(pts, slope_tol=1e-3, y_tol=1.0):
+            n = len(pts)
+            ys = [p[1] for p in pts]
+            min_y = min(ys)
+            is_bottom = [False] * n
+            for i in range(n):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % n]
+                dy = y2 - y1
+                dx = x2 - x1
+                near_min = (abs(y1 - min_y) <= y_tol) and (abs(y2 - min_y) <= y_tol)
+                slope_ok = abs(dy) <= slope_tol * max(1.0, abs(dx))
+                if near_min and slope_ok:
+                    is_bottom[i] = True
+            return is_bottom
+
+        # --- Step 2: Find the facade segments and their points ---
+        is_facade_segment = find_bottom_chain(corners, slope_tol=0.05, y_tol=100)
+        facade_points = []
+        for i, is_facade in enumerate(is_facade_segment):
+            if is_facade:
+                # Add both the start and end point of the facade segment
+                facade_points.append(corners[i])
+                facade_points.append(corners[(i + 1) % len(corners)])
+        
+        if not facade_points:
+            print("    -> ⚠️ Could not identify a facade segment. Falling back to default corner.")
+            start_idx = 0
+        else:
+            # --- Step 3: Identify the leftmost point of the facade ---
+            leftmost_point = min(facade_points, key=lambda p: p[0])
+            
+            # --- Step 4: Find the index of this point in the original corners list ---
+            start_idx = corners.index(leftmost_point)
+            print(f"    -> True facade start point found at index {start_idx}.")
+
+        # --- Step 5: Reorder and ensure counter-clockwise direction (same as original functions) ---
+        reordered = corners[start_idx:] + corners[:start_idx]
+        
+        p1 = Vec2(reordered[0])
+        p2 = Vec2(reordered[1])
+        first_segment_vector = p2 - p1
+
+        # If the path is going right (Clockwise), reverse it to go up (Counter-Clockwise).
+        if first_segment_vector.x > abs(first_segment_vector.y):
+            print("    -> Path is clockwise. Reversing to ensure it goes up the left wall.")
+            reordered = reordered[0:1] + reordered[1:][::-1]
+        else:
+            print("    -> Path is correctly counter-clockwise (up the left wall).")
+
+        # Create the final path of wall segments
+        perimeter_path = []
+        for i in range(len(reordered)):
+            p1_coords = reordered[i]
+            p2_coords = reordered[(i + 1) % len(reordered)]
+            if Vec2(p1_coords).distance(Vec2(p2_coords)) > 100:
+                perimeter_path.append((p1_coords, p2_coords))
+        
+        return perimeter_path
+    
+    def get_retail_boundary_y_og(self, side="0") -> float:
+        """
+        [MODIFIED] Finds the boundary for the retail wall space.
+        PRIORITY 1: Uses the Y-coordinate of the 'RETAIL_SEPARATOR' line if it exists.
+        PRIORITY 2 (Fallback): Finds the lowest Y-coordinate of the clinic/BOH cluster.
+        """
+        
+        # --- NEW: PRIORITY 1 - Check for the RETAIL_SEPARATOR line first ---
+        separator_line = self.msp.query('LINE[layer=="BOH_WALL_VALID_OUTLINE"]').first
+        if separator_line:
+            boundary_y = separator_line.dxf.start.y
+            print(f"  -> Retail boundary defined by 'RETAIL_SEPARATOR' line at Y-coordinate: {boundary_y:.0f}")
+            # For this function's logic, we don't need the side-specific value when the line is present.
+            if side != "0":
+                return boundary_y, boundary_y
+            return boundary_y
+
+        # --- FALLBACK: If no line is found, use the original fixture-based logic ---
+        print("  -> 'RETAIL_SEPARATOR' line not found. Falling back to fixture-based boundary calculation.")
+        stop_bboxes = self._get_accurate_obstacle_bboxes(include_all=False, debug=False)
+        
+        if not stop_bboxes:
+            print("  -> No BOH/Clinic boundary found; entire wall length is available.")
+            if side != "0":
+                return self.cvc.max_y, self.cvc.max_y
+            return self.cvc.max_y
+
+        margin = 400.0
+        side_min = self.cvc.max_y - margin  # Default to top of the floorplan
+
+        if side != "0":
+            if side == "right":
+                print("RIGHT SIDE (Fallback)")
+                x_val = max([b[2] for b in stop_bboxes])
+                arr = [b[1] for b in stop_bboxes if abs(b[2] - x_val) < 200]
+                if arr:
+                    side_min = min(arr) - margin
+            else: # side == "left"
+                print("LEFT SIDE (Fallback)")
+                x_val = min([b[0] for b in stop_bboxes])
+                arr = [b[1] for b in stop_bboxes if abs(b[0] - x_val) < 200]
+                if arr:
+                    side_min = min(arr) - margin
+        
+        # The overall lowest_y is still needed for the general boundary
+        lowest_y = min(b[1] for b in stop_bboxes)
+        boundary_y = lowest_y - margin
+        
+        print(f"  -> Retail boundary calculated from fixtures at Y-coordinate: {boundary_y:.0f}")
+        if side != "0":
+            return boundary_y, side_min
+        return boundary_y
+
+
+    def get_retail_boundary_y_(self, side="0") -> float:
+        """
+        Finds the lowest Y-coordinate of the clinic/BOH cluster to determine
+        the stop line for the retail wall space calculation.
+        Now also includes short internal wall partitions as obstacles.
+        """
+        # Get standard obstacles
+        stop_bboxes = self._get_accurate_obstacle_bboxes(include_all=False, debug=True)
+
+        # --- NEW: Add short internal wall partitions as obstacles ---
+        short_partitions = self.cvc.get_internal_wall_partitions(min_length=400, max_length=1600, thickness=0)
+        if short_partitions:
+            stop_bboxes.extend(short_partitions)
+            print(f"  -> Added {len(short_partitions)} short internal wall partitions to stop_bboxes.")
+
+        # --- PRIORITY 1: Check for the RETAIL_SEPARATOR line first ---
+        separator_line = self.msp.query('LINE[layer=="BOH_WALL_VALID_OUTLINE"]').first
+        if separator_line:
+            boundary_y = separator_line.dxf.start.y
+            print(f"  -> Retail boundary defined by 'RETAIL_SEPARATOR' line at Y-coordinate: {boundary_y:.0f}")
+            if side != "0":
+                return boundary_y, boundary_y   
+            return boundary_y
+
+        if not stop_bboxes:
+            print("  -> No BOH/Clinic boundary found; entire wall length is available.")
+            return self.cvc.max_y
+
+        if side != "0":
+            temp = stop_bboxes.pop()
+            margin = 100.0 
+            print(f"******************************************************************************************************************")
+            print(f"******************************************************************************************************************")
+            if side == "right":
+                print("RIGHT SIDE")
+                x_val = max([b[2] for b in stop_bboxes])
+                arr = [b[1] for b in stop_bboxes if abs(b[2] - x_val) < 200]
+                side_min = min(arr) - margin
+            else:
+                print("LEFT SIDE")
+                x_val = min([b[0] for b in stop_bboxes])
+                arr = [b[1] for b in stop_bboxes if abs(b[0] - x_val) < 200]
+                side_min = min(arr) - margin
+
+            print(f"x_val: {x_val}\narr: {arr}\nside_min: {side_min}")
+            print(f"******************************************************************************************************************")
+            print(f"******************************************************************************************************************")
+            stop_bboxes.append(temp)
+
+        lowest_y = min(b[1] for b in stop_bboxes)
+        margin = 100.0 
+        boundary_y = lowest_y - margin
+
+        print(f"  -> Retail boundary line calculated at Y-coordinate: {boundary_y:.0f}")
+        if side != 0:
+            return boundary_y, side_min
+        return boundary_y
     
 
 
-
-
-    def find_right_wall_bottom_point_og(self) -> Optional[Tuple[float, float]]:
-        """
-        A robust helper to find the true bottom-right corner where walls intersect.
-        This ensures fixtures start from the actual corner, not with a gap.
-        """
-        print("  -> Finding the exact bottom-right corner intersection...")
-        
-        # 1. Get the actual room bounds
-        min_x, min_y = self.cvc.min_x, self.cvc.min_y
-        max_x, max_y = self.cvc.max_x, self.cvc.max_y
-        
-        # 2. Find the bottom-right corner from the actual corner points
-        corners = self.cvc.corners
-        if not corners:
-            print("    -> ⚠️ No corners found.")
-            return None
-        
-        # Find the corner closest to the theoretical bottom-right
-        target_x, target_y = max_x, min_y
-        bottom_right_corner = min(corners, 
-                                key=lambda corner: math.hypot(corner[0] - target_x, corner[1] - target_y))
-        
-        print(f"    -> ✅ Found exact bottom-right corner at: ({bottom_right_corner[0]:.0f}, {bottom_right_corner[1]:.0f})")
-        return bottom_right_corner
-
-
-
-    def get_retail_boundary_y(self) -> float:
+    def get_retail_boundary_y(self, side="0") -> float:
         """
         Finds the lowest Y-coordinate of the clinic/BOH cluster to determine
         the stop line for the retail wall space calculation.
         """
         # This function reuses your existing logic to find only the 'stoppage' obstacles.
-        stop_bboxes = self._get_accurate_obstacle_bboxes(include_all=False)
+        stop_bboxes = self._get_accurate_obstacle_bboxes(include_all=False, debug=True)
+
+
+        # --- NEW: PRIORITY 1 - Check for the RETAIL_SEPARATOR line first ---
+        separator_line = self.msp.query('LINE[layer=="BOH_WALL_VALID_OUTLINE"]').first
+        if separator_line:
+            boundary_y = separator_line.dxf.start.y
+            print(f"  -> Retail boundary defined by 'RETAIL_SEPARATOR' line at Y-coordinate: {boundary_y:.0f}")
+            # For this function's logic, we don't need the side-specific value when the line is present.
+            if side != "0":
+                return boundary_y, boundary_y   
+            return boundary_y
         
         if not stop_bboxes:
             print("  -> No BOH/Clinic boundary found; entire wall length is available.")
             # If no obstacles, return the top of the floorplan so the whole wall is measured.
             return self.cvc.max_y
         
-        # The boundary is the lowest point of this cluster, minus a small margin.
+        if side != "0":
+            temp = stop_bboxes.pop()
+            margin = 100.0 
+            print(f"******************************************************************************************************************")
+            print(f"******************************************************************************************************************")
+            # The boundary is the lowest point of this cluster, minus a small margin.
+            if side == "right":
+                print("RIGHT SIDE")
+                x_val = max([b[2] for b in stop_bboxes])
+                arr = [b[1] for b in stop_bboxes if abs(b[2] - x_val) < 200]
+                side_min = min(arr) - margin
+            else:
+                print("LEFT SIDE")
+                x_val = min([b[0] for b in stop_bboxes])
+                arr = [b[1] for b in stop_bboxes if abs(b[0] - x_val) < 200]
+                side_min = min(arr) - margin
+
+            
+            print(f"x_val: {x_val}\narr: {arr}\nside_min: {side_min}")
+            print(f"******************************************************************************************************************")
+            print(f"******************************************************************************************************************")
+            stop_bboxes.append(temp)
+
         lowest_y = min(b[1] for b in stop_bboxes)
         margin = 100.0 
         boundary_y = lowest_y - margin
         
         print(f"  -> Retail boundary line calculated at Y-coordinate: {boundary_y:.0f}")
+        if side != 0:
+            return boundary_y, side_min
         return boundary_y
 
-    def _get_perimeter_path_from_bottom_right__og(self):
-        """
-        Helper to get a perimeter path starting from the bottom-right corner,
-        ensuring a CLOCKWISE direction to walk up the right wall first.
-        """
-        corners = self.cvc.corners
-        if not corners: return []
-        
-        # Find the corner closest to the theoretical bottom-right
-        start_idx = min(range(len(corners)), 
-                           key=lambda i: math.hypot(corners[i][0] - self.cvc.max_x, corners[i][1] - self.cvc.min_y))
-        
-        reordered = corners[start_idx:] + corners[:start_idx]
-        
-        # Check winding order. A negative area means it's already Clockwise (CW).
-        signed_area = 0.5 * sum(x1*y2 - x2*y1 for (x1, y1), (x2, y2) in zip(reordered, reordered[1:] + [reordered[0]]))
-        
-        # If the area is positive (Counter-Clockwise), we must reverse it.
-        if signed_area > 0:
-            reordered = reordered[0:1] + reordered[1:][::-1]
-        
-        perimeter_path = []
-        for i in range(len(reordered)):
-            p1_coords = reordered[i]
-            p2_coords = reordered[(i + 1) % len(reordered)]
-            if Vec2(p1_coords).distance(Vec2(p2_coords)) > 100:
-                 perimeter_path.append((p1_coords, p2_coords))
-        
-        return perimeter_path
-
+    
     def _get_perimeter_path_from_bottom_right(self):
         """
         Helper to get a perimeter path starting from the bottom-right corner,
@@ -7584,723 +9064,1086 @@ class DXF_Controller:
                  perimeter_path.append((p1_coords, p2_coords))
         
         return perimeter_path
-    
-    def find_right_wall_bottom_point(self) -> Optional[Tuple[float, float]]:
+
+    def _get_perimeter_path_from_facade_right_start(self):
         """
-        A robust helper to find the true bottom-right corner where walls intersect.
-        This ensures fixtures start from the actual corner, not with a gap.
+        [CORRECTED ROBUST METHOD - RIGHT SIDE]
+        Identifies the "facade" wall and starts a CLOCKWISE perimeter path
+        from its rightmost point, ensuring the path moves UP the right wall first.
         """
-        print("  -> Finding the exact bottom-right corner intersection...")
-        
-        # 1. Get the actual room bounds
-        min_x, min_y = self.cvc.min_x, self.cvc.min_y
-        max_x, max_y = self.cvc.max_x, self.cvc.max_y
-        
-        # 2. Find the bottom-right corner from the actual corner points
+        import math
+        from ezdxf.math import Vec2
+        print("  -> Dynamically finding facade's right corner to start clockwise path...")
+
         corners = self.cvc.corners
-        if not corners:
-            print("    -> ⚠️ No corners found.")
-            return None
+        if len(corners) < 3:
+            return []
+
+        # --- Step 1 & 2: Find the facade points (Logic is unchanged) ---
+        def find_bottom_chain(pts, slope_tol=0.05, y_tol=100.0):
+            n = len(pts)
+            ys = [p[1] for p in pts]
+            min_y = min(ys)
+            is_bottom = [False] * n
+            for i in range(n):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % n]
+                dy = y2 - y1
+                dx = x2 - x1
+                near_min = (abs(y1 - min_y) <= y_tol) and (abs(y2 - min_y) <= y_tol)
+                slope_ok = abs(dy) <= slope_tol * max(1.0, abs(dx))
+                if near_min and slope_ok:
+                    is_bottom[i] = True
+            return is_bottom
+
+        is_facade_segment = find_bottom_chain(corners)
+        facade_points = []
+        for i, is_facade in enumerate(is_facade_segment):
+            if is_facade:
+                facade_points.append(corners[i])
+                facade_points.append(corners[(i + 1) % len(corners)])
         
-        # Find the corner closest to the theoretical bottom-right
-        target_x, target_y = max_x, min_y
-        bottom_right_corner = min(corners, 
-                                key=lambda corner: math.hypot(corner[0] - target_x, corner[1] - target_y))
+        if not facade_points:
+            print("    -> ⚠️ Could not identify a facade segment. Falling back to default corner.")
+            start_idx = min(range(len(corners)), 
+                           key=lambda i: math.hypot(corners[i][0] - self.cvc.max_x, corners[i][1] - self.cvc.min_y))
+        else:
+            # --- Step 3 & 4: Find the rightmost point and its index (Logic is unchanged) ---
+            rightmost_point = max(facade_points, key=lambda p: p[0])
+            start_idx = corners.index(rightmost_point)
+            print(f"    -> True facade end point (right side start) found at index {start_idx}.")
+
+        # --- Step 5: Reorder and ensure CLOCKWISE direction using a vector check ---
+        reordered = corners[start_idx:] + corners[:start_idx]
         
-        print(f"    -> ✅ Found exact bottom-right corner at: ({bottom_right_corner[0]:.0f}, {bottom_right_corner[1]:.0f})")
-        return bottom_right_corner
+        p1 = Vec2(reordered[0])
+        p2 = Vec2(reordered[1])
+        first_segment_vector = p2 - p1
+
+        # Check if the first step is LEFT along the facade (meaning the path is CCW).
+        if first_segment_vector.x < -abs(first_segment_vector.y):
+            print("    -> Path is counter-clockwise. Reversing to ensure clockwise path (up the right wall).")
+            # Reverse the list, keeping the start point fixed, to make the path clockwise.
+            reordered = reordered[0:1] + reordered[1:][::-1]
+        else:
+            print("    -> Path is correctly clockwise (up the right wall).")
+
+        # Create the final path of wall segments
+        perimeter_path = []
+        for i in range(len(reordered)):
+            p1_coords = reordered[i]
+            p2_coords = reordered[(i + 1) % len(reordered)]
+            if Vec2(p1_coords).distance(Vec2(p2_coords)) > 100:
+                perimeter_path.append((p1_coords, p2_coords))
+        
+        return perimeter_path
+
+    def draw_perimeter_paths_for_validation(self):
+        """
+        [DEBUG HELPER - UPDATED]
+        Draws the perimeter paths but STOPS them at the RETAIL_SEPARATOR line.
+        """
+        import math
+        from ezdxf.math import Vec2
+        print("\n--- 🎨 Drawing Perimeter Paths for Validation (Stopping at Retail Line) ---")
+
+        # --- NEW: Get the retail separation line's Y-coordinate ---
+        separator_line = self.msp.query('LINE[layer=="RETAIL_SEPARATOR"]').first
+        stop_line_y = None
+        if separator_line:
+            stop_line_y = separator_line.dxf.start.y
+            print(f"  -> Found RETAIL_SEPARATOR line at y={stop_line_y:.0f}. Paths will stop here.")
+        else:
+            print("  -> No RETAIL_SEPARATOR line found. Paths will be drawn fully.")
+
+        # --- Get both paths ---
+        left_path_segments = self._get_perimeter_path_from_facade_left_start()
+        right_path_segments = self._get_perimeter_path_from_facade_right_start()
+
+        # --- Define Layers ---
+        left_layer = "DEBUG_PATH_LEFT_CCW"
+        right_layer = "DEBUG_PATH_RIGHT_CW"
+        
+        if left_layer not in self.doc.layers:
+            self.doc.layers.add(name=left_layer, color=4)  # Cyan
+        
+        if right_layer not in self.doc.layers:
+            self.doc.layers.add(name=right_layer, color=6)  # Magenta
+
+        # --- Draw Left (Counter-Clockwise) Path ---
+        if left_path_segments:
+            print(f"  -> Drawing Left Path ({len(left_path_segments)} segments) on layer '{left_layer}'")
+            left_path_stopped = False
+            for i, (p1_coords, p2_coords) in enumerate(left_path_segments):
+                if left_path_stopped: break
+
+                p1 = Vec2(p1_coords)
+                p2 = Vec2(p2_coords)
+                
+                # --- NEW: Logic to check and trim the segment ---
+                final_p1, final_p2 = p1, p2
+                if stop_line_y is not None:
+                    # Case 1: The entire segment is above the stop line (skip it)
+                    if p1.y > stop_line_y and p2.y > stop_line_y:
+                        continue
+                    
+                    # Case 2: The segment crosses the stop line
+                    elif (p1.y < stop_line_y and p2.y > stop_line_y) or (p1.y > stop_line_y and p2.y < stop_line_y):
+                        # Ensure p1 is the lower point for consistent calculation
+                        if p1.y > p2.y: p1, p2 = p2, p1
+                        
+                        t = (stop_line_y - p1.y) / (p2.y - p1.y)
+                        intersection_point = p1.lerp(p2, t)
+                        final_p2 = intersection_point
+                        left_path_stopped = True # Signal to stop after this segment
+                
+                # Draw the (potentially trimmed) segment
+                self.msp.add_line(final_p1, final_p2, dxfattribs={"layer": left_layer, "lineweight": 50})
+                
+                # Add a numbered label to the (potentially trimmed) segment
+                mid_point = final_p1.lerp(final_p2)
+                self.msp.add_mtext(f"L-{i+1}", dxfattribs={'char_height': 150, 'insert': mid_point, 'layer': left_layer})
+
+        # --- Draw Right (Clockwise) Path (with the same new logic) ---
+        if right_path_segments:
+            print(f"  -> Drawing Right Path ({len(right_path_segments)} segments) on layer '{right_layer}'")
+            right_path_stopped = False
+            for i, (p1_coords, p2_coords) in enumerate(right_path_segments):
+                if right_path_stopped: break
+
+                p1 = Vec2(p1_coords)
+                p2 = Vec2(p2_coords)
+                
+                final_p1, final_p2 = p1, p2
+                if stop_line_y is not None:
+                    if p1.y > stop_line_y and p2.y > stop_line_y:
+                        continue
+                    elif (p1.y < stop_line_y and p2.y > stop_line_y) or (p1.y > stop_line_y and p2.y < stop_line_y):
+                        if p1.y > p2.y: p1, p2 = p2, p1
+                        t = (stop_line_y - p1.y) / (p2.y - p1.y)
+                        intersection_point = p1.lerp(p2, t)
+                        final_p2 = intersection_point
+                        right_path_stopped = True
+
+                self.msp.add_line(final_p1, final_p2, dxfattribs={"layer": right_layer, "lineweight": 50})
+                mid_point = final_p1.lerp(final_p2)
+                self.msp.add_mtext(f"R-{i+1}", dxfattribs={'char_height': 150, 'insert': mid_point, 'layer': right_layer})
+    
+
     
 
 
-    def calculate_retail_wall_length(self, side: str) -> float:
+    #----------------new_setup------------------------------------
+    #----------------new_setup------------------------------------
+    
+
+    def get_retail_wall_data(self, side: str, internal_corners: list, corner_box_size: float = 250.0) -> dict:
         """
-        Calculates the available retail wall length for a given side ('left' or 'right')
-        by walking the perimeter until it hits the BOH/clinic boundary.
+        [CORRECTED] Calculates retail wall data, subtracting space from segments that
+        START at or END at an internal corner.
         """
-        stop_line_y = self.get_retail_boundary_y()
+        _, stop_line_y = self.get_retail_boundary_y(side=side)
         
         if side == 'left':
-            perimeter_path = self._get_perimeter_path_from_bottom_left()
+            perimeter_path = self._get_perimeter_path_from_facade_left_start()
         elif side == 'right':
-            perimeter_path = self._get_perimeter_path_from_bottom_right()
+            perimeter_path = self._get_perimeter_path_from_facade_right_start()
         else:
-            return 0.0
+            return {"total_length": 0.0, "segments": {}}
 
-        if not perimeter_path: return 0.0
+        if not perimeter_path:
+            return {"total_length": 0.0, "segments": {}}
 
         total_length = 0.0
+        segments_data = {}
+        segment_index = 0
+        
+        corner_points_set = {
+            (round(c['point'][0]), round(c['point'][1])) for c in internal_corners
+        }
+
         for p1_coords, p2_coords in perimeter_path:
             p1 = Vec2(p1_coords)
             p2 = Vec2(p2_coords)
+
+            # Skip segments that are too short to begin with
+            if p1.distance(p2) < 1030:
+                continue
             
-            # If the entire segment is above the stop line, we're done.
             if p1.y >= stop_line_y and p2.y >= stop_line_y:
                 break
                 
-            # If the segment is entirely below the line, add its full length.
-            if p1.y < stop_line_y and p2.y < stop_line_y:
-                total_length += p1.distance(p2)
-            # If the segment crosses the line, calculate and add the partial length.
-            else:
-                # Ensure p1 is the lower point
-                if p1.y > p2.y:
-                    p1, p2 = p2, p1 # Swap points
-                
-                # Calculate intersection factor 't'
-                if (p2.y - p1.y) == 0: continue # Avoid division by zero for horizontal lines
+            # --- MODIFICATION START: Adjust start/end points based on corners ---
+            effective_p1 = p1
+            effective_p2 = p2
+            segment_vector = (p2 - p1).normalize() # Unit vector for direction
+
+            # Check if the segment STARTS at an internal corner
+            if (round(p1.x), round(p1.y)) in corner_points_set:
+                # Move the start point 250mm along the wall
+                effective_p1 = p1 + segment_vector * corner_box_size
+                print(f"  -> Segment {segment_index} starts at a corner. Adjusting start point.")
+
+            # Check if the segment ENDS at an internal corner
+            if (round(p2.x), round(p2.y)) in corner_points_set:
+                # Move the end point 250mm back along the wall
+                effective_p2 = p2 - segment_vector * corner_box_size
+                print(f"  -> Segment {segment_index} ends at a corner. Adjusting end point.")
+            # --- MODIFICATION END ---
+            
+            # All subsequent calculations will now use the "effective" points.
+            p1, p2 = effective_p1, effective_p2
+
+            # Handle segments that cross the BOH boundary (this logic is unchanged)
+            if p1.y >= stop_line_y and p2.y >= stop_line_y:
+                continue
+            elif (p1.y < stop_line_y and p2.y > stop_line_y) or (p1.y > stop_line_y and p2.y < stop_line_y):
+                if p1.y > p2.y: p1, p2 = p2, p1
+                if (p2.y - p1.y) == 0: continue
                 t = (stop_line_y - p1.y) / (p2.y - p1.y)
-                
                 if 0 <= t <= 1:
-                    partial_length = p1.distance(p2) * t
-                    total_length += partial_length
+                    p2 = p1.lerp(p2, t)
+                else: # The adjusted segment is now fully outside the retail zone
+                    continue
+            
+            # Calculate the final, adjusted length
+            final_segment_length = p1.distance(p2)
+            if final_segment_length < 1030: # Check length again after adjustments
+                continue
                 
-                break # Stop after finding the first crossing segment
+            total_length += final_segment_length
+            
+            segments_data[segment_index] = {
+                "segment": (p1.x, p1.y, p2.x, p2.y), # Store the adjusted coordinates
+                "length": final_segment_length,      # Store the adjusted length
+                "angle": math.degrees(segment_vector.angle),
+                "placement": " "
+            }
+            segment_index += 1
+        
+        print(f"  -> Found {len(segments_data)} retail segments on '{side}' side with a CORRECTED total length of {total_length:.0f} mm")
+        
+        return {
+            "total_length": total_length,
+            "segments": segments_data
+        }
 
-        print(f"  -> Calculated available '{side}' wall retail length: {total_length:.0f} mm")
-        return total_length 
-
-
+   
     
-    def place_wall_fixtures_perimeter_pass(self):
-            """
-            The definitive wall fixture placement strategy combining perimeter search
-            with a corrected, even count split and dynamic re-queueing.
-            """
-            import collections
+    #----------------NEW-DEV-FOR-INTERNAL-CORNERS-FUNCTION-----------------
+    #----------------NEW-DEV-FOR-INTERNAL-CORNERS-FUNCTION-----------------
+    # In DXF_Controller.py
 
-            print("\n--- 🧠 Starting NEW Perimeter Pass Wall Fixture Placement ---")
-            
-            # ***** FIX: Corrected Count Splitting Logic *****
-            
-            # STEP 1: Create a single master list of all fixtures first.
-            wall_fixtures_config = self.fixtures.get("wall_fixtures", {})
-            master_fixture_list = []
-            for name, count in wall_fixtures_config.items():
-                if count > 0:
-                    master_fixture_list.extend([(name, 1)] * count)
-            
-            if not master_fixture_list:
-                print("ℹ️ No wall fixtures were specified for placement.")
-                return
-                
-            # STEP 2: Now, split the MASTER list for a truly even distribution.
-            total_to_place = len(master_fixture_list)
-            left_count = total_to_place // 2
-            
-            left_queue = collections.deque(master_fixture_list[:left_count])
-            right_queue = collections.deque(master_fixture_list[left_count:])
-            
-            # ***** END OF FIX *****
-
-            print(f"  -> Split counts -> Pass 1 Queue: {len(left_queue)}, Pass 2 Queue: {len(right_queue)}")
-
-            # STEP 3: Execute Pass 1 (Perimeter Search on Left Queue)
-            unplaced_from_pass1 = self.place_fixtures_on_left_wall(left_queue)
-
-            # STEP 4: Dynamically move any leftovers to the second pass queue
-            if unplaced_from_pass1:
-                print(f"  -> {len(unplaced_from_pass1)} fixtures unplaced on Pass 1. Moving to Pass 2 queue.")
-                # Prepending the leftovers to the right_queue makes it more likely to
-                # try placing the same fixture type again sooner.
-                right_queue.extendleft(reversed(unplaced_from_pass1))
-
-            # STEP 5: Execute Pass 2 (Structured Perimeter Search on the combined Right Queue)
-            if right_queue:
-                self.place_fixtures_on_right_wall_new(right_queue)
-            else:
-                print("\n✅ All fixtures placed in Pass 1. No second pass needed.")
-
-
-#-----------------newww setup--------trying----------------------------------------------------------------------------------
-#-----------------newww setup--------trying----------------------------------------------------------------------------------
-
-
-    def _analyze_perimeter_for_placeable_zones(self, perimeter_path: list, angle_tolerance_deg: float = 2.0, lateral_tolerance: float = 50.0):
+    def find_internal_corners(self, wall_data: dict, side: str) -> list: # Add the 'side' parameter
         """
-        [UPGRADED & ROBUST VERSION] Performs a "smart walk" along a continuous perimeter path.
-        It now detects both sharp angle changes (corners) and lateral deviations (juts/partitions).
-
-        Args:
-            perimeter_path (list): An ordered list of segments [(p1, p2), ...] defining the path.
-            angle_tolerance_deg (float): Max angle deviation from the main wall direction.
-            lateral_tolerance (float): Max perpendicular distance a segment can be from the main wall line.
+        Analyzes wall segments to find internal corners.
+        - For 'left' side (CCW path), an internal corner is a right turn (~-90 deg).
+        - For 'right' side (CW path), an internal corner is a left turn (~+90 deg).
         """
-        from ezdxf.math import Vec2
-        import math
+        internal_corners = []
         
-        print("  -> Starting 'Smart Walk' analysis (Robust Angle + Lateral Check)...")
+        segments = sorted(wall_data["segments"].items())
         
-        if not perimeter_path:
+        if len(segments) < 2:
             return []
 
-        placeable_zones = []
-        if not perimeter_path:
-            return placeable_zones
+        for i in range(len(segments) - 1):
+            segment_a = segments[i][1]
+            segment_b = segments[i+1][1]
 
-        current_zone_start = Vec2(perimeter_path[0][0])
-        main_direction_vector = (Vec2(perimeter_path[0][1]) - current_zone_start).normalize()
-
-        for i in range(len(perimeter_path)):
-            current_seg_start = Vec2(perimeter_path[i][0])
-            current_seg_end = Vec2(perimeter_path[i][1])
-            
-            # Create a vector for the current small segment
-            current_segment_vector = (current_seg_end - current_seg_start).normalize()
-            
-            # --- CHECK 1: ANGLE DEVIATION ---
-            # Does this segment's direction differ too much from the main flat wall's direction?
-            try:
-                angle_deg = abs(math.degrees(main_direction_vector.angle_between(current_segment_vector)))
-            except ZeroDivisionError:
-                angle_deg = 0.0
-
-            # --- CHECK 2: LATERAL DEVIATION ---
-            # How far is this segment's start point from the infinite line defined by the main flat wall?
-            vec_to_point = current_seg_start - current_zone_start
-            # Project this vector onto the main direction's perpendicular to get the lateral distance.
-            lateral_dist = abs(vec_to_point.dot(main_direction_vector.orthogonal()))
-
-            # --- DECISION ---
-            # If it's either a sharp turn OR a significant sideways jut, the zone ends.
-            if angle_deg > angle_tolerance_deg or lateral_dist > lateral_tolerance:
+            if segment_a["length"] > 1030 and segment_b["length"] > 1030:
                 
-                # The previous segment's start point is the end of our flat zone.
-                zone_end_point = Vec2(perimeter_path[i-1][1]) if i > 0 else current_zone_start
-                zone_length = zone_end_point.distance(current_zone_start)
-                
-                print(f"    -> Deviation found (Angle: {angle_deg:.1f}°, Lateral: {lateral_dist:.1f}mm). Ending zone.")
+                angle_difference = (segment_b["angle"] - segment_a["angle"] + 180) % 360 - 180
 
-                if zone_length > 500:
-                    placeable_zones.append({
-                        'start': current_zone_start, 
-                        'end': zone_end_point, 
-                        'length': zone_length
-                    })
-                
-                # Start a new zone from the beginning of the current segment
-                current_zone_start = current_seg_start
-                main_direction_vector = current_segment_vector
+                # ***** MODIFICATION IS HERE *****
+                is_internal_corner = False
+                if side == 'left':
+                    # A right turn (-90 deg) on a counter-clockwise path is an internal corner.
+                    # if -95 < angle_difference < -85:
+                    if -155 < angle_difference < -55:
+                        is_internal_corner = True
+                elif side == 'right':
+                    # A left turn (+90 deg) on a clockwise path is an internal corner.
+                    # if 85 < angle_difference < 95:
+                    if 55 < angle_difference < 155:
+                        is_internal_corner = True
+                # ********************************
+
+                if is_internal_corner:
+                    corner_point = (segment_a["segment"][2], segment_a["segment"][3])
+                    
+                    corner_details = {
+                        "point": corner_point,
+                        "angle_in": segment_a["angle"],
+                        "angle_out": segment_b["angle"]
+                    }
+                    
+                    internal_corners.append(corner_details)
+                    print(f"✅ Found an INTERNAL corner at {corner_point} (Side: {side}, Angle Change: {angle_difference:.1f}°)")
         
-        # After the loop, add the final zone that was being built
-        last_point = Vec2(perimeter_path[-1][1])
-        zone_length = last_point.distance(current_zone_start)
-        if zone_length > 500:
-            placeable_zones.append({
-                'start': current_zone_start, 
-                'end': last_point, 
-                'length': zone_length
-            })
+        return internal_corners
 
-        print(f"  -> Smart Walk complete. Found {len(placeable_zones)} placeable zones.")
-        return placeable_zones
     
 
-    def place_fixtures_on_left_wall(self, fixture_queue: collections.deque):
+    def _build_fixture_pattern(self, num_lf: int, num_mf: int, num_mirrors: int, needs_starting_mirror: bool, segment_id: str, primary_side: str, **kwargs) -> List[str]:
         """
-        DEFINITIVE VERSION: Places all fixtures continuously along the walls
-        with a controllable gap, and correctly validates the entire pair before placement.
+        Builds a fixture pattern by creating a base layout and then inserting mirrors into available slots.
+
+        Args:
+            num_lf (int): Number of Large Fixtures.
+            num_mf (int): Number of Medium Fixtures.
+            num_mirrors (int): The total number of mirrors to place.
+            needs_starting_mirror (bool): If True, a mirror is prepended to the pattern.
+
+        Returns:
+            List[str]: The generated fixture pattern.
         """
-        from Fixture import Fixture
-        from shapely.geometry import Polygon, Point
-        from ezdxf.math import BoundingBox2d, Vec2, Matrix44
-        from ezdxf.bbox import extents
-        import math
-        import traceback
-        import collections
+        print("\n--- 🛠️  Building Fixture Pattern ---")
+        print(f"    Breakdown: {num_lf} LF, {num_mf} MF, {num_mirrors} mirrors")
 
-        print("\n--- Placing Wall Fixtures (Pass 1: FINAL Continuous Search) ---")
-        try:
-            if not fixture_queue:
-                return collections.deque()
+        fixtures = ['LF'] * num_lf + ['MF'] * num_mf
+        if not fixtures:
+            return []
 
-            GAP_BETWEEN_PAIRS = 0
-            margin_from_wall = 1.0
+        # --- NEW CORRECTED LOGIC ---
+        # 1. Create a base pattern with a minimal number of mirrors using a F-M-F-F-M... grouping.
+        pattern = []
+        # --- EDIT HERE: Handle starting mirror at the beginning ---
+        internal_mirrors_target = num_mirrors
+        if needs_starting_mirror:
+            pattern.append('M')
+            internal_mirrors_target -= 1 # One mirror is used, so reduce the target
+            print(f"\n    STEP 0 (Start Mirror):")
+            print(f"      -> Pattern: {pattern}")
+            print(f"      -> Internal Mirrors to Place: {internal_mirrors_target}")
 
-            # --- Setup ---
-            mirror_config = self.fixtures.get("mirror_selection", {})
-            selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
-            horizontal_inset_for_hybrid = 0.0 if selected_mirror_name == "mirror_different" else 50.0
+        # --- Build the base pattern with the remaining fixtures ---
+        base_pattern_part = []
 
-            placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
-            stop_bboxes = self._get_accurate_obstacle_bboxes(include_all=False)
-            # Call the new function in CV_Controller to get partition walls
-            internal_wall_obstacles = self.cvc.get_internal_wall_partitions(2000,10)
+        fixture_queue = collections.deque(fixtures)
+        
+        if fixture_queue:
+            # Start with F-M
+            pattern.append(fixture_queue.popleft())
+            if fixture_queue:
+                pattern.append('M')
+        
+        # Continue with F-F-M
+        while fixture_queue:
+            pattern.append(fixture_queue.popleft())
+            if fixture_queue:
+                pattern.append(fixture_queue.popleft())
+            if fixture_queue:
+                pattern.append('M')
+        # --- END OF CORRECTION ---
+
+        # 2. Count how many mirrors we've placed vs. how many we need.
+        pattern.extend(base_pattern_part)
+        mirrors_placed = pattern.count('M')
+        # mirrors_to_add = num_mirrors - mirrors_placed
+        # --- AND EDIT HERE: Use the adjusted target for internal mirrors ---
+        mirrors_to_add = internal_mirrors_target - (mirrors_placed - (1 if needs_starting_mirror else 0))
+
+        
+        print(f"\n    STEP 1 (Base Pattern):")
+        print(f"      -> Pattern: {pattern}")
+        print(f"      -> Mirrors Remaining to Place: {mirrors_to_add}")
+
+        # # 3. Iteratively add the remaining mirrors into the first available F-F gaps.
+        # if mirrors_to_add > 0:
+        #     print(f"\n    STEP 2 (Insert Remaining Mirrors from Right):")
+        #     # Start from the second-to-last element and iterate backwards.
+        #     i = len(pattern) - 2
+        #     iter_count = 1
+        #     while i >= 0 and mirrors_to_add > 0:
+        #         # Find a gap: a fixture followed by another fixture
+        #         if pattern[i] in ['LF', 'MF'] and pattern[i+1] in ['LF', 'MF']:
+        #             pattern.insert(i + 1, 'M')
+        #             print(f"      ITER_{iter_count}: {pattern}")
+        #             mirrors_to_add -= 1
+        #             print(f"      Remaining: {mirrors_to_add}")
+        #             iter_count += 1
+        #             # No need for extra index adjustment, as we are moving backwards
+        #             # and the insertion happens after the current index.
+        #         i -= 1
+
+        # 3. Iteratively add the remaining mirrors into the first available F-F gaps.
+        if mirrors_to_add > 0:
+            print(f"\n    STEP 2 (Insert Remaining Mirrors from Right):")
+            # Start from the second-to-last element and iterate backwards.
+            i = len(pattern) - 2
+            iter_count = 1
+            while i >= 0 and mirrors_to_add > 0:
+                # Find a gap: a fixture followed by another fixture
+                if pattern[i] in ['LF', 'MF'] and pattern[i+1] in ['LF', 'MF']:
+                    pattern.insert(i + 1, 'M')
+                    print(f"      ITER_{iter_count}: {pattern}")
+                    mirrors_to_add -= 1
+                    print(f"      Remaining: {mirrors_to_add}")
+                    iter_count += 1
+                    # No need for extra index adjustment, as we are moving backwards
+                    # and the insertion happens after the current index.
+                i -= 1
+
+        # --- NEW LOGIC FOR SINGLE-FIXTURE EDGE CASE ---
+        if mirrors_to_add > 0 and (num_lf + num_mf) == 1:
+            print(f"\n    STEP 3 (Single Fixture Mirror Placement):")
+            is_first_primary_segment = (segment_id == f"{primary_side}_segments_0")
             
-            # Add the partitions to our main list of things to avoid
-            placed_bboxes.extend(internal_wall_obstacles)
-            print(f"  -> Total obstacles including partitions: {len(placed_bboxes)}")
-            ### END OF CHANGE ###
-            unplaced_fixtures = collections.deque()
-            perimeter_path = self._get_perimeter_path_from_bottom_left()
-            if not perimeter_path:
-                return fixture_queue
+            while mirrors_to_add > 0:
+                if is_first_primary_segment:
+                    pattern.insert(0, 'M')
+                    print(f"      -> Placing mirror on LEFT for first primary segment: {pattern}")
+                else:
+                    pattern.append('M')
+                    print(f"      -> Placing mirror on RIGHT for subsequent segment: {pattern}")
+                mirrors_to_add -= 1
+        # --- END OF NEW LOGIC ---
+        
+        # # 4. Handle the starting mirror flag
+        # if needs_starting_mirror:
+        #     # Avoid double mirrors at the start
+        #     if not pattern or pattern[0] != 'M':
+        #         pattern.insert(0, 'M')
+        #         print(f"\n    STEP 3 (Add Start Mirror):")
+        #         print(f"      -> Final Pattern: {pattern}")
 
-            placeable_zones = self._analyze_perimeter_for_placeable_zones(perimeter_path)
+        print(f"--- Pattern Build Complete ---")
+        return pattern
 
-            # --- Main Loop (Iterates over ZONES, not segments) ---
-            for zone in placeable_zones:
-                if not fixture_queue: 
-                    break # Stop if all fixtures have been placed
 
-                print(f"\n  -> Placing fixtures in Zone (Length: {zone['length']:.0f}mm)...")
+    def generate_wall_fixture_plan(self, wall_segments_data: dict, display_calculations: dict, primary_side: str) -> dict:
+        """
+        Generates a wall fixture placement plan using a hierarchical, iterative fitting algorithm
+        for each segment independently.
+        """
+        print(f"\n--- 📝 Generating Wall Fixture Plan (Iterative Segment Fitting) ---")
+
+        # --- 1. Initialize Constants and State ---
+        LF_LEN, MF_LEN, M_LEN = 1200, 1010, 300
+        total_fixture_count = display_calculations.get('large_wall_fixtures', 0) + display_calculations.get('medium_wall_fixtures', 0)
+        
+        final_plan = {}
+        overflow_display_fixture = 0
+        
+        if total_fixture_count == 0:
+            print("  -> No wall fixtures to plan. Aborting.")
+            return {}, 0
+
+        # --- 2. Build the Processing Order Based on Primary Side ---
+        left_keys = sorted([f"left_segments_{k}" for k in wall_segments_data.get("left_segments", {})])
+        right_keys = sorted([f"right_segments_{k}" for k in wall_segments_data.get("right_segments", {})])
+        
+        processing_order = []
+        transition_index = -1
+        if primary_side == 'left':
+            processing_order.extend(left_keys)
+            processing_order.extend(right_keys)
+            transition_index = len(left_keys)
+        else:
+            processing_order.extend(right_keys)
+            processing_order.extend(left_keys)
+            transition_index = len(right_keys)
+        
+        # --- 3. CALCULATE PROPORTIONAL CAPACITY (Largest Remainder Method) ---
+        ordered_lengths = []
+        for key in processing_order:
+            side_name, seg_index_str = key.rsplit('_', 1)
+            segment_data = wall_segments_data[side_name][int(seg_index_str)]
+            ordered_lengths.append(segment_data['length'])
+
+        total_wall_length = sum(ordered_lengths)
+        capacities = {}
+
+        if total_wall_length > 0 and total_fixture_count > 0:
+            len_pct_arr = [length / total_wall_length for length in ordered_lengths]
+            fixture_division_float = [p * total_fixture_count for p in len_pct_arr]
+            final_fixture_counts = self._distribute_integers_largest_remainder(fixture_division_float, int(total_fixture_count))
+            for i, key in enumerate(processing_order):
+                side_name, seg_index_str = key.rsplit('_', 1)
+                segment_data = wall_segments_data[side_name][int(seg_index_str)]
+                capacities[key] = {'capacity': final_fixture_counts[i], 'data': segment_data}
+        else:
+            for key in processing_order:
+                side_name, seg_index_str = key.rsplit('_', 1)
+                segment_data = wall_segments_data[side_name][int(seg_index_str)]
+                capacities[key] = {'capacity': 0, 'data': segment_data}
+
+        print("\n  --- Calculated Segment Capacities ---")
+        for segment_id, data in capacities.items():
+            print(f"    -> Segment '{segment_id}': Capacity = {data['capacity']} fixtures")
+        print("  ------------------------------------")
+
+        # --- 4. NEW ALGORITHM: Process Each Segment Independently ---
+        last_segment_ended_with = 'M'
+        for i, segment_id in enumerate(processing_order):
+            # Handle transition between primary and secondary walls
+            if i == transition_index and transition_index > 0:
+                print("    -> Transitioning to secondary wall. Resetting mirror logic.")
+                last_segment_ended_with = 'M'
+
+            segment_data = capacities[segment_id]
+            segment_length = segment_data['data']['length']
+            initial_capacity = segment_data['capacity']
+            
+            print(f"\n  -> Planning Segment '{segment_id}' (Length: {segment_length:.0f}mm, Initial Capacity: {initial_capacity} fixtures)")
+
+            if initial_capacity == 0:
+                final_plan[segment_id] = []
+                print("    -> Skipping segment: Zero capacity.")
+                continue
+
+            # ...existing code...
+            # --- Outer Loop for Fixture Reduction (Phase 3) ---
+            n = initial_capacity
+            segment_plan_found = False
+            mirror_count = n - 1  # Initialize mirror_count here, outside the loop
+            
+            while n > 0:
+                # Determine if a starting mirror is needed based on the previous segment
+                needs_starting_mirror = last_segment_ended_with in ['LF', 'MF']
+                starting_mirror_len = M_LEN if needs_starting_mirror else 0
                 
-                # Use the data from the current zone.
-                p1, p2 = zone['start'], zone['end']
-                wall_length = zone['length']
-                wall_vector = (p2 - p1).normalize()
-                wall_angle_rad = wall_vector.angle
-                wall_angle_deg = math.degrees(wall_angle_rad)
-                inward_normal = wall_vector.orthogonal().normalize()
-                if not self.floorplan_polygon.contains(Point(p1 + inward_normal * 1.0)):
-                    inward_normal = -inward_normal
 
-                # Use a single cursor, reset for each new zone.
-                cursor = 1.0
-
-                ### CHANGE: This is the correctly structured inner loop.
-                ### It tries to fill the CURRENT zone with fixtures as long as there is space.
-                while cursor < wall_length - 50.0:
-                    if not fixture_queue: 
-                        break
+                # --- Phase 1: Try swapping Large to Medium fixtures with current mirror count ---
+                print(f"\n       -> 💡 PHASE 1: Trying fixture swaps with {mirror_count} mirrors")
+                print(f"          Segment length: {segment_length:.0f}mm")
+                
+                phase1_success = False
+                for swaps in range(n + 1):
+                    num_lf, num_mf = n - swaps, swaps
                     
-                    ### CHANGE: "Peek" at the fixture, don't pop it from the queue yet.
-                    item_to_try = fixture_queue[0]
-                    fixture_name, _ = item_to_try
+                    # Calculate if starting mirror is needed
+                    needs_starting_mirror = (last_segment_ended_with in ['LF', 'MF'])
+                    starting_mirror_len = M_LEN if needs_starting_mirror else 0
                     
-                    try:
-                        hybrid_fxtr = Fixture(fixture_name, self.fixture_dict[fixture_name]["path"])
-                        mirror_fxtr = Fixture(selected_mirror_name, self.fixture_dict[selected_mirror_name]["path"])
-                    except (KeyError, ValueError) as e:
-                        # Pop the bad data from the queue and add to unplaced list
-                        unplaced_fixtures.append(fixture_queue.popleft())
-                        continue
-
-                    # Check if the next pair can theoretically fit in the remaining space
-                    pair_width = hybrid_fxtr.width + mirror_fxtr.width
-                    if cursor + pair_width > wall_length - 50.0:
-                        break # Not enough space left in this zone, move to the NEXT zone.
-
-                    ### CHANGE: The incorrect 'for segment in perimeter_path:' loop has been REMOVED.
-                    ### All validation now correctly uses the 'zone' data (p1, wall_vector) and the 'cursor'.
-
-                    # --- 1. VALIDATE HYBRID SPOT (using cursor, not search_distance) ---
-                    footprint_start_h = p1 + wall_vector * cursor
-                    center_on_wall_h = footprint_start_h + wall_vector * (hybrid_fxtr.width / 2.0)
-                    offset_dist_h = margin_from_wall + (hybrid_fxtr.height / 2.0) + horizontal_inset_for_hybrid
-                    target_center_h = center_on_wall_h + inward_normal * offset_dist_h
-                    local_center_h = hybrid_fxtr.bounding_box.center
-                    transform_h = Matrix44.chain(Matrix44.translate(-local_center_h.x, -local_center_h.y, 0), Matrix44.z_rotate(wall_angle_rad), Matrix44.translate(target_center_h.x, target_center_h.y, 0))
-                    world_corners_h = list(transform_h.transform_vertices(hybrid_fxtr.bounding_box.rect_vertices()))
-                    poly_h = Polygon([(p.x, p.y) for p in world_corners_h])
-                    aabb_h = BoundingBox2d(world_corners_h)
-
-                    if any(aabb_h.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in stop_bboxes):
-                        print(f"    -> 🛑 HARD STOP: Obstacle detected. Terminating Pass 1.")
-                        # Return all remaining fixtures, including the one we were trying
-                        unplaced_fixtures.extend(fixture_queue)
-                        return unplaced_fixtures
-
-                    hybrid_is_valid = self.floorplan_polygon.contains(poly_h) and not any(aabb_h.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
-
-                    if hybrid_is_valid:
-                        # --- 2. VALIDATE MIRROR SPOT ---
-                        mirror_cursor_start = cursor + hybrid_fxtr.width
-                        mirror_is_valid = False
-                        aabb_m = BoundingBox2d()
+                    total_length = (num_lf * LF_LEN) + (num_mf * MF_LEN) + (mirror_count * M_LEN) + starting_mirror_len
+                    
+                    # print(f"          -> Testing swap: {num_lf} LF + {num_mf} MF + {mirror_count} M + {starting_mirror_len} start")
+                    # print(f"             Total: {total_length:.0f}mm vs limit {segment_length:.0f}mm", end="")
+                    
+                    if total_length <= segment_length:
+                        print(" ✅ FITS!")
+                        # Build the pattern
+                        base_pattern = ['MF'] * num_mf + ['LF'] * num_lf
+                        # final_pattern = []
+                        final_pattern = self._build_fixture_pattern(
+                                num_lf, num_mf, mirror_count, needs_starting_mirror,
+                                segment_id=segment_id, primary_side=primary_side
+                            )
+                        final_plan[segment_id] = final_pattern
+                        if needs_starting_mirror: 
+                            final_pattern.append('M')
+                            print(f"             -> Added starting mirror")
                         
-                        if mirror_cursor_start + mirror_fxtr.width <= wall_length:
-                            footprint_start_m = p1 + wall_vector * mirror_cursor_start
-                            center_on_wall_m = footprint_start_m + wall_vector * (mirror_fxtr.width / 2.0)
-                            offset_dist_m = margin_from_wall + (mirror_fxtr.height / 2.0) + horizontal_inset_for_hybrid
-                            target_center_m = center_on_wall_m + inward_normal * offset_dist_m
-                            local_center_m = mirror_fxtr.bounding_box.center
-                            transform_m = Matrix44.chain(Matrix44.translate(-local_center_m.x, -local_center_m.y, 0), Matrix44.z_rotate(wall_angle_rad), Matrix44.translate(target_center_m.x, target_center_m.y, 0))
-                            world_corners_m = list(transform_m.transform_vertices(mirror_fxtr.bounding_box.rect_vertices()))
-                            poly_m = Polygon([(p.x, p.y) for p in world_corners_m])
-                            aabb_m = BoundingBox2d(world_corners_m)
+                  
+                        for k in range(n):
+                                final_pattern.append(base_pattern[k])
+                                if k < n - 1:
+                                    final_pattern.append('M')
                             
-                            if self.floorplan_polygon.contains(poly_m) and not any(aabb_m.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes):
-                                mirror_is_valid = True
-
-                        # --- 3. PLACE FIXTURES ---
-                        final_insert_point_h = target_center_h - local_center_h.rotate(wall_angle_rad)
-                        self.place_fixture(hybrid_fxtr, (final_insert_point_h.x, final_insert_point_h.y, 0), wall_angle_deg, True)
-                        placed_bboxes.append((aabb_h.extmin.x, aabb_h.extmin.y, aabb_h.extmax.x, aabb_h.extmax.y))
-
-                        if mirror_is_valid:
-                            final_insert_point_m = target_center_m - local_center_m.rotate(wall_angle_rad)
-                            self.place_fixture(mirror_fxtr, (final_insert_point_m.x, final_insert_point_m.y, 0), wall_angle_deg, True)
-                            placed_bboxes.append((aabb_m.extmin.x, aabb_m.extmin.y, aabb_m.extmax.x, aabb_m.extmax.y))
-                            print(f"✅ Placed pair '{hybrid_fxtr.name}' & '{mirror_fxtr.name}'.")
-                        else:
-                            print(f"✅ Placed '{hybrid_fxtr.name}' alone (mirror blocked).")
-
-                        ### CHANGE: Pop ONLY after a successful placement.
-                        fixture_queue.popleft()
                         
-                        # --- 4. UPDATE CURSOR ---
-                        placed_width = hybrid_fxtr.width + (mirror_fxtr.width if mirror_is_valid else 0)
-                        cursor += placed_width + GAP_BETWEEN_PAIRS
-                    
+                        # final_pattern = self._build_fixture_pattern(num_lf, num_mf, mirror_count, needs_starting_mirror)
+                        final_pattern = self._build_fixture_pattern(
+                            num_lf, num_mf, mirror_count, needs_starting_mirror, 
+                            segment_id=segment_id, primary_side=primary_side
+                        )
+                            
+                        final_plan[segment_id] = final_pattern
+                        print(f"\n          -> ✅ PHASE 1 SUCCESS!")
+                        print(f"             Pattern: {final_pattern}")
+                        print(f"             Breakdown: {num_lf} LF, {num_mf} MF, {mirror_count} mirrors")
+                        phase1_success = True
+                        segment_plan_found = True
+                        break
                     else:
-                        # If spot was blocked, nudge search forward on the SAME wall
-                        cursor += 10.0
-
-            # After all zones are processed, anything left is unplaced
-            unplaced_fixtures.extend(fixture_queue)
-            return unplaced_fixtures
-
-        except Exception as e:
-            print(f"🔥 An error occurred during wall placement: {e}")
-            traceback.print_exc()
-            unplaced_fixtures.extend(fixture_queue)
-            return unplaced_fixtures
-        
-    
-
-    def place_fixtures_on_right_wall_new_og(self, fixture_queue: collections.deque):
-        """
-        FINAL CORRECTED VERSION for Pass 2.
-        - Implements the same robust "zone-based" placement as the left wall.
-        - Correctly distinguishes between skippable partitions and critical "stop" obstacles.
-        """
-        from Fixture import Fixture
-        from shapely.geometry import Polygon, Point
-        from ezdxf.math import BoundingBox2d, Vec2, Matrix44
-        import math
-        import traceback
-        import collections
-
-        print(f"\n--- Placing Wall Fixtures (Pass 2: Corrected Zone-Based Walk) ---")
-
-        ### CHANGE: Initialize unplaced_fixtures at the start for robust error handling ###
-        unplaced_fixtures = collections.deque()
-
-        try:
-            if not fixture_queue:
-                return unplaced_fixtures
-
-            GAP_BETWEEN_PAIRS = 0
-            margin_from_wall = 1.0
-
-            # --- Setup (Same as left wall) ---
-            mirror_config = self.fixtures.get("mirror_selection", {})
-            selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
-            horizontal_inset_for_hybrid = 0.0 if selected_mirror_name == "mirror_different" else 50.0
-
-            placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
-            stop_bboxes = self._get_accurate_obstacle_bboxes(include_all=False)
-            
-            internal_wall_obstacles = self.cvc.get_internal_wall_partitions(200, 200)
-            placed_bboxes.extend(internal_wall_obstacles)
-            print(f"  -> Total obstacles including partitions: {len(placed_bboxes)}")
-
-            # --- Get Clean Placeable Zones (Same as left wall) ---
-            perimeter_path = self._get_perimeter_path_from_bottom_right()
-            # perimeter_path = self.find_right_wall_bottom_point()
-            if not perimeter_path:
-                unplaced_fixtures.extend(fixture_queue)
-                return unplaced_fixtures
-
-            starting_corner = self.find_right_wall_bottom_point()
-            if starting_corner:
-                first_segment_start = perimeter_path[0][0]
-                print(f"  -> Starting from bottom-right corner: ({starting_corner[0]:.0f}, {starting_corner[1]:.0f})")
-                print(f"  -> First segment starts at: ({first_segment_start[0]:.0f}, {first_segment_start[1]:.0f})")
-
-            placeable_zones = self._analyze_perimeter_for_placeable_zones(perimeter_path)
-
-            # --- Main Loop (Iterates over ZONES) ---
-            for zone in placeable_zones:
-                if not fixture_queue: 
+                        print(" ❌ Too long")
+                
+                if phase1_success:
                     break
 
-                print(f"\n  -> Placing fixtures in Zone (Length: {zone['length']:.0f}mm)...")
+                # --- Phase 2: Mirror Reduction & Swap-Down ---
+                print("    -> Phase 1 failed. Entering Phase 2 (Mirror Reduction)...")
+                phase2_success = False
                 
-                p1, p2 = zone['start'], zone['end']
-                wall_length = zone['length']
-                wall_vector = (p2 - p1).normalize()
-                wall_angle_rad = wall_vector.angle
-                wall_angle_deg = math.degrees(wall_angle_rad)
+                # **CORRECTED MINIMUM MIRROR CALCULATION**
+                min_mirrors_base = math.ceil(n / 2)
+                min_mirrors = min_mirrors_base  if min_mirrors_base % 2 != 0 else min_mirrors_base
                 
-                inward_normal = wall_vector.orthogonal().normalize()
-                if not self.floorplan_polygon.contains(Point(p1 + inward_normal * 1.0)):
-                    inward_normal = -inward_normal
+                print(f"       -> Minimum mirrors for {n} fixtures: {min_mirrors}")
+                
+                # Start reducing mirrors from current mirror_count
+                starting_mirror_count_for_phase2 = min(mirror_count, n - 1)
+                
+                # print(f"\n       -> 🔍 DETAILED PHASE 2 TRACE for {n} fixtures:")
+                # print(f"       -> Starting with {starting_mirror_count_for_phase2} mirrors")
+                # print(f"       -> Will reduce down to minimum of {min_mirrors} mirrors")
+                # print(f"       -> Segment length available: {segment_length:.0f}mm")
+                
+                # --- FIX: Initialize current_mirrors before the loop ---
+                current_mirrors = starting_mirror_count_for_phase2
 
-                cursor = 10.0
-
-                while cursor < wall_length - 50.0:
-                    if not fixture_queue: 
-                        break
-                    
-                    item_to_try = fixture_queue[0]
-                    fixture_name, _ = item_to_try
-                    
-                    try:
-                        hybrid_fxtr = Fixture(fixture_name, self.fixture_dict[fixture_name]["path"])
-                        mirror_fxtr = Fixture(selected_mirror_name, self.fixture_dict[selected_mirror_name]["path"])
-                    except (KeyError, ValueError):
-                        unplaced_fixtures.append(fixture_queue.popleft())
+                # **CRITICAL FIX: Build the removal pattern correctly**
+                for current_mirrors in range(starting_mirror_count_for_phase2, min_mirrors - 1, -1):
+                    if current_mirrors < 0:
                         continue
-
-                    pair_width = hybrid_fxtr.width + mirror_fxtr.width
-                    if cursor + pair_width > wall_length - 50.0:
-                        break
-
-                    ### CHANGE: Replaced the old collision logic with the correct two-part validation ###
                     
-                    # --- 1. VALIDATE HYBRID SPOT ---
-                    footprint_start_h = p1 + wall_vector * cursor
-                    center_on_wall_h = footprint_start_h + wall_vector * (hybrid_fxtr.width / 2.0)
-                    offset_dist_h = margin_from_wall + (hybrid_fxtr.height / 2.0) + horizontal_inset_for_hybrid
-                    target_center_h = center_on_wall_h + inward_normal * offset_dist_h
-                    local_center_h = hybrid_fxtr.bounding_box.center
-                    transform_h = Matrix44.chain(Matrix44.translate(-local_center_h.x, -local_center_h.y, 0), Matrix44.z_rotate(wall_angle_rad), Matrix44.translate(target_center_h.x, target_center_h.y, 0))
-                    world_corners_h = list(transform_h.transform_vertices(hybrid_fxtr.bounding_box.rect_vertices()))
-                    poly_h = Polygon([(p.x, p.y) for p in world_corners_h])
-                    aabb_h = BoundingBox2d(world_corners_h)
-
-                    # --- HARD STOP CHECK: Against 'stop_bboxes' ONLY ---
-                    if any(aabb_h.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in stop_bboxes):
-                        print(f"    -> 🛑 HARD STOP: Obstacle detected. Terminating Pass 2.")
-                        unplaced_fixtures.extend(fixture_queue)
-                        return unplaced_fixtures
-
-                    # --- REGULAR COLLISION CHECK: Against 'placed_bboxes' (includes partitions) ---
-                    hybrid_is_valid = self.floorplan_polygon.contains(poly_h) and not any(aabb_h.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
-
-                    if hybrid_is_valid:
-                        # --- 2. VALIDATE MIRROR SPOT ---
-                        mirror_cursor_start = cursor + hybrid_fxtr.width
-                        mirror_is_valid = False
+                    # Calculate which position to remove based on the reduction step
+                    steps_reduced = starting_mirror_count_for_phase2 - current_mirrors
+                    remove_position = steps_reduced + 2  # Start from 2nd last, then 3rd last, etc.
+                    
+                    print(f"\n       -> 💡 TRYING: {current_mirrors} mirrors (step {steps_reduced + 1})")
+                    print(f"          Removing {remove_position}th mirror from end")
+                    
+                    # Try swapping fixtures from all LF to all MF with this mirror count
+                    for swaps in range(n + 1):
+                        num_lf, num_mf = n - swaps, swaps
+                        total_length = (num_lf * LF_LEN) + (num_mf * MF_LEN) + (current_mirrors * M_LEN) + starting_mirror_len
                         
-                        if mirror_cursor_start + mirror_fxtr.width <= wall_length:
-                            # (Validation logic for mirror is the same as the left wall)
-                            footprint_start_m = p1 + wall_vector * mirror_cursor_start
-                            center_on_wall_m = footprint_start_m + wall_vector * (mirror_fxtr.width / 2.0)
-                            offset_dist_m = margin_from_wall + (mirror_fxtr.height / 2.0) + horizontal_inset_for_hybrid
-                            target_center_m = center_on_wall_m + inward_normal * offset_dist_m
-                            local_center_m = mirror_fxtr.bounding_box.center
-                            transform_m = Matrix44.chain(Matrix44.translate(-local_center_m.x, -local_center_m.y, 0), Matrix44.z_rotate(wall_angle_rad), Matrix44.translate(target_center_m.x, target_center_m.y, 0))
-                            world_corners_m = list(transform_m.transform_vertices(mirror_fxtr.bounding_box.rect_vertices()))
-                            poly_m = Polygon([(p.x, p.y) for p in world_corners_m])
-                            aabb_m = BoundingBox2d(world_corners_m)
-                            if self.floorplan_polygon.contains(poly_m) and not any(aabb_m.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes):
-                                mirror_is_valid = True
+                        print(f"          -> Testing swap combination: {num_lf} LF + {num_mf} MF + {current_mirrors} M")
+                        print(f"             Total length: {total_length:.0f}mm (limit: {segment_length:.0f}mm)", end="")
+                        
+                        if total_length <= segment_length:
+                            print(" ✅ FITS!")
+                            base_pattern = ['MF'] * num_mf + ['LF'] * num_lf
+                            final_pattern = []
+                            if needs_starting_mirror: 
+                                final_pattern.append('M')
+                            
+                            # **CORRECTED: Build pattern by removing specific mirror positions from the END**
+                            # Calculate which positions to skip (count from the end)
+                            positions_to_skip = set()
+                            for step in range(steps_reduced):
+                                position_from_end = step + 2  # 2nd last, 3rd last, etc.
+                                actual_index = n - position_from_end  # Convert to index from start
+                                if 0 <= actual_index < n - 1:
+                                    positions_to_skip.add(actual_index)
+                                    print(f"             -> Will SKIP mirror after fixture at index {actual_index} ({position_from_end}th from end)")
+                            
+                            print(f"\n          -> 🔨 BUILDING PATTERN:")
+                            print(f"             Base fixtures: {base_pattern}")
+                            print(f"             Positions to skip mirrors: {sorted(positions_to_skip)}")
+                            
+                            # Build the pattern with selective mirror placement
+                            for k in range(n):
+                                final_pattern.append(base_pattern[k])
+                                print(f"             [{k}] Added fixture: {base_pattern[k]}", end="")
+                                
+                                if k < n - 1:
+                                    if k not in positions_to_skip:
+                                        final_pattern.append('M')
+                                        print(" + Mirror ✓")
+                                    else:
+                                        print(" (Mirror SKIPPED)")
+                                else:
+                                    print("")
 
-                        # --- 3. PLACE FIXTURES ---
-                        final_insert_point_h = target_center_h - local_center_h.rotate(wall_angle_rad)
-                        self.place_fixture(hybrid_fxtr, (final_insert_point_h.x, final_insert_point_h.y, 0), wall_angle_deg, True)
-                        placed_bboxes.append((aabb_h.extmin.x, aabb_h.extmin.y, aabb_h.extmax.x, aabb_h.extmax.y))
+                            final_pattern = self._build_fixture_pattern(num_lf, num_mf, current_mirrors, needs_starting_mirror, segment_id=segment_id, primary_side=primary_side)
 
-                        if mirror_is_valid:
-                            final_insert_point_m = target_center_m - local_center_m.rotate(wall_angle_rad)
-                            self.place_fixture(mirror_fxtr, (final_insert_point_m.x, final_insert_point_m.y, 0), wall_angle_deg, True)
-                            placed_bboxes.append((aabb_m.extmin.x, aabb_m.extmin.y, aabb_m.extmax.x, aabb_m.extmax.y))
-                            print(f"✅ Placed pair '{hybrid_fxtr.name}' & '{mirror_fxtr.name}'.")
+                            print(f"\n          -> ✅ FINAL PATTERN CREATED:")
+                            print(f"             {final_pattern}")
+                            print(f"             Breakdown: {num_lf} LF, {num_mf} MF, {current_mirrors} mirrors")
+                            print(f"             Pattern length: {len([x for x in final_pattern if x != 'M'])} fixtures, {len([x for x in final_pattern if x == 'M'])} mirrors")
+                            
+                            final_plan[segment_id] = final_pattern
+                            print(f"\n    -> ✅ SUCCESS (Phase 2): Segment solved!")
+                            phase2_success = True
+                            mirror_count = current_mirrors
+                            break
                         else:
-                            print(f"✅ Placed '{hybrid_fxtr.name}' alone (mirror blocked).")
-
-                        fixture_queue.popleft()
-                        
-                        placed_width = hybrid_fxtr.width + (mirror_fxtr.width if mirror_is_valid else 0)
-                        cursor += placed_width + GAP_BETWEEN_PAIRS
+                            print(" ❌ Too long")
                     
-                    else: # This 'else' corresponds to 'if hybrid_is_valid:'
-                        # If the spot was blocked by a partition, nudge the cursor to "skip" it
-                        cursor += 10.0
+                    if phase2_success:
+                        break
+                
+                # Update mirror_count even if Phase 2 failed
+                if not phase2_success:
+                    mirror_count = min_mirrors 
+                    print(f"\n       -> ⚠️ Phase 2 exhausted all options.")
+                    print(f"          Setting mirror_count to {mirror_count} for next iteration.")
+                
+                if phase2_success:
+                    segment_plan_found = True
+                    break
+
+                # --- Phase 3: Fixture Reduction ---
+                print(f"\n    -> ⚠️ Phase 2 failed for n={n}. Entering Phase 3 (Fixture Reduction)...")
+                print(f"       -> Reducing fixture count from {n} to {n-1}")
+                print(f"       -> Overflow count increases by 1 (now {overflow_display_fixture + 1})")
+                print(f"       -> This fixture will be marked as overflow for later handling")
+                
+                n -= 1
+                overflow_display_fixture += 1
+                
+
+                
+            if not segment_plan_found:
+                print(f"    -> ❌ FAILED: Could not fit any fixtures in this segment.")
+                final_plan[segment_id] = []
             
-            unplaced_fixtures.extend(fixture_queue)
-            return unplaced_fixtures
+            # Update the flag for the next segment
+            last_segment_ended_with = final_plan.get(segment_id, ['M'])[-1] if final_plan.get(segment_id) else 'M'
+            # ...existing code...
 
-        except Exception as e:
-            print(f"🔥 An error occurred during RIGHT wall placement: {e}")
-            traceback.print_exc()
-            unplaced_fixtures.extend(fixture_queue)
-            return unplaced_fixtures
+        # --- 5. Finalize and Return Plan ---
+        print("\n--- ✅ Wall Fixture Plan Generation Complete ---")
+        if overflow_display_fixture > 0:
+            print(f"  -> INFO: {overflow_display_fixture} fixtures could not be planned due to space constraints (overflow).")
 
-
-    def place_fixtures_on_right_wall_new(self, fixture_queue: collections.deque):
+        print("  -> 🔄 Merging fixture plan with segment data for final output...")
+        placement_dict = {}
+        for segment_key, fixture_list in final_plan.items():
+            try:
+                side_name, seg_index_str = segment_key.rsplit('_', 1)
+                seg_index = int(seg_index_str)
+                if side_name not in placement_dict:
+                    placement_dict[side_name] = {}
+                if side_name in wall_segments_data and seg_index in wall_segments_data[side_name]:
+                    original_segment_data = wall_segments_data[side_name][seg_index].copy()
+                    original_segment_data["placement"] = fixture_list
+                    placement_dict[side_name][seg_index_str] = original_segment_data
+            except (ValueError, KeyError):
+                continue
+            
+        return placement_dict, overflow_display_fixture
+    
+    def _distribute_integers_largest_remainder(self, float_values: List[float], total_sum: int) -> List[int]:
         """
-        FINAL ROBUST VERSION for Pass 2.
-        - CORRECTED: Loads all obstacles to enable partition skipping.
-        - CORRECTED: Distinguishes between skippable partitions and critical stop obstacles.
+        Distributes a total sum across a list of floats, converting them to integers
+        while ensuring the final sum is correct, using the Largest Remainder Method.
+
+        Args:
+            float_values: A list of floating-point numbers (e.g., [2.8, 2.1, 2.1]).
+            total_sum: The exact integer sum the final list must have (e.g., 7).
+
+        Returns:
+            A list of integers that sum up to total_sum.
         """
-        from Fixture import Fixture
-        from shapely.geometry import Polygon, Point, box
-        from ezdxf.math import BoundingBox2d, Vec2, Matrix44
+        # Step 1: Initial allocation using the integer part of each float.
+        allocations = [int(v) for v in float_values]
+        
+        # Step 2: Calculate how many items are "leftover" after the initial allocation.
+        remainder_to_distribute = total_sum - sum(allocations)
+        
+        # Step 3: Create a list of the fractional parts (the remainders) with their original index.
+        remainders = [(i, float_values[i] - allocations[i]) for i in range(len(float_values))]
+        
+        # Step 4: Sort this list by the fractional part, from largest to smallest.
+        remainders.sort(key=lambda x: x[1], reverse=True)
+        
+        # Step 5: Distribute the leftover items, one by one, to the allocations with the largest fractions.
+        for i in range(remainder_to_distribute):
+            # Get the index of the item with the next-largest fraction.
+            index_to_increment = remainders[i][0]
+            # Add 1 to its allocation.
+            allocations[index_to_increment] += 1
+            
+        return allocations
+
+    
+    
+    
+    def place_fixtures_from_plan(self, placement_dict: dict, placed_bboxes: list):
+        """
+        Places wall fixtures, respects JJ->VC priority, mirrors on the right wall,
+        and now appends the bounding boxes of placed fixtures to the master list to prevent overlaps.
+        """
+        # from Fixture import Fixture
+        from shapely.geometry import Point
+        from ezdxf.math import Vec2, Matrix44, BoundingBox2d
         import math
-        import collections # Add collections for deque
 
-        print(f"\n--- Placing Wall Fixtures (Pass 2: Walking Along Wall Path with Skipping) ---")
-        
-        unplaced_fixtures = collections.deque()
+        print("\n--- 🏗️ Executing Wall Fixture Placement (JJ -> VC Priority & Right Wall Mirroring) ---")
 
-        try:
-            if not fixture_queue:
-                return unplaced_fixtures
+        # 1. Get family counts from the merch mix (unchanged)
+        family_totals = self.family_totals
+        jj_family_key = next((key for key in family_totals if 'jj' in key), None)
+        jj_family_count = family_totals.get(jj_family_key, 0)
+        vc_family_count = family_totals.get('vc_fixture_family', 0)
 
-            ### --- START OF MODIFICATION --- ###
-            # --- 1. SETUP - Get ALL obstacles, including partitions and stops ---
-            placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
-            stop_bboxes = self._get_accurate_obstacle_bboxes(include_all=False)
+        print(f"\n  -> Placement Priority based on Merch Mix:")
+        print(f"     JJ Family Fixtures to Place: {jj_family_count}")
+        print(f"     VC Family Fixtures to Place: {vc_family_count}")
 
-            internal_wall_obstacles = self.cvc.get_internal_wall_partitions(2000,10)
-            placed_bboxes.extend(internal_wall_obstacles)
-            print(f"  -> Total obstacles for skipping: {len(placed_bboxes)}")
-            print(f"  -> Critical stop obstacles: {len(stop_bboxes)}")
-            ### --- END OF MODIFICATION --- ###
+        # 2. Setup counters and mirror selection (unchanged)
+        jj_fixtures_placed = 0
+        mirror_config = self.fixtures.get("mirror_selection", {})
+        selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
+        print(f"  -> Using '{selected_mirror_name}' for all mirror placements.")
 
-            mirror_config = self.fixtures.get("mirror_selection", {})
-            selected_mirror_name = next((name for name, selected in mirror_config.items() if selected > 0), "mirror")
+        # Helper function for priority logic (unchanged)
+        def get_next_fixture_name(code):
+            nonlocal jj_fixtures_placed
+            if jj_fixtures_placed < jj_family_count:
+                jj_fixtures_placed += 1
+                return 'jj_fixture_large' if code == 'LF' else 'jj_fixture_medium'
+            else:
+                return 'vc_fixture_large' if code == 'LF' else 'vc_fixture_medium'
+            return None
+
+        # 3. Main placement loop
+        for side_key, segments in placement_dict.items():
             
-            # --- 2. Get the perimeter path (Your original logic is correct) ---
-            start_point_coords = self.find_right_wall_bottom_point()
-            if not start_point_coords:
-                unplaced_fixtures.extend(fixture_queue); return unplaced_fixtures
+            is_right_wall = "right" in side_key
+            if is_right_wall:
+                print(f"\n  -> Placing and MIRRORING fixtures on '{side_key}'...")
+            else:
+                print(f"\n  -> Placing fixtures on '{side_key}'...")
 
-            start_point_vec = Vec2(start_point_coords)
-            corners = self.cvc.corners
-            start_idx = min(range(len(corners)), key=lambda i: start_point_vec.distance(Vec2(corners[i])))
-            reordered = corners[start_idx:] + corners[:start_idx]
-            
-            signed_area = 0.5 * sum(x1*y2 - x2*y1 for (x1, y1), (x2, y2) in zip(reordered, reordered[1:] + [reordered[0]]))
-            if signed_area < 0:
-                reordered = reordered[0:1] + reordered[1:][::-1]
+            for seg_index, segment_data in sorted(segments.items(), key=lambda item: int(item[0])):
+                seg_coords = segment_data['segment']
+                p1 = Vec2(seg_coords[0], seg_coords[1])
+                p2 = Vec2(seg_coords[2], seg_coords[3])
+                wall_vector = (p2 - p1).normalize()
+                wall_angle_deg = math.degrees(wall_vector.angle)
 
-            perimeter_path = []
-            for i in range(len(reordered)):
-                p1 = Vec2(reordered[i]); p2 = Vec2(reordered[(i + 1) % len(reordered)])
-                if p1.distance(p2) > 100:
-                    perimeter_path.append((p1, p2))
-            
-            if not perimeter_path:
-                unplaced_fixtures.extend(fixture_queue); return unplaced_fixtures
+                # (Robust inward_normal calculation is unchanged)
+                inward_normal = wall_vector.orthogonal().normalize()
+                mid_point_on_wall = p1.lerp(p2)
+                test_point = mid_point_on_wall + inward_normal * 10
+                if not self.floorplan_polygon.contains(Point(test_point)):
+                    inward_normal *= -1
 
-            # --- 4. Walk along each wall segment ---
-            margin_from_wall = 1.0; gap_between_pairs = 0.0
+                pattern = segment_data.get('placement', [])
+                if not pattern:
+                    continue
+                print(f"    -> Segment {seg_index}: Placing pattern {pattern}")
+                cursor = 0.0
+                margin_from_wall = 1.0
 
-            for segment_idx, (segment_start, segment_end) in enumerate(perimeter_path):
-                if not fixture_queue: break
-                    
-                wall_length = segment_start.distance(segment_end)
-                segment_vector = (segment_end - segment_start).normalize()
-                wall_angle_deg = math.degrees(segment_vector.angle)
-                
-                inward_normal = segment_vector.orthogonal()
-                mid_point_on_wall = segment_start + segment_vector * (wall_length / 2)
-                if not self.floorplan_polygon.contains(Point(mid_point_on_wall + inward_normal * 10)):
-                    inward_normal = -inward_normal
-
-                placement_cursor = 10.0 # Use a consistent start margin
-                
-                while fixture_queue and placement_cursor < wall_length - 100:
-                    item_to_try = fixture_queue[0]
-                    fixture_name, _ = item_to_try
-                    
+                for fixture_code in pattern:
+                    fixture_name = None
+                    if fixture_code == 'M':
+                        fixture_name = selected_mirror_name
+                    elif fixture_code in ['LF', 'MF']:
+                        fixture_name = get_next_fixture_name(fixture_code)
+                    if not fixture_name:
+                        continue
                     try:
-                        hybrid_fxtr = Fixture(fixture_name, self.fixture_dict[fixture_name]["path"])
-                        mirror_fxtr = Fixture(selected_mirror_name, self.fixture_dict[selected_mirror_name]["path"])
-                    except (KeyError, ValueError):
-                        unplaced_fixtures.append(fixture_queue.popleft()); continue
-
-                    fixture_rotation_deg = wall_angle_deg + 180
-                    pair_width = hybrid_fxtr.width + mirror_fxtr.width
-                    if placement_cursor + pair_width > wall_length - 50:
+                        fxtr = Fixture.Fixture(fixture_name, self.fixture_dict[fixture_name]["path"])
+                    except Exception as e:
+                        continue
+                    if cursor + fxtr.width > segment_data['length'] + 50:
                         break
 
-                    # --- VALIDATE HYBRID ---
-                    footprint_start_h = segment_start + segment_vector * placement_cursor
-                    center_on_wall_h = footprint_start_h + segment_vector * (hybrid_fxtr.width / 2.0)
-                    offset_dist_h = margin_from_wall + (hybrid_fxtr.height / 2.0)
-                    target_center_h = center_on_wall_h + inward_normal * offset_dist_h
-                    local_center_h = hybrid_fxtr.bounding_box.center
-                    
-                    transform_h = Matrix44.chain(Matrix44.translate(-local_center_h.x, -local_center_h.y, 0), Matrix44.z_rotate(math.radians(fixture_rotation_deg)), Matrix44.translate(target_center_h.x, target_center_h.y, 0))
-                    world_corners_h = list(transform_h.transform_vertices(hybrid_fxtr.bounding_box.rect_vertices()))
-                    aabb_h = BoundingBox2d(world_corners_h)
-                    hybrid_poly = Polygon([(p.x, p.y) for p in world_corners_h])
-                    
-                    ### --- START OF MODIFICATION --- ###
-                    # --- HARD STOP CHECK (against stop_bboxes only) ---
-                    
-                    if any(aabb_h.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in stop_bboxes):
-                        print(f"    -> 🛑 HARD STOP: Obstacle detected. Terminating Pass 1.")
-                        # Return all remaining fixtures, including the one we were trying
-                        unplaced_fixtures.extend(fixture_queue)
-                        return unplaced_fixtures
+                    xscale = 1.0 if is_right_wall else 1.0
+                    yscale = -1.0 if is_right_wall else 1.0
 
-                    # --- REGULAR COLLISION/SKIP CHECK (against placed_bboxes, which includes partitions) ---
-                    is_valid = self.floorplan_polygon.contains(hybrid_poly) and not any(aabb_h.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes)
-                    ### --- END OF MODIFICATION --- ###
+                    center_on_wall = p1 + wall_vector * (cursor + fxtr.width / 2.0)
+                    offset_from_wall = margin_from_wall + fxtr.height / 2.0
+                    target_center = center_on_wall + inward_normal * offset_from_wall
 
-                    if is_valid:
-                        # --- VALIDATE AND PLACE MIRROR (This logic can remain) ---
-                        mirror_cursor_start = placement_cursor + hybrid_fxtr.width
-                        mirror_is_valid = False
-                        if mirror_cursor_start + mirror_fxtr.width <= wall_length:
-                            # Calculate the mirror's potential center point
-                            footprint_start_m = segment_start + segment_vector * mirror_cursor_start
-                            center_on_wall_m = footprint_start_m + segment_vector * (mirror_fxtr.width / 2.0)
-                            offset_dist_m = margin_from_wall + (mirror_fxtr.height / 2.0)
-                            target_center_m = center_on_wall_m + inward_normal * offset_dist_m
-                            local_center_m = mirror_fxtr.bounding_box.center
+                    local_center = fxtr.bounding_box.center
+                    local_center_scaled = Vec2(local_center.x * xscale, local_center.y * yscale)
+                    rotated_offset = local_center_scaled.rotate(math.radians(wall_angle_deg))
+                    final_insert_point = target_center - rotated_offset
 
-                            # Create the transformation to find its final geometry
-                            transform_m = Matrix44.chain(
-                                Matrix44.translate(-local_center_m.x, -local_center_m.y, 0),
-                                Matrix44.z_rotate(math.radians(fixture_rotation_deg)),
-                                Matrix44.translate(target_center_m.x, target_center_m.y, 0)
-                            )
-                            world_corners_m = list(transform_m.transform_vertices(mirror_fxtr.bounding_box.rect_vertices()))
-                            aabb_m = BoundingBox2d(world_corners_m)
-                            mirror_poly = Polygon([(p.x, p.y) for p in world_corners_m])
+                    # --- Place the Fixture ---
+                    self.place_fixture(
+                        fxtr,
+                        (final_insert_point.x, final_insert_point.y, 0),
+                        wall_angle_deg,
+                        rotated=True,
+                        xscale=xscale,
+                        yscale=yscale
+                    )
 
-                            # Check if the mirror is inside the floorplan and not overlapping anything
-                            if self.floorplan_polygon.contains(mirror_poly) and not any(aabb_m.has_intersection(BoundingBox2d([Vec2(b[0], b[1]), Vec2(b[2], b[3])])) for b in placed_bboxes):
-                                mirror_is_valid = True
+                    # *** NEW: Calculate and append the bounding box to the master list ***
+                    transform = Matrix44.chain(
+                        Matrix44.translate(-local_center.x, -local_center.y, 0),
+                        Matrix44.scale(xscale, yscale, 1.0),
+                        Matrix44.z_rotate(math.radians(wall_angle_deg)),
+                        Matrix44.translate(target_center.x, target_center.y, 0)
+                    )
+                    world_corners = list(transform.transform_vertices(fxtr.bounding_box.rect_vertices()))
+                    aabb = BoundingBox2d(world_corners)
+                    new_bbox_tuple = (aabb.extmin.x, aabb.extmin.y, aabb.extmax.x, aabb.extmax.y)
 
-                        # Place HYBRID
-                        rotated_offset_h = local_center_h.rotate(math.radians(fixture_rotation_deg))
-                        final_insert_point_h = target_center_h - rotated_offset_h
-                        self.place_fixture(hybrid_fxtr, (final_insert_point_h.x, final_insert_point_h.y, 0), fixture_rotation_deg, True)
-                        placed_bboxes.append(tuple(aabb_h.extmin) + tuple(aabb_h.extmax))
+                    # Add the new bounding box to the master list of obstacles.
+                    placed_bboxes.append(new_bbox_tuple)
+                    # *** END NEW SECTION ***
 
-                        # Place MIRROR if valid
-                        if mirror_is_valid:
-                            rotated_offset_m = local_center_m.rotate(math.radians(fixture_rotation_deg))
-                            final_insert_point_m = target_center_m - rotated_offset_m
-                            self.place_fixture(mirror_fxtr, (final_insert_point_m.x, final_insert_point_m.y, 0), fixture_rotation_deg, True)
-                            placed_bboxes.append(tuple(aabb_m.extmin) + tuple(aabb_m.extmax))
-                            print(f"    -> ✅ Placed pair '{hybrid_fxtr.name}' & '{mirror_fxtr.name}'")
-                        else:
-                            print(f"    -> ✅ Placed '{hybrid_fxtr.name}' alone (mirror blocked)")
+                    cursor += fxtr.width
 
-                        
-                        fixture_queue.popleft()
-                        placement_cursor += pair_width + gap_between_pairs
-                    else:
-                        # This is the "JUMP" logic. If the spot is blocked, nudge the cursor.
-                        placement_cursor += 10.0
-
-            unplaced_fixtures.extend(fixture_queue)
-            print(f"    -> 🎯 Placement complete. {len(unplaced_fixtures)} fixtures remain unplaced from this pass.")
-            return unplaced_fixtures
-
-        except Exception as e:
-            print(f"🔥 An error occurred during RIGHT wall placement: {e}")
-            traceback.print_exc()
-            unplaced_fixtures.extend(fixture_queue)
-            return unplaced_fixtures
-        
-#-----------------newww setup--------trying----------------------------------------------------------------------------------
-#-----------------newww setup--------trying-----NEW AGAIN--------------------------------------------------------------------------------
-#-----------------newww setup--------trying-----NEW AGAIN--------------------------------------------------------------------------------
+        print("\n--- ✅ Finished placing all wall fixtures from the plan. ---")
 
     
 
-#-----------------newww setup--------trying-----NEW AGAIN--------------------------------------------------------------------------------
-#-----------------newww setup--------trying-----NEW AGAIN--------------------------------------------------------------------------------
+    def draw_corner_dummy_boxes(self, corners: list, placed_bboxes: list, size: float = 250.0, layer_name: str = "CORNER_DUMMY_BOX", draw_visual: bool = True):
+        """
+        [MODIFIED] Calculates a square box for an internal corner and registers it as an obstacle.
+        Optionally draws the box on a specified layer for debugging.
+        """
+        if not corners:
+            return
+
+        if draw_visual:
+            print(f"\n--- 🎨 Drawing and Registering {len(corners)} Dummy Boxes ---")
+            if layer_name not in self.doc.layers:
+                self.doc.layers.add(name=layer_name, color=1) # Red
+        else:
+            print(f"\n--- 🚧 Registering {len(corners)} Internal Corner Obstacles (no drawing) ---")
+
+        for corner_data in corners:
+            from ezdxf.math import Vec2
+            import math
+            p_corner = Vec2(corner_data['point'])
+            v_in = Vec2.from_angle(math.radians(corner_data['angle_in'] + 180))
+            v_out = Vec2.from_angle(math.radians(corner_data['angle_out']))
+            
+            # Define the points of the box
+            p1 = p_corner + v_in.normalize() * size
+            p2 = p_corner + v_out.normalize() * size
+            p3 = p_corner + v_in.normalize() * size + v_out.normalize() * size
+            points = [p_corner, p1, p3, p2]
+            
+            # Optionally draw the box
+            if draw_visual:
+                self.msp.add_lwpolyline(
+                    points,
+                    close=True,
+                    dxfattribs={"layer": layer_name}
+                )
+
+            # Always register the box as an obstacle
+            min_x = min(p.x for p in points)
+            min_y = min(p.y for p in points)
+            max_x = max(p.x for p in points)
+            max_y = max(p.y for p in points)
+            bbox = (min_x, min_y, max_x, max_y)
+            
+            placed_bboxes.append(bbox)
+            
+            if draw_visual:
+                print(f"  -> Drew dummy box and registered obstacle at ({p_corner.x:.0f}, {p_corner.y:.0f})")
+
+    def plan_and_place_wall_fixtures(self, all_placed_bboxes: list, primary_side: str, draw_debug: bool = False):
+        """
+        Orchestrates the entire wall fixture planning and placement process.
+        - Finds internal corners to correctly calculate wall lengths.
+        - Generates a fixture plan based on available space and merchandise mix.
+        - Places the fixtures from the generated plan.
+        - Optionally draws debug geometry for validation.
+        - RETURNS: The number of remaining (unplaced) wall fixtures and the display calculations.
+        """
+        import json
+        print("\n--- 🚀 Orchestrating Wall Fixture Planning and Placement ---")
+
+        # 1. Find corners for BOTH sides first.
+        right_wall_raw_data = self.get_retail_wall_data(side='right', internal_corners=[])
+        internal_corners_on_right_wall = self.find_internal_corners(right_wall_raw_data, side='right')
+
+        left_wall_raw_data = self.get_retail_wall_data(side='left', internal_corners=[])
+        internal_corners_on_left_wall = self.find_internal_corners(left_wall_raw_data, side='left')
+
+        # 2. Register internal corners as obstacles (and optionally draw them).
+        if internal_corners_on_right_wall:
+            if draw_debug:
+                print("\n[DEBUG] Detected Internal Corners on the Right Wall:")
+                for corner in internal_corners_on_right_wall:
+                    print(f"  - Corner at: {corner['point']}, Angle In: {corner['angle_in']:.1f}°, Angle Out: {corner['angle_out']:.1f}°")
+            self.draw_corner_dummy_boxes(internal_corners_on_right_wall, all_placed_bboxes, layer_name="DEBUG_INTERNAL_CORNERS", draw_visual=draw_debug)
+
+        if internal_corners_on_left_wall:
+            if draw_debug:
+                print("\n[DEBUG] Detected Internal Corners on the Left Wall:")
+                for corner in internal_corners_on_left_wall:
+                    print(f"  - Corner at: {corner['point']}, Angle In: {corner['angle_in']:.1f}°, Angle Out: {corner['angle_out']:.1f}°")
+            self.draw_corner_dummy_boxes(internal_corners_on_left_wall, all_placed_bboxes, layer_name="DEBUG_INTERNAL_CORNERS", draw_visual=draw_debug)
+
+        # 3. Now, get the CORRECTED wall data by passing the corners you just found.
+        right_wall_data = self.get_retail_wall_data(side='right', internal_corners=internal_corners_on_right_wall)
+        left_wall_data = self.get_retail_wall_data(side='left', internal_corners=internal_corners_on_left_wall)
+        
+        if draw_debug:
+            print("\n--- [DEBUG] Right Wall Data ---")
+            print(json.dumps(right_wall_data, indent=4))
+            print("\n--- [DEBUG] Left Wall Data ---")
+            print(json.dumps(left_wall_data, indent=4))
+
+        # 4. The rest of the planning logic now uses the CORRECTED data.
+        left_wall_length = left_wall_data["total_length"]
+        right_wall_length = right_wall_data["total_length"]
+        total_retail_wall_length = left_wall_length + right_wall_length
+        print(f"\nLeft wall length: {left_wall_length:.0f} mm, Right wall length: {right_wall_length:.0f} mm, Total: {total_retail_wall_length:.0f} mm")
+        
+        if primary_side == "right":
+            all_wall_segments = {
+                "right_segments": right_wall_data["segments"],
+                "left_segments": left_wall_data["segments"]
+            }
+        else: # When primary_side == 'left'
+            all_wall_segments = {
+                "left_segments": left_wall_data["segments"],
+                "right_segments": right_wall_data["segments"]
+            }
+
+        # 5. Generate and execute the placement plan.
+        display_calcs = self.display_count_calc(floor_area=0, wall_length=total_retail_wall_length, display_count=0) 
+        placement_dict, remaining_wall_fixtures = self.generate_wall_fixture_plan(
+            wall_segments_data=all_wall_segments,
+            display_calculations=display_calcs,
+            primary_side=primary_side
+        )
+
+        print("\nRemaining wall fixtures after wall plan generation: ", remaining_wall_fixtures)
+        self.place_fixtures_from_plan(placement_dict, all_placed_bboxes)
+        
+        if draw_debug:
+            self.draw_perimeter_paths_for_validation()
+        
+        print("--- ✅ Wall Fixture Placement Complete ---")
+        
+        # Return the values needed by the next function
+        return remaining_wall_fixtures, display_calcs
+
+
+    # Now, ADD this new method to your DXF_Controller class for Euro Centers.
+
+    def plan_and_place_euro_fixtures(self, all_placed_bboxes: list, remaining_wall_fixtures: int, display_calcs: dict, draw_debug: bool = False):
+        """
+        Orchestrates the planning and placement of Euro Center fixtures, accounting for
+        any overflow from the wall fixture placement.
+        """
+        print("\n--- 🚀 Orchestrating Euro Center Fixture Planning and Placement ---")
+        
+        # 1. Define placement zone (and optionally draw it for debugging)
+        # This call is necessary as it defines the zone used by the analysis functions.
+        self.euro_center_placement_area() 
+        if draw_debug:
+            self.draw_euro_center_placement_zone()
+            # --- Generate and draw the ROW-WISE grid (0° Rotation) ---
+            row_wise_coords = self.generate_row_wise_grid()
+            self.draw_grid_for_validation(
+                grid_points=row_wise_coords,
+                cell_width=1040.0,
+                cell_height=1175.0,
+                layer_name="DEBUG_GRID_ROW_WISE",
+                color=3  # Green
+            )
+
+            # # --- Generate and draw the COLUMN-WISE grid (90° Rotation) ---
+            column_wise_coords = self.generate_column_wise_grid()
+            self.draw_grid_for_validation(
+                grid_points=column_wise_coords,
+                cell_width=1175.0,
+                cell_height=1040.0,
+                layer_name="DEBUG_GRID_COLUMN_WISE",
+                color=4  # Cyan
+            )
+
+
+        # 2. Update floor fixture count with overflow from wall fixtures
+        print(f"  -> Adding {remaining_wall_fixtures} remaining wall fixtures to the floor fixture count.")
+        display_calcs['floor_fixtures'] = display_calcs.get('floor_fixtures', 0) + remaining_wall_fixtures
+        print(f"  -> New total floor fixtures required: {display_calcs['floor_fixtures']}")
+
+        # 3. Analyze placement patterns and place the fixtures
+        placement_blueprint = self.analyze_placement_patterns()
+        self.place_euro_centers_from_blueprint(placement_blueprint, display_calcs, all_placed_bboxes)
+        
+        print("--- ✅ Euro Center Placement Complete ---")
+    
 
 #-----------------------wall_fixture placement PLACEMENT FUNCTION FINISED HERE------------------------------------------------------------------------------------
 
@@ -8315,7 +10158,7 @@ class DXF_Controller:
         simplified count. It automatically alternates placement on the left and right
         sides for each subsequent Euro_centre.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from ezdxf.bbox import extents
         from shapely.geometry import box
         import collections
@@ -8373,7 +10216,7 @@ class DXF_Controller:
             
             try:
                 table_fixture_name = f"Discussion_table_{table_type}"
-                table_fxtr = Fixture(self.fixture_dict[table_fixture_name]["name"],
+                table_fxtr = Fixture.Fixture(self.fixture_dict[table_fixture_name]["name"],
                                      self.fixture_dict[table_fixture_name]["path"])
             except Exception as e:
                 print(f"    🔥 Could not load fixture for '{table_fixture_name}': {e}")
@@ -8435,165 +10278,7 @@ class DXF_Controller:
 
 #---- POS/AR PLACEMENT FUNCTION STARTED ----
 
-    def place_pos_ar_portrait_dynamically_og(self, placed_bboxes):
-        """
-        Places the POS and AR group using a resilient, iterative search strategy.
-        - If POS is not selected, it places the AR unit by itself, anchored to a clinic.
-        - The gap above the anchor is DYNAMIC, increasing if standing tables are present.
-        """
-        from shapely.geometry import box, LineString
-        from ezdxf.bbox import extents
-        from ezdxf.math import BoundingBox2d, Vec2
-        import collections
-
-        try:
-            # --- 1. SETUP: Load fixtures and check for POS selection ---
-            pos_config = self.fixtures.get("POS", {})
-            selected_pos_name = next((name for name, selected in pos_config.items() if selected > 0), None)
-            ar_fxtr = Fixture.Fixture("AR", self.fixture_dict["AR"]["path"])
-            placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
-
-            # --- STRATEGY 1: Place POS + AR Group ---
-            if selected_pos_name:
-                print("\n--- 🧠 Placing POS/AR with Dynamic Iterative Strategy ---")
-                placed_bboxes = self._get_accurate_obstacle_bboxes(include_all=True)
-
-                pos_fxtr = Fixture.Fixture(selected_pos_name, self.fixture_dict[selected_pos_name]["path"])
-                gap_between = 100
-                total_group_width = pos_fxtr.width + gap_between + ar_fxtr.width
-                max_group_height = max(pos_fxtr.height, ar_fxtr.height)
-
-                anchor_y = 0
-                anchor_fixtures = [
-                    e for e in self.msp.query('INSERT')
-                    if "CORIAN_TABLE" in e.dxf.name.upper() or "LOUNGE_SEAT" in e.dxf.name.upper()
-                ]
-                if not anchor_fixtures:
-                    anchor_fixtures = [e for e in self.msp.query('INSERT') if "EURO_CENTRE" in e.dxf.name.upper()]
-                
-                if anchor_fixtures:
-                    anchor_y = extents(anchor_fixtures).extmax.y
-                    print(f"  -> Found anchor point at y={anchor_y:.0f}")
-                else:
-                    anchor_y = self.cvc.min_y + (self.cvc.max_y - self.cvc.min_y) * 0.6
-                    print(f"  -> No primary anchors found. Using fallback y={anchor_y:.0f}")
-
-                standing_table_count = self.fixtures.get("table_fixtures", {}).get("Standing_table", 0)
-                gap_above_anchor = 2000.0 if standing_table_count > 0 else 300.0
-                print(f"  -> Using anchor gap of {gap_above_anchor}mm.")
-                
-                search_zone_start_y = anchor_y + gap_above_anchor
-                search_zone_end_y = self.cvc.max_y - max_group_height - 100
-                
-                y_cursor = search_zone_start_y
-                is_placed = False
-
-                while y_cursor < search_zone_end_y:
-                    horizontal_slice = LineString([(self.cvc.min_x, y_cursor), (self.cvc.max_x, y_cursor)])
-                    intersection = self.floorplan_polygon.intersection(horizontal_slice)
-                    
-                    if isinstance(intersection, LineString) and intersection.length >= total_group_width:
-                        local_x_min, _, local_x_max, _ = intersection.bounds
-                        ideal_x = local_x_min + (intersection.length - total_group_width) / 2
-                        search_offset = 0
-                        while search_offset < intersection.length / 2:
-                            for sign in [1, -1]:
-                                if sign == -1 and search_offset == 0: continue
-                                
-                                test_x = ideal_x + (search_offset * sign)
-                                group_box = box(test_x, y_cursor, test_x + total_group_width, y_cursor + max_group_height)
-                                if not any(group_box.intersects(box(*b)) for b in placed_bboxes):
-                                    print(f"  -> Found clear spot at (x={test_x:.0f}, y={y_cursor:.0f})")
-                                    pos_x = test_x
-                                    ar_x = pos_x + pos_fxtr.width + gap_between
-                                    self.place_fixture(pos_fxtr, (pos_x, y_cursor, 0), 0, False)
-                                    placed_bboxes.append((pos_x, y_cursor, pos_x + pos_fxtr.width, y_cursor + pos_fxtr.height))
-                                    self.place_fixture(ar_fxtr, (ar_x, y_cursor, 0), 0, False)
-                                    placed_bboxes.append((ar_x, y_cursor, ar_x + ar_fxtr.width, y_cursor + ar_fxtr.height))
-                                    is_placed = True
-                                    break
-                            if is_placed: break
-                            search_offset += 100
-                    if is_placed: break
-                    y_cursor += 100
-                
-                if not is_placed:
-                    print("  -> ⚠️ FAILED: Could not find a clear spot for the POS/AR group after searching the entire zone.")
-
-            # --- STRATEGY 2: AR Only, Anchored to Clinic ---
-            else:
-                print("\n  -> Placing AR only (no POS selected), anchoring to Clinic...")
-                
-                clinic_entities = [e for e in self.msp.query('INSERT') if "CLINIC" in e.dxf.name.upper()]
-                if not clinic_entities:
-                    print("    -> SKIPPED: No clinic found to anchor to.")
-                    return
-
-                # Select the left-most clinic as the anchor for portrait mode
-                left_most_clinic = min(clinic_entities, key=lambda e: e.dxf.insert.x)
-                
-                # Manually reconstruct the bounding box to ensure accuracy
-                block_name_upper = left_most_clinic.dxf.name.upper()
-                best_match_key = ""
-                for key in self.fixture_dict.keys():
-                    sanitized_key = key.upper().replace(" ", "_")
-                    if block_name_upper.startswith(sanitized_key):
-                        if len(key) > len(best_match_key):
-                            best_match_key = key
-                
-                if not best_match_key:
-                    print(f"    -> ⚠️ Could not identify original fixture for '{left_most_clinic.dxf.name}'. Using ezdxf.extents as fallback.")
-                    anchor_bbox = extents([left_most_clinic])
-                else:
-                    anchor_fxtr_obj = Fixture.Fixture(self.fixture_dict[best_match_key]["name"], self.fixture_dict[best_match_key]["path"])
-                    ip = left_most_clinic.dxf.insert
-                    min_x, min_y = ip.x, ip.y
-                    max_x = min_x + anchor_fxtr_obj.width
-                    max_y = min_y + anchor_fxtr_obj.height
-                    anchor_bbox = BoundingBox2d([Vec2(min_x, min_y), Vec2(max_x, max_y)])
-                
-                print(f"  -> Anchoring to left-most clinic at ({anchor_bbox.extmin.x:.0f}, {anchor_bbox.extmin.y:.0f})")
-
-                rotation = 0
-                ar_w, ar_h = ar_fxtr.width, ar_fxtr.height
-                gap_from_clinic = 500.0
-
-                # Priority: Try bottom first, then other sides
-                potential_spots = [
-                    {"side": "bottom", "x": anchor_bbox.center.x - (ar_w / 2), "y": anchor_bbox.extmin.y - gap_from_clinic - ar_h},
-                    {"side": "left",   "x": anchor_bbox.extmin.x - gap_from_clinic - ar_w, "y": anchor_bbox.center.y - (ar_h / 2)},
-                    {"side": "right",  "x": anchor_bbox.extmax.x + gap_from_clinic, "y": anchor_bbox.center.y - (ar_h / 2)},
-                    {"side": "top",    "x": anchor_bbox.center.x - (ar_w / 2), "y": anchor_bbox.extmax.y + gap_from_clinic}
-                ]
-
-                def is_ar_spot_valid(x, y):
-                    ar_poly = box(x, y, x + ar_w, y + ar_h)
-                    if not self.floorplan_polygon.contains(ar_poly): return False
-                    if any(ar_poly.intersects(box(*b)) for b in placed_bboxes): return False
-                    return True
-
-                is_placed = False
-                for spot in potential_spots:
-                    ideal_x, ideal_y = spot["x"], spot["y"]
-                    if is_ar_spot_valid(ideal_x, ideal_y):
-                        self.place_fixture(ar_fxtr, (ideal_x, ideal_y, 0), rotation, False)
-                        placed_bboxes.append((ideal_x, ideal_y, ideal_x + ar_w, ideal_y + ar_h))
-                        print(f"    ✅ Placed 'AR' successfully on the {spot['side']} of a clinic.")
-                        is_placed = True
-                        break
-                
-                if not is_placed:
-                    print("    -> ⚠️ FAILED: Could not find a clear spot for the AR fixture on any side of the clinic.")
-
-        except Exception as e:
-            print(f"🔥 FATAL: An error occurred during POS/AR placement: {e}")
-            return
-
-
-    #new__test__
-    #new__test__
-    
-    
+        
     def _get_boh_zone_polygon(self) -> Optional[Polygon]:
         """
         Finds all BOH wall outlines and merges them into a single Shapely Polygon.
@@ -8952,7 +10637,7 @@ class DXF_Controller:
         Strategy 3 (Fallback): If there's no room above, it tries to place them in the bottom margin area.
         Strategy 4 (Final Fallback): Performs a global grid search for any available space.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import Point, box
         from ezdxf.bbox import extents
         import traceback
@@ -8966,7 +10651,7 @@ class DXF_Controller:
             for name, count in sofa_config.items():
                 if "sofa" in name.lower() and count > 0:
                     try:
-                        fxtr = Fixture(name, self.fixture_dict[name]["path"])
+                        fxtr = Fixture.Fixture(name, self.fixture_dict[name]["path"])
                         sofas_to_place.extend([fxtr] * count)
                     except KeyError:
                         print(f"⚠️ Warning: Fixture '{name}' is specified but not found. Skipping.")
@@ -9134,19 +10819,6 @@ class DXF_Controller:
             is_double_shopping = (85 < euro_rotation < 95) or (265 < euro_rotation < 275)
             fallback_anchors = [extents([e]) for e in euro_entities]
 
-            # --- FALLBACK A: Double Shopping (Place Below) ---
-            # if is_double_shopping:
-            #     print("  -> Detected Double Shopping layout. Placing Blue_zero BELOW Euro Centres.")
-            #     for target_bbox in fallback_anchors:
-            #         if placed_count >= blue_zero_count: break
-            #         target_x = target_bbox.center.x - (blue_zero_fxtr.width / 2)
-            #         target_y = target_bbox.extmin.y - margin - blue_zero_fxtr.height
-            #         candidate_box = box(target_x, target_y, target_x + blue_zero_fxtr.width, target_y + blue_zero_fxtr.height)
-            #         if self.floorplan_polygon.contains(candidate_box) and not any(candidate_box.intersects(box(*b)) for b in placed_bboxes):
-            #             self.place_fixture(blue_zero_fxtr, (target_x, target_y, 0), 0, False)
-            #             placed_bboxes.append(candidate_box.bounds)
-            #             print(f"✅ Placed Blue_zero below a Euro Centre.")
-            #             placed_count += 1
             
             if is_double_shopping:
                 print("  -> Detected Double Shopping layout. Placing Blue_zero BELOW Euro Centres.")
@@ -9189,11 +10861,15 @@ class DXF_Controller:
                     side = "left" if i % 2 == 0 else "right"
                     
                     if side == "left":
-                        rotation = 270
-                        insert_x = target_bbox.extmin.x - blue_zero_fxtr.height - margin
+                        rotation = 90#270
+                        # insert_x = target_bbox.extmin.x - blue_zero_fxtr.height - margin
+                        # insert_y = target_bbox.center.y - (blue_zero_fxtr.width / 2)
+                        insert_x = target_bbox.extmax.x + margin
                         insert_y = target_bbox.center.y - (blue_zero_fxtr.width / 2)
-                        final_insert_point = (insert_x, insert_y + blue_zero_fxtr.width, 0)
-                        candidate_box = box(insert_x, insert_y, insert_x + blue_zero_fxtr.height, insert_y + blue_zero_fxtr.width)
+                        # final_insert_point = (insert_x, insert_y + blue_zero_fxtr.width, 0)
+                        # candidate_box = box(insert_x, insert_y, insert_x + blue_zero_fxtr.height, insert_y + blue_zero_fxtr.width)
+                        final_insert_point = (insert_x + blue_zero_fxtr.height + 300, insert_y, 0)
+                        candidate_box = box(insert_x, insert_y, insert_x + blue_zero_fxtr.height + 300, insert_y + blue_zero_fxtr.width)
                     else: # side == "right"
                         rotation = 90
                         insert_x = target_bbox.extmax.x + margin
@@ -9224,7 +10900,7 @@ class DXF_Controller:
             The calculated Y-coordinate for placement, or None if no space is available.
         """
         from ezdxf.bbox import extents
-        from Fixture import Fixture # Make sure Fixture is imported
+        # from Fixture import Fixture # Make sure Fixture is imported
 
         print("\n  -> Calculating ideal Y-coordinate for QMS Desk...")
 
@@ -9254,7 +10930,7 @@ class DXF_Controller:
         
         try:
             # Load the QMS desk fixture to get its height.
-            qms_fxtr = Fixture("QMS_desk", self.fixture_dict["QMS_desk"]["path"])
+            qms_fxtr = Fixture.Fixture("QMS_desk", self.fixture_dict["QMS_desk"]["path"])
         except Exception as e:
             print(f"    -> 🔥 Could not load QMS_desk fixture to get its height: {e}")
             return None # Cannot proceed without fixture height
@@ -9498,76 +11174,14 @@ class DXF_Controller:
 
 #------ STANDING TABLE PLACEMENT FUNCTION STARTED HERE ----
 
-    def _get_standing_table_anchor_y(self) -> Optional[float]:
-        """
-        FINDS THE CORRECT ANCHOR LINE (Y-coordinate) to measure from for standing tables.
-        1. Finds the lowest non-retail fixture.
-        2. Checks if any Bench/AR fixture is within 500mm below it.
-        3. Returns the Y-coordinate of the correct anchor (either the furniture or the non-retail fixture).
-        """
-        from ezdxf.bbox import extents
-        print("\n  -> Finding dynamic anchor-Y for Standing Tables...")
-
-        # --- STEP 1: Find the lowest placed non-retail fixture ---
-        non_retail_entities = [
-            e for e in self.msp.query('LINE[layer=="RETAIL_SEPARATOR"]')# if
-            # "CLINIC" in e.dxf.name.upper() or "PICK_UP_WINDOW" in e.dxf.name.upper()
-        ]
-        all_polylines = self.msp.query('LWPOLYLINE')
-        boh_outlines = [p for p in all_polylines if "BOH_WALL_" in p.dxf.layer and p.dxf.layer.endswith("_OUTLINE")]
-        
-        combined_non_retail_entities = non_retail_entities + boh_outlines
-        
-        if not combined_non_retail_entities:
-            print("    -> ⚠️ SKIPPING: No non-retail fixtures found to anchor to.")
-            return None
-
-        non_retail_bboxes = [extents([e]) for e in combined_non_retail_entities if extents([e])]
-        if not non_retail_bboxes:
-             print("    -> ⚠️ SKIPPING: Could not calculate bounding boxes for non-retail fixtures.")
-             return None
-
-        lowest_non_retail_fixture_bbox = min(non_retail_bboxes, key=lambda b: b.extmin.y)
-        lowest_non_retail_y = lowest_non_retail_fixture_bbox.extmin.y
-        print(f"    -> Primary anchor (lowest non-retail) found at y={lowest_non_retail_y:.0f}.")
-
-        # --- STEP 2: Check for Bench or AR within 500mm below that fixture ---
-        furniture_entities = [
-            e for e in self.msp.query('INSERT') if
-            "BENCH" in e.dxf.name.upper() or "AR" in e.dxf.name.upper()
-        ]
-        
-        new_anchor_furniture_bbox = None
-        if furniture_entities:
-            candidate_furniture = []
-            for entity in furniture_entities:
-                try:
-                    furniture_bbox = extents([entity])
-                    if furniture_bbox.extmax.y < lowest_non_retail_y:
-                        gap = lowest_non_retail_y - furniture_bbox.extmax.y
-                        if gap <= 500.0:
-                            candidate_furniture.append(furniture_bbox)
-                except (RuntimeError, TypeError):
-                    continue
-            
-            if candidate_furniture:
-                new_anchor_furniture_bbox = min(candidate_furniture, key=lambda b: b.extmin.y)
-
-        # --- STEP 3: Determine and return the final anchor Y-coordinate ---
-        if new_anchor_furniture_bbox:
-            final_anchor_y = new_anchor_furniture_bbox.extmin.y
-            print(f"    -> Found relevant furniture. Final anchor is the furniture's bottom edge at y={final_anchor_y:.0f}.")
-            return final_anchor_y
-        else:
-            print("    -> No nearby furniture found. Final anchor is the non-retail fixture's bottom edge.")
-            return lowest_non_retail_y
-
     def _get_new_standing_table_anchor_y(self) -> Optional[float]:
         """
-        [NEW] Determines the standing table anchor-Y specifically for Plan B clinic layouts.
-        1. Checks the horizontal space between the last clinic and the right wall/pickup window.
-        2. If space is ample (>1500mm), it anchors to the bottom of that clinic.
-        3. Otherwise, it falls back to the standard non-retail boundary anchor.
+        [Plan B Logic] Calculates new anchor-Y for Standing Tables.
+
+        Updated behaviour:
+        - When the available horizontal width condition is met, prefer anchoring
+          to the bottom (min-y) of the BOH zone if a BOH zone exists.
+        - If no BOH zone is present, fall back to anchoring to the last clinic bottom.
         """
         from ezdxf.bbox import extents
         print("\n  -> [Plan B Logic] Calculating new anchor-Y for Standing Tables...")
@@ -9586,19 +11200,14 @@ class DXF_Controller:
         # 1b. Find the right-side boundary (either the Pickup Window or the wall)
         right_boundary_x = self.cvc.max_x  # Default to the right wall
 
-        # ******************** FIX START ********************
-        # Replaced the complex query with a robust loop to avoid parsing errors.
         pickup_window = None
         for entity in self.msp.query('INSERT'):
-            # Check the block name in a case-insensitive way
             if "PICK_UP_WINDOW" in entity.dxf.name.upper():
                 pickup_window = entity
                 break
-        # ********************* FIX END *********************
 
         if pickup_window:
             pickup_bbox = extents([pickup_window])
-            # Use the left edge of the pickup window as the boundary
             right_boundary_x = pickup_bbox.extmin.x
             print(f"    -> Pickup window found. Right boundary is at x={right_boundary_x:.0f}")
         else:
@@ -9609,158 +11218,197 @@ class DXF_Controller:
         print(f"    -> Horizontal space between last clinic and right boundary: {available_width:.0f}mm")
 
         # 2. Check the width and determine the anchor Y-coordinate
-        if available_width > 2300.0:
-            print(f"    -> Space is > 1500mm. Anchoring to the bottom of the last clinic (y={last_clinic_bbox.extmin.y:.0f}).")
-            # The anchor point is the bottom of the clinic itself.
-            return last_clinic_bbox.extmin.y
+        # NOTE: preserved original condition; only change is to prefer BOH bottom as anchor
+        # if available_width > -2000 or available_width < 1500:
+        if available_width > -4500:
+            print(f"    -> Available width is {available_width:.0f}mm.")
+
+            # NEW: prefer BOH zone bottom as anchor when available
+            boh_poly = None
+            try:
+                boh_poly = self._get_boh_zone_polygon()
+            except Exception:
+                boh_poly = None
+
+            if boh_poly:
+                boh_min_y = boh_poly.bounds[1]  # bounds -> (minx, miny, maxx, maxy)
+                print(f"    -> Anchoring to BOH zone bottom at y={boh_min_y:.0f} instead of last clinic.")
+                return boh_min_y
+            else:
+                print(f"    -> BOH zone not found. Anchoring to the bottom of the last clinic (y={last_clinic_bbox.extmin.y:.0f}).")
+                return last_clinic_bbox.extmin.y
         else:
             # 3. If space is insufficient, fall back to the original method
+            print(f"    -> Available width is {available_width:.0f}mm.")
             print("    -> Space is not > 1500mm. Falling back to the standard non-retail boundary anchor method.")
             return self._get_standing_table_anchor_y()
+    
+    def _get_new_standing_table_anchor_y_og(self) -> Optional[float]:
+        """
+        [Plan B Logic] Calculates new anchor-Y for Standing Tables.
 
+        Updated behaviour:
+        - When the available horizontal width condition is met, prefer anchoring
+          to the bottom (min-y) of the BOH zone if a BOH zone exists.
+        - If no BOH zone is present, fall back to anchoring to the last clinic bottom.
+        """
+        from ezdxf.bbox import extents
+        print("\n  -> [Plan B Logic] Calculating new anchor-Y for Standing Tables...")
+
+        # 1a. Find the "last" placed clinic (the one furthest to the right)
+        clinic_entities = [e for e in self.msp.query('INSERT') if "CLINIC" in e.dxf.name.upper()]
+        print("clinic_entities:", clinic_entities)
+        print("Number of clinics found:", len(clinic_entities))
+        print("clinic coordinates:", [extents([e]) for e in clinic_entities])
+        if not clinic_entities:
+            print("    -> ⚠️ No clinics found. Falling back to standard anchor method.")
+            return self._get_standing_table_anchor_y()
+
+        last_clinic = max(clinic_entities, key=lambda e: extents([e]).extmax.x)
+        last_clinic_bbox = extents([last_clinic])
+        last_clinic_right_edge_x = last_clinic_bbox.extmax.x
+        print(f"    -> Last clinic (right-most) found at x={last_clinic_right_edge_x:.0f}")
+
+        # 1b. Find the right-side boundary (either the Pickup Window or the wall)
+        right_boundary_x = self.cvc.max_x  # Default to the right wall
+
+        pickup_window = None
+        for entity in self.msp.query('INSERT'):
+            if "PICK_UP_WINDOW" in entity.dxf.name.upper():
+                pickup_window = entity
+                break
+
+        if pickup_window:
+            pickup_bbox = extents([pickup_window])
+            right_boundary_x = pickup_bbox.extmin.x
+            print(f"    -> Pickup window found. Right boundary is at x={right_boundary_x:.0f}")
+        else:
+            print(f"    -> No pickup window. Right boundary is the wall at x={right_boundary_x:.0f}")
+
+        # 1c. Calculate the available horizontal width
+        available_width = right_boundary_x - last_clinic_right_edge_x
+        print(f"    -> Horizontal space between last clinic and right boundary: {available_width:.0f}mm")
+
+        # 2. Check the width and determine the anchor Y-coordinate
+        # NOTE: preserved original condition; only change is to prefer BOH bottom as anchor
+        # if available_width > -2000 or available_width < 1500:
+        if available_width > -4500:
+            print(f"    -> Available width is {available_width:.0f}mm.")
+
+            # NEW: prefer BOH zone bottom as anchor when available
+            boh_poly = None
+            try:
+                boh_poly = self._get_boh_zone_polygon()
+            except Exception:
+                boh_poly = None
+
+            if boh_poly:
+                boh_min_y = boh_poly.bounds[1]  # bounds -> (minx, miny, maxx, maxy)
+                print(f"    -> Anchoring to BOH zone bottom at y={boh_min_y:.0f} instead of last clinic.")
+                return boh_min_y
+            else:
+                print(f"    -> BOH zone not found. Anchoring to the bottom of the last clinic (y={last_clinic_bbox.extmin.y:.0f}).")
+                return last_clinic_bbox.extmin.y
+        else:
+            # 3. If space is insufficient, fall back to the original method
+            print(f"    -> Available width is {available_width:.0f}mm.")
+            print("    -> Space is not > 1500mm. Falling back to the standard non-retail boundary anchor method.")
+            return self._get_standing_table_anchor_y()
+    
+   
+
+    def _get_standing_table_anchor_y(self) -> Optional[float]:
+        """
+        FINDS THE CORRECT ANCHOR LINE (Y-coordinate) to measure from for standing tables.
+        1. Finds the lowest non-retail fixture.
+        2. Checks if any Bench/AR fixture is within 500mm below it AND falls within the
+        central "standing table corridor".
+        3. Returns the Y-coordinate of the correct anchor.
+        """
+        from ezdxf.bbox import extents
+        print("\n  -> Finding dynamic anchor-Y for Standing Tables (using Central Corridor Proxy)...")
+
+        # --- STEP 1: Find the lowest placed non-retail fixture (No change here) ---
+        non_retail_entities = [
+            e for e in self.msp.query('LINE[layer=="RETAIL_SEPARATOR"]')
+        ]
+        all_polylines = self.msp.query('LWPOLYLINE')
+        boh_outlines = [p for p in all_polylines if "BOH_WALL_" in p.dxf.layer and p.dxf.layer.endswith("_OUTLINE")]
         
+        combined_non_retail_entities = non_retail_entities + boh_outlines
+        
+        if not combined_non_retail_entities:
+            print("    -> ⚠️ SKIPPING: No non-retail fixtures found to anchor to.")
+            return None
+
+        non_retail_bboxes = [extents([e]) for e in combined_non_retail_entities if extents([e])]
+        if not non_retail_bboxes:
+            print("    -> ⚠️ SKIPPING: Could not calculate bounding boxes for non-retail fixtures.")
+            return None
+
+        lowest_non_retail_fixture_bbox = min(non_retail_bboxes, key=lambda b: b.extmin.y)
+        lowest_non_retail_y = lowest_non_retail_fixture_bbox.extmin.y
+        print(f"    -> Primary anchor (lowest non-retail) found at y={lowest_non_retail_y:.0f}.")
+
+        ### --- START OF MODIFICATION --- ###
+
+        # --- NEW: DEFINE THE PROXY ZONE for where standing tables will likely be placed ---
+        # We'll define this as the central 50% of the room's width, leaving 25% for aisles on each side.
+        room_width = self.cvc.max_x - self.cvc.min_x
+        aisle_margin = room_width * 0.25 
+        standing_table_zone_start_x = self.cvc.min_x + aisle_margin
+        standing_table_zone_end_x = self.cvc.max_x - aisle_margin
+        print(f"    -> Defined standing table proxy zone between x={standing_table_zone_start_x:.0f} and x={standing_table_zone_end_x:.0f}")
+
+        # --- STEP 2: Check for Bench or AR within the PROXY ZONE ---
+        furniture_entities = [
+            e for e in self.msp.query('INSERT') if
+            "BENCH" in e.dxf.name.upper() or "AR" in e.dxf.name.upper()
+        ]
+        
+        new_anchor_furniture_bbox = None
+        if furniture_entities:
+            candidate_furniture = []
+            for entity in furniture_entities:
+                try:
+                    furniture_bbox = extents([entity])
+                    
+                    # Condition 1: Vertically below and close to the BOH block
+                    is_vertically_close = (furniture_bbox.extmax.y < lowest_non_retail_y) and \
+                                        ((lowest_non_retail_y - furniture_bbox.extmax.y) <= 500.0)
+
+                    # MODIFIED Condition 2: Horizontally inside the standing table proxy zone
+                    is_in_central_zone = (
+                        standing_table_zone_start_x < furniture_bbox.extmax.x and
+                        furniture_bbox.extmin.x < standing_table_zone_end_x
+                    )
+
+                    # The furniture is only a candidate if BOTH conditions are true
+                    if is_vertically_close and is_in_central_zone:
+                        candidate_furniture.append(furniture_bbox)
+                        
+                except (RuntimeError, TypeError):
+                    continue
+            
+            if candidate_furniture:
+                new_anchor_furniture_bbox = min(candidate_furniture, key=lambda b: b.extmin.y)
+
+        ### --- END OF MODIFICATION --- ###
+
+        # --- STEP 3: Determine and return the final anchor Y-coordinate ---
+        if new_anchor_furniture_bbox:
+            final_anchor_y = new_anchor_furniture_bbox.extmin.y
+            print(f"    -> Found relevant furniture in the central corridor. Final anchor is the furniture's bottom edge at y={final_anchor_y:.0f}.")
+            return final_anchor_y
+        else:
+            print("    -> No furniture in the central path. Final anchor is the non-retail fixture's bottom edge.")
+            return lowest_non_retail_y
+
 
     
 
-    def place_standing_tables_beside_euros_og(self, placed_bboxes):
-        """
-        [MODIFIED] Places Standing Tables using a top-down, adaptive row-based strategy.
-        - It now finds the nearest obstacles left and right to define a dynamic corridor.
-        - Enforces fixed 800mm walking aisles on both sides of the table group.
-        - Centers the tables within the remaining space.
-        """
-        from ezdxf.bbox import extents
-        from shapely.geometry import box, LineString
-        import collections
-        import math
 
-        print("\n--- 🧠 Placing Standing Tables (Dynamic Corridor Strategy) ---")
-
-        # 1. Get configuration (Unchanged)
-        config = self.fixtures.get("table_fixtures", {})
-        standing_table_count = config.get("Standing_table", 0)
-        if standing_table_count <= 0:
-            return
-
-        try:
-            standing_fxtr = Fixture.Fixture("Standing_table", self.fixture_dict["Standing_table"]["path"])
-        except Exception as e:
-            print(f"🔥 Could not load Standing_table fixture: {e}")
-            return
-
-        # --- Anchor-Y and Initial Setup (Unchanged) ---
-        anchor_y = None
-        if not hasattr(self, 'clinic_placement_method') or self.clinic_placement_method == 'Plan_A':
-            anchor_y = self._get_standing_table_anchor_y()
-        elif self.clinic_placement_method == 'Plan_B':
-            anchor_y = self._get_new_standing_table_anchor_y()
-
-        if anchor_y is None:
-            print("  -> ⚠️ FAILED: Could not determine a valid anchor Y-coordinate. Aborting placement.")
-            return
-
-        gap_below_anchor = 950
-        y_cursor_start = anchor_y - gap_below_anchor - standing_fxtr.height
-        print(f"  -> Top boundary found at y={anchor_y:.0f}. Starting first row search at y={y_cursor_start:.0f}.")
-
-        horizontal_gap = 750.0
-        vertical_row_gap = 750.0
-        fixture_queue = collections.deque([standing_fxtr] * standing_table_count)
-        all_obstacles = self._get_accurate_obstacle_bboxes(include_all=True)
-
-        # Helper functions (Unchanged)
-        def is_valid_row(start_x, y, fixtures_in_row):
-            current_x = start_x
-            for i, fxtr in enumerate(fixtures_in_row):
-                candidate_box = box(current_x, y, current_x + fxtr.width, y + fxtr.height)
-                if not self.floorplan_polygon.contains(candidate_box.buffer(-1.0)) or any(candidate_box.intersects(box(*b)) for b in all_obstacles):
-                    return False
-                if i < len(fixtures_in_row) - 1:
-                    current_x += fxtr.width + horizontal_gap
-            return True
-
-        def find_best_row_size(width_for_tables, fxtr_obj, max_to_check):
-            for n in range(min(max_to_check, 5), 0, -1):
-                required_width = (fxtr_obj.width * n) + (horizontal_gap * (n - 1))
-                if required_width <= width_for_tables:
-                    return n
-            return 0
-
-        # --- Main Adaptive Placement Loop (Moves DOWNWARDS) ---
-        y_cursor = y_cursor_start
-        y_cursor_end = self.cvc.min_y
-
-        while fixture_queue and y_cursor > y_cursor_end:
-            
-            # --- NEW LOGIC START ---
-
-            # 1. Find the full room width at the current y_cursor
-            intersection = self.floorplan_polygon.intersection(LineString([(self.cvc.min_x - 100, y_cursor), (self.cvc.max_x + 100, y_cursor)]))
-            if not isinstance(intersection, LineString) or intersection.is_empty:
-                y_cursor -= 200; continue
-
-            local_bounds = intersection.bounds
-            local_start_x, local_end_x = local_bounds[0], local_bounds[2]
-            local_center_x = (local_start_x + local_end_x) / 2
-
-            # 2. Find nearest obstacles to the left and right of the center
-            left_obstacle_x = local_start_x
-            right_obstacle_x = local_end_x
-
-            for obs in all_obstacles:
-                obs_min_x, obs_min_y, obs_max_x, obs_max_y = obs
-                # Check if the obstacle is at the same vertical level
-                if obs_min_y <= y_cursor <= obs_max_y:
-                    # Check for obstacles to the left of the center
-                    if obs_max_x < local_center_x:
-                        left_obstacle_x = max(left_obstacle_x, obs_max_x)
-                    # Check for obstacles to the right of the center
-                    if obs_min_x > local_center_x:
-                        right_obstacle_x = min(right_obstacle_x, obs_min_x)
-            
-            # 3. Define the new placeable corridor and subtract fixed walking aisles
-            corridor_width = right_obstacle_x - left_obstacle_x
-            walking_aisle = 800.0
-            width_for_tables = corridor_width - (walking_aisle * 2)
-            
-            # --- END OF NEW LOGIC ---
-
-            num_to_place_in_row = find_best_row_size(width_for_tables, standing_fxtr, len(fixture_queue))
-            if num_to_place_in_row == 0:
-                y_cursor -= 200; continue
-
-            # --- MODIFIED PLACEMENT LOGIC ---
-            # No more resilient search. We now calculate the exact centered start position.
-            tables_for_this_row = [fixture_queue[i] for i in range(num_to_place_in_row)]
-            total_row_width = (standing_fxtr.width * num_to_place_in_row) + (horizontal_gap * (num_to_place_in_row - 1))
-            
-            # Calculate remaining space inside the "width_for_tables" to center the group
-            remaining_space = width_for_tables - total_row_width
-            
-            # The final start_x is the left boundary + the aisle + half the remaining space
-            final_start_x = left_obstacle_x + walking_aisle + (remaining_space / 2)
-
-            if is_valid_row(final_start_x, y_cursor, tables_for_this_row):
-                current_x = final_start_x
-                for _ in range(num_to_place_in_row):
-                    fxtr = fixture_queue.popleft()
-                    self.place_fixture(fxtr, (current_x, y_cursor, 0), 0, False)
-                    placed_bboxes.append((current_x, y_cursor, current_x + fxtr.width, y_cursor + fxtr.height))
-                    all_obstacles.append((current_x, y_cursor, current_x + fxtr.width, y_cursor + fxtr.height)) # Update obstacles in real-time
-                    current_x += fxtr.width + horizontal_gap
-                y_cursor -= (standing_fxtr.height + vertical_row_gap)
-            else:
-                print(f"    -> ⚠️ Could not place row at y={y_cursor:.0f}, spot was invalid. Trying next level.")
-                y_cursor -= 200
-        
-        # --- Fallback Strategy (Unchanged, it will now run only if the main loop fails) ---
-        if fixture_queue:
-            # (The existing fallback logic would be here)
-            print(f"\n  -> {len(fixture_queue)} fixtures remain unplaced after main strategy. Consider a fallback.")
-
-        print(f"\n-> Finished Standing Table Placement.")
-
-    def place_standing_tables_beside_euros(self, placed_bboxes):
+    def place_standing_tables(self, placed_bboxes):
         """
         [MODIFIED] Places Standing Tables using a top-down, adaptive row-based strategy.
         - It now finds the nearest obstacles left and right to define a dynamic corridor.
@@ -9915,6 +11563,8 @@ class DXF_Controller:
             print(f"\n  -> {len(fixture_queue)} fixtures remain unplaced after main strategy. Consider a fallback.")
 
         print(f"\n-> Finished Standing Table Placement.")
+
+
 
 
 
@@ -10932,7 +12582,7 @@ class DXF_Controller:
         - The first two TVs use a multi-spot priority search.
         - Subsequent TVs are stacked using a resilient downward search.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         import collections
         from ezdxf.math import Vec2
 
@@ -10941,7 +12591,7 @@ class DXF_Controller:
         try:
             screen_config = self.fixtures.get("screen_fixtures", {})
             screens_to_place = collections.deque([
-                Fixture(name, self.fixture_dict[name]["path"])
+                Fixture.Fixture(name, self.fixture_dict[name]["path"])
                 for name, count in screen_config.items() if count > 0
                 for _ in range(count)
             ])
@@ -11609,7 +13259,7 @@ class DXF_Controller:
         Places both Lensbar and Euro_centre fixtures iteratively. This definitive version
         uses a robust helper function to guarantee correct centering of all rotated stacks.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from shapely.geometry import box, LineString
         import math
         import collections
@@ -11632,10 +13282,10 @@ class DXF_Controller:
         fixture_queue = collections.deque()
         try:
             if lensbar_count > 0:
-                lensbar_fxtr = Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"])
+                lensbar_fxtr = Fixture.Fixture("Lensbar", self.fixture_dict["Lensbar"]["path"])
                 fixture_queue.extend([lensbar_fxtr] * lensbar_count)
             if euro_count > 0:
-                euro_fxtr = Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])
+                euro_fxtr = Fixture.Fixture("Euro_centre", self.fixture_dict["Euro_centre"]["path"])
                 fixture_queue.extend([euro_fxtr] * euro_count)
         except Exception as e:
             print(f"🔥 FATAL: Could not load fixture: {e}")
@@ -11749,7 +13399,7 @@ class DXF_Controller:
         Calculates a dynamic LEFT AISLE percentage using a simple, predictable,
         count-based tiered system.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         import math
         
         print("\n    -> Calculating dynamic LEFT AISLE based on simple fixture COUNT...")
@@ -12034,7 +13684,7 @@ class DXF_Controller:
         fixtures, treating all available spots as a pool. Any tables that cannot
         be placed are returned for fallback placement.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from ezdxf.bbox import extents
         from shapely.geometry import box
         import collections
@@ -12054,7 +13704,7 @@ class DXF_Controller:
             table_config = self.fixtures.get("floor_fixtures_table", {})
             for name, total_count in table_config.items():
                 if "Discussion_table" in name and total_count > 0:
-                    fxtr = Fixture(name, self.fixture_dict[name]["path"])
+                    fxtr = Fixture.Fixture(name, self.fixture_dict[name]["path"])
                     all_tables_config.extend([fxtr] * total_count)
 
             if not all_tables_config:
@@ -12243,7 +13893,7 @@ class DXF_Controller:
         It determines the right-most fixture group to anchor to and searches for a
         valid spot, ensuring no overlaps.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from ezdxf.bbox import extents
         from shapely.geometry import Polygon, box
         import traceback
@@ -12259,8 +13909,8 @@ class DXF_Controller:
                 print("ℹ️ No POS fixture selected.")
                 return
 
-            pos_fxtr = Fixture(selected_pos_name, self.fixture_dict[selected_pos_name]["path"])
-            ar_fxtr = Fixture("AR", self.fixture_dict["AR"]["path"])
+            pos_fxtr = Fixture.Fixture(selected_pos_name, self.fixture_dict[selected_pos_name]["path"])
+            ar_fxtr = Fixture.Fixture("AR", self.fixture_dict["AR"]["path"])
 
             rotation = 90
             pos_w, pos_h = pos_fxtr.height, pos_fxtr.width
@@ -12446,9 +14096,182 @@ class DXF_Controller:
     #------ QMS/GREETR PLACEMENT FUNCTION NEW_SETUP FOR QMS/GREETR HERE ----
     #------ QMS/GREETR PLACEMENT FUNCTION NEW_SETUP FOR QMS/GREETR HERE ----
 
+    def _get_facade_center_x(self) -> float:
+        """
+        [CORRECTED] Finds the horizontal center of the building's facade.
+        This reuses the 'find_bottom_chain' logic to identify the front wall.
+        """
+        corners = self.cvc.corners
+        if len(corners) < 3:
+            return (self.cvc.min_x + self.cvc.max_x) / 2 # Fallback
+
+        def find_bottom_chain(pts, slope_tol=0.05, y_tol=100):
+            n = len(pts)
+            ys = [p[1] for p in pts]
+            min_y = min(ys)
+            is_bottom = [False] * n
+            for i in range(n):
+                p1, p2 = pts[i], pts[(i + 1) % n]
+                dy, dx = p2[1] - p1[1], p2[0] - p1[0]
+                near_min = (abs(p1[1] - min_y) <= y_tol) and (abs(p2[1] - min_y) <= y_tol)
+                slope_ok = abs(dy) <= slope_tol * max(1.0, abs(dx))
+                if near_min and slope_ok:
+                    is_bottom[i] = True
+            return is_bottom
+
+        is_facade_segment = find_bottom_chain(corners)
+        
+        # <<< FIX IS HERE >>>
+        # Collect ALL points (start and end) of every facade segment.
+        facade_points = []
+        for i, is_facade in enumerate(is_facade_segment):
+            if is_facade:
+                facade_points.append(corners[i])
+                facade_points.append(corners[(i + 1) % len(corners)])
+        # <<< END OF FIX >>>
+
+        if not facade_points:
+            # Fallback to the center of the whole building if no facade is found
+            return (self.cvc.min_x + self.cvc.max_x) / 2
+
+        # Find the min and max x-coordinates of the entire facade
+        min_x = min(p[0] for p in facade_points)
+        max_x = max(p[0] for p in facade_points)
+        
+        facade_center_x = (min_x + max_x) / 2
+        print(f"  -> Facade center X-coordinate correctly calculated at: {facade_center_x:.0f}")
+        return facade_center_x
 
 
     def place_qms_at_entrance_center(self, placed_bboxes):
+        """
+        [MODIFIED] Places QMS desks anchored to the bottom wall and horizontally
+        centered relative to the facade's midpoint.
+        """
+        from shapely.geometry import box, LineString
+
+        # 1. SETUP (Unchanged)
+        config = self.fixtures.get("table_fixtures", {})
+        qms_count = config.get("QMS_desk", 0)
+        if qms_count <= 0:
+            return
+
+        print(f"\n--- Attempting to place {qms_count} QMS Desk(s) at Entrance (Facade Centered) ---")
+
+        try:
+            qms_fxtr = Fixture.Fixture("QMS_desk", self.fixture_dict["QMS_desk"]["path"])
+        except Exception as e:
+            print(f"🔥 Could not load QMS_desk fixture: {e}")
+            return
+
+        # Helper function for validation (Unchanged)
+        def is_valid_spot(fixture, x, y):
+            w, h = fixture.width, fixture.height
+            candidate_box = box(x, y, x + w, y + h)
+            is_overlapping = any(candidate_box.intersects(box(*bbox)) for bbox in placed_bboxes)
+            is_inside = self.floorplan_polygon.contains(candidate_box)
+            return is_inside and not is_overlapping
+
+        # 2. CALCULATE VERTICAL POSITION (Unchanged)
+        bottom_margin = self._calculate_dynamic_qms_margin()
+        start_y = self.cvc.min_y + bottom_margin
+        print(f"  -> Anchoring to bottom wall. Calculated dynamic start Y-position: {start_y:.0f}")
+
+        # <<< MODIFICATION START >>>
+        # 3. RESILIENT HORIZONTAL SEARCH ANCHORED TO FACADE CENTER
+        
+        # Instead of using the local width, we get the facade's absolute center X.
+        facade_center_x = self._get_facade_center_x()
+        
+        # Calculate the ideal starting X for the desk so its center aligns with the facade's center.
+        ideal_x = facade_center_x - (qms_fxtr.width / 2)
+        # <<< MODIFICATION END >>>
+
+        first_desk_placed = False
+        final_start_x, final_start_y = 0, 0
+        search_offset = 0
+        # The max search range can be based on the overall room width
+        max_search = (self.cvc.max_x - self.cvc.min_x) / 2
+
+        # The resilient search logic remains the same, but now starts from the new 'ideal_x'
+        while not first_desk_placed and search_offset < max_search:
+            for sign in [1, -1]:
+                if sign == -1 and search_offset == 0: continue
+                test_x = ideal_x + search_offset * sign
+                if is_valid_spot(qms_fxtr, test_x, start_y):
+                    final_start_x, final_start_y = test_x, start_y
+                    first_desk_placed = True
+                    break
+            if first_desk_placed: break
+            search_offset += 100
+
+        if not first_desk_placed:
+            print("⚠️ Could not find a clear spot for the first QMS desk after searching.")
+            return
+
+        # 4. EXECUTE PLACEMENT (Center-Out Pattern - Unchanged)
+        # (The rest of this function's logic for placing multiple desks remains the same)
+        qms_placed_count = 0
+        placed_qms_bboxes = []
+
+        self.place_fixture(qms_fxtr, (final_start_x, final_start_y, 0), 0, False)
+        bbox_coords = (final_start_x, final_start_y, final_start_x + qms_fxtr.width, final_start_y + qms_fxtr.height)
+        placed_bboxes.append(bbox_coords)
+        placed_qms_bboxes.append(bbox_coords)
+        qms_placed_count += 1
+        print(f"✅ Placed central QMS_desk #{qms_placed_count} at ({final_start_x:.0f}, {final_start_y:.0f}).")
+
+        if qms_count > 1:
+            max_gap, min_gap, congestion_threshold = 500, 250, 5
+            if qms_count <= 3: gap_horizontal = max_gap
+            elif qms_count >= congestion_threshold: gap_horizontal = min_gap
+            else: gap_horizontal = max_gap - ((qms_count - 2) / (congestion_threshold - 2) * (max_gap - min_gap))
+            
+            print(f"ℹ️ Dynamic horizontal gap set to {gap_horizontal:.0f}mm.")
+            
+            leftmost_bbox = placed_qms_bboxes[0]
+            rightmost_bbox = placed_qms_bboxes[0]
+
+            for i in range(qms_count - 1):
+                if i % 2 == 0: # Place to the left
+                    target_x = leftmost_bbox[0] - gap_horizontal - qms_fxtr.width
+                    if is_valid_spot(qms_fxtr, target_x, final_start_y):
+                        self.place_fixture(qms_fxtr, (target_x, final_start_y, 0), 0, False)
+                        new_bbox = (target_x, final_start_y, target_x + qms_fxtr.width, final_start_y + qms_fxtr.height)
+                        placed_bboxes.append(new_bbox); leftmost_bbox = new_bbox; qms_placed_count += 1
+                        print(f"✅ Placed QMS_desk #{qms_placed_count} to the left.")
+                    else: print("⚠️ Spot to the left is blocked.")
+                else: # Place to the right
+                    target_x = rightmost_bbox[2] + gap_horizontal
+                    if is_valid_spot(qms_fxtr, target_x, final_start_y):
+                        self.place_fixture(qms_fxtr, (target_x, final_start_y, 0), 0, False)
+                        new_bbox = (target_x, final_start_y, target_x + qms_fxtr.width, final_start_y + qms_fxtr.height)
+                        placed_bboxes.append(new_bbox); rightmost_bbox = new_bbox; qms_placed_count += 1
+                        print(f"✅ Placed QMS_desk #{qms_placed_count} to the right.")
+                    else: print("⚠️ Spot to the right is blocked.")
+
+        print(f"-> Finished: Placed {qms_placed_count} of {qms_count} QMS desks.")
+
+    def place_door(self, primary_side):
+        """
+        Places the door in the middle of the facade with the opening based on the primary_side
+        """
+        if primary_side == "left":
+            door_fx = Fixture.Fixture("Door", self.fixture_dict["Door_Left"]["path"])
+        else:
+            door_fx = Fixture.Fixture("Door", self.fixture_dict["Door_Right"]["path"])
+
+        facade_center_x = self._get_facade_center_x() - door_fx.width/2
+        start_y = self.cvc.min_y - 105/2
+
+        self.place_fixture(door_fx, (facade_center_x, start_y), 0, False)
+
+
+        # print(door_fx.width)
+        # print(door_fx.height)
+
+
+    def place_qms_at_entrance_center_og(self, placed_bboxes):
         """
         Places QMS desks near the entrance, anchored to the bottom wall,
         but uses a resilient horizontal search to center them within the available space.
@@ -12576,7 +14399,7 @@ class DXF_Controller:
         Main dispatcher for placing Corian Table sets. It checks if the number of
         sets is odd or even and calls the appropriate specialized placement strategy.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         
         print("\n--- Initializing Corian Table Set Placement ---")
 
@@ -12588,8 +14411,8 @@ class DXF_Controller:
                 print("  -> Placement skipped: No Corian_table specified.")
                 return
 
-            table_fxtr = Fixture("Corian_table", self.fixture_dict["Corian_table"]["path"])
-            seat_fxtr = Fixture("Lounge_seat", self.fixture_dict["Lounge_seat"]["path"])
+            table_fxtr = Fixture.Fixture("Corian_table", self.fixture_dict["Corian_table"]["path"])
+            seat_fxtr = Fixture.Fixture("Lounge_seat", self.fixture_dict["Lounge_seat"]["path"])
         except Exception as e:
             print(f"🔥 Error during Corian_table_set setup: {e}")
             return
@@ -12856,7 +14679,7 @@ class DXF_Controller:
         anchor point, creates multiple columns as needed, and then calls the
         appropriate odd/even count placement strategy for each column.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from ezdxf.bbox import extents
         
         print("\n--- Initializing Standing Table Placement with Multi-Column Logic ---")
@@ -12868,7 +14691,7 @@ class DXF_Controller:
             if num_tables <= 0:
                 print("  -> Placement skipped: No Standing_table specified.")
                 return
-            standing_fxtr = Fixture("Standing_table", self.fixture_dict["Standing_table"]["path"])
+            standing_fxtr = Fixture.Fixture("Standing_table", self.fixture_dict["Standing_table"]["path"])
         except Exception as e:
             print(f"🔥 Error during Standing_table setup: {e}")
             return
@@ -13037,7 +14860,7 @@ class DXF_Controller:
         pattern. It first exhausts all Discussion Table spots from left to right,
         then places any remaining fixtures next to Euro Centres.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from ezdxf.bbox import extents
         from shapely.geometry import box
         import collections
@@ -13051,7 +14874,7 @@ class DXF_Controller:
         print("\n--- Attempting to place Blue_zero fixtures (Landscape Snaking Strategy) ---")
 
         try:
-            blue_zero_fxtr = Fixture("Blue_zero", self.fixture_dict["Blue_zero"]["path"])
+            blue_zero_fxtr = Fixture.Fixture("Blue_zero", self.fixture_dict["Blue_zero"]["path"])
         except Exception as e:
             print(f"🔥 Could not load the Blue_zero fixture file: {e}")
             return
@@ -13140,7 +14963,7 @@ class DXF_Controller:
         - Automatically falls back to placing below if the top area is unavailable.
         - Places sofas as a group and carries over unplaced ones to the next phase.
         """
-        from Fixture import Fixture
+        # from Fixture import Fixture
         from ezdxf.bbox import extents
         from shapely.geometry import box
         import collections
@@ -13153,7 +14976,7 @@ class DXF_Controller:
         for name, count in sofa_config.items():
             if "sofa" in name.lower() and count > 0:
                 try:
-                    fxtr = Fixture(name, self.fixture_dict[name]["path"])
+                    fxtr = Fixture.Fixture(name, self.fixture_dict[name]["path"])
                     initial_sofas_to_place.extend([fxtr] * count)
                 except (KeyError, ValueError) as e:
                     print(f"⚠️ Warning: Sofa fixture '{name}' could not be loaded: {e}")
