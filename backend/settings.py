@@ -19,7 +19,7 @@ SECRET_KEY = 'django-insecure-kqpvvj!t15!hi)flc%%m=wc--*ui@(66rpqdm%slj%2lpfk$^s
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['13.201.224.32', 'lenskart.thinkneural.ai']
+ALLOWED_HOSTS = ['13.201.224.32', 'lenskart.thinkneural.ai', 'localhost', '127.0.0.1']
 
 
 
