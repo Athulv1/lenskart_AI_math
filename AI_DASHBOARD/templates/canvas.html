@@ -135,6 +135,8 @@
         </div>
     </div>
 
+    <!-- API Configuration - Auto-detects local vs production -->
+    <script src="{{ url_for('static', filename='js/config.js') }}"></script>
     <script src="{{ url_for('static', filename='js/canvas-editor.js') }}"></script>
     <script>
         // Initialize on page load
@@ -163,7 +165,7 @@
             
             try {
                 // Call Flask backend to fetch and process the DXF file from URL
-                const response = await fetch('/upload-from-url', {
+                const response = await fetch(API_CONFIG.getEndpoint('/upload-from-url'), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -231,7 +233,7 @@
             try {
                 updateLoadingSubtitle('Uploading and processing your floor plan...');
                 
-                const response = await fetch('/upload', {
+                const response = await fetch(API_CONFIG.getEndpoint('/upload'), {
                     method: 'POST',
                     body: formData
                 });
@@ -281,7 +283,7 @@
             showStatus('📥 Generating modified DXF file...', 'info');
 
             try {
-                const response = await fetch(`/download/${currentSessionId}`);
+                const response = await fetch(API_CONFIG.getEndpoint(`/download/${currentSessionId}`));
                 
                 if (!response.ok) {
                     throw new Error('Download failed');
@@ -438,7 +440,7 @@
             document.getElementById('ai-status').innerHTML = '<div class="loading">🤖 Calling Gemini AI...</div>';
 
             try {
-                const response = await fetch('/generate_with_ai', {
+                const response = await fetch(API_CONFIG.getEndpoint('/generate_with_ai'), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
