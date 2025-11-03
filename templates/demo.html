@@ -119,6 +119,14 @@ body::after {
   animation: float 3s ease-in-out infinite;
 }
 
+.dashboard-logo {
+  height: 80px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 12px rgba(46, 212, 191, 0.3));
+  animation: float 3s ease-in-out infinite;
+}
+
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-10px); }
@@ -273,12 +281,17 @@ button:disabled::before {
 }
 
 /* Button Icons */
-#generate-math-btn::before {
-  content: '🔢 ';
+#generate-ai-dashboard-btn {
+  background: linear-gradient(135deg, #2DD4BF 0%, #14B8A6 100%);
+  font-size: 1.1em;
+  padding: 18px 32px;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(46, 212, 191, 0.4);
 }
 
-#generate-ai-btn::before {
-  content: '🤖 ';
+#generate-ai-dashboard-btn:hover:not(:disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(46, 212, 191, 0.6);
 }
 
 #generate-btn::before {
@@ -542,9 +555,8 @@ button:disabled:hover::after {
   <!-- Page Header -->
   <div class="page-header">
     <div class="logo-container">
-      <div class="logo-icon">🏗️</div>
+      <img src="/static/images/logo.png" alt="Lenskart Logo" class="dashboard-logo">
     </div>
-    <h1>Spazeapp Dashboard</h1>
     <p class="subtitle">Interior Design Automation Platform</p>
     <div class="ai-badge">
       ✨ Powered by thinkneural.ai
@@ -559,8 +571,7 @@ button:disabled:hover::after {
       <option>Loading projects...</option>
     </select>
     <p id="file-info"></p>
-    <button id="generate-math-btn" disabled>Generate DXF</button>
-    <button id="generate-ai-btn" disabled>AI DXF EDITOR</button>
+    <button id="generate-ai-dashboard-btn" disabled> AI DXF DASHBOARD EDITOR</button>
   </div>
 
   <!-- Activity Logs Card -->
@@ -578,7 +589,7 @@ button:disabled:hover::after {
   <!-- LLM Page Header -->
   <div class="page-header">
     <div class="logo-container">
-      <div class="logo-icon">🤖</div>
+      <img src="/static/images/logo.png" alt="Lenskart Logo" class="dashboard-logo">
     </div>
     <h1>AI Prompt Refinement</h1>
     <p class="subtitle">Customize Your AI Generation Parameters</p>
@@ -602,14 +613,11 @@ Consider proper spacing for walkways, strategic placement of high-value items, a
   </div>
 </div>
 
-<!-- API Configuration - Auto-detects local vs production -->
-<script src="/static/js/config.js"></script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const projectSelect = document.getElementById("project-select");
   const fileInfo = document.getElementById("file-info");
-  const generateMathBtn = document.getElementById("generate-math-btn");
-  const generateAiBtn = document.getElementById("generate-ai-btn");
+  const generateAiDashboardBtn = document.getElementById("generate-ai-dashboard-btn");
   const logContainer = document.getElementById("log-container");
   const resultsContainer = document.getElementById("results");
   
@@ -694,13 +702,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (images.length > 0) {
         processableFileId = images[0].id;
         fileInfo.textContent = `Selected image: ${images[0].filename}`;
-        generateMathBtn.disabled = false;
-        generateAiBtn.disabled = false;
+        generateAiDashboardBtn.disabled = false;
         logMessage(`Ready to process project "${currentProject.name}"`, "success");
       } else {
         fileInfo.textContent = "No image file found.";
-        generateMathBtn.disabled = true;
-        generateAiBtn.disabled = true;
+        generateAiDashboardBtn.disabled = true;
         processableFileId = null;
         logMessage("No processable image file found.", "error");
       }
@@ -835,41 +841,66 @@ document.addEventListener("DOMContentLoaded", () => {
       currentProject = null;
       processableFileId = null;
       fileInfo.textContent = "";
-      generateMathBtn.disabled = true;
-      generateAiBtn.disabled = true;
+      generateAiDashboardBtn.disabled = true;
       resultsContainer.classList.add("hidden");
     }
   });
 
-  generateMathBtn.addEventListener("click", () => processFloorplan('math'));
-  
-  generateAiBtn.addEventListener("click", async () => {
-    if (currentProject && processableFileId) {
-      logMessage("Opening AI DXF Fixture Mover app...", "success");
+  // Combined button: Generate DXF + Open AI Dashboard
+  generateAiDashboardBtn.addEventListener("click", async () => {
+    if (!currentProject || !processableFileId) {
+      logMessage("Select a valid project before proceeding.", "error");
+      return;
+    }
+
+    // Step 1: Generate DXF using Math Model
+    logMessage("🔄 Step 1/2: Generating DXF file...", "info");
+    generateAiDashboardBtn.disabled = true;
+    generateAiDashboardBtn.textContent = "⏳ Generating DXF...";
+    
+    try {
+      const response = await fetch(`/demo/api/process/${processableFileId}/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'math' })
+      });
+
+      const data = await response.json();
       
-      // Build URL with /canvas route and file path if we have a generated DXF
-      let aiAppUrl = API_CONFIG.BASE_URL + '/canvas';
-      if (generatedDxfPath) {
-        // Pass the file path as URL parameter
+      if (response.ok && data.dxf_file_url) {
+        generatedDxfPath = data.dxf_file_url;
+        logMessage("✅ DXF file generated successfully!", "success");
+        logMessage(`📄 File: ${data.dxf_file_url}`, "info");
+        
+        // Step 2: Open AI Dashboard
+        logMessage("🔄 Step 2/2: Opening AI DXF Dashboard...", "info");
+        generateAiDashboardBtn.textContent = "🚀 Opening Dashboard...";
+        
+        // Build URL with autoload parameter
+        let aiAppUrl = API_CONFIG.BASE_URL + '/canvas';
         const fullPath = window.location.origin + generatedDxfPath;
         aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
-        logMessage("📎 Auto-loading generated DXF file into AI app...", "info");
+        
+        // Check if Flask app is running
+        try {
+          await fetch(API_CONFIG.BASE_URL + '/', { mode: 'no-cors' });
+          window.open(aiAppUrl, '_blank');
+          logMessage(`✅ AI Dashboard opened at ${API_CONFIG.BASE_URL}/canvas`, "success");
+          logMessage("📎 DXF file auto-loaded in canvas editor", "success");
+        } catch (error) {
+          logMessage("⚠️ Flask app may not be running. Opening anyway...", "warning");
+          window.open(aiAppUrl, '_blank');
+        }
+        
+      } else {
+        logMessage(`❌ DXF generation failed: ${data.error || 'Unknown error'}`, "error");
       }
       
-      // Check if Flask app is running
-      try {
-        const checkResponse = await fetch(API_CONFIG.BASE_URL + '/', { mode: 'no-cors' });
-        // Open Flask app in new window with file parameter
-        window.open(aiAppUrl, '_blank');
-        logMessage(`AI app opened in new window at ${API_CONFIG.BASE_URL}/canvas`, "success");
-      } catch (error) {
-        logMessage("⚠️ AI app may not be running. Opening anyway...", "warning");
-        logMessage("Start the AI app with: cd /home/athul/json/lenskart_backend/AI_DXF && python3 web_app.py", "info");
-        // Try to open anyway
-        window.open(aiAppUrl, '_blank');
-      }
-    } else {
-      logMessage("Select a valid project before AI generation.", "error");
+    } catch (error) {
+      logMessage(`❌ Error: ${error.message}`, "error");
+    } finally {
+      generateAiDashboardBtn.disabled = false;
+      generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
     }
   });
 

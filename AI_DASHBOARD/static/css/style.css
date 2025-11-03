@@ -119,6 +119,20 @@ header p {
     font-size: 1em;
     font-weight: 500;
 }
+.header-logo {
+    height: 60px;
+    width: auto;
+    margin: 0 auto 16px;
+    display: block;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 12px rgba(46, 212, 191, 0.3));
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
 
 .section {
     background: rgba(18, 32, 47, 0.95);
@@ -491,6 +505,16 @@ header p {
     left: 50%;
     transform: translate(-50%, -50%);
     font-size: 48px;
+    animation: pulse-icon 2s ease-in-out infinite;
+}
+.loading-logo-img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 70px;
+    height: auto;
+    object-fit: contain;
     animation: pulse-icon 2s ease-in-out infinite;
 }
 
