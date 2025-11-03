@@ -847,8 +847,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (currentProject && processableFileId) {
       logMessage("Opening AI DXF Fixture Mover app...", "success");
       
-      // Build URL with file path if we have a generated DXF
-      let aiAppUrl = API_CONFIG.BASE_URL;
+      // Build URL with /canvas route and file path if we have a generated DXF
+      let aiAppUrl = API_CONFIG.BASE_URL + '/canvas';
       if (generatedDxfPath) {
         // Pass the file path as URL parameter
         const fullPath = window.location.origin + generatedDxfPath;
@@ -861,7 +861,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const checkResponse = await fetch(API_CONFIG.BASE_URL + '/', { mode: 'no-cors' });
         // Open Flask app in new window with file parameter
         window.open(aiAppUrl, '_blank');
-        logMessage(`AI app opened in new window at ${API_CONFIG.BASE_URL}`, "success");
+        logMessage(`AI app opened in new window at ${API_CONFIG.BASE_URL}/canvas`, "success");
       } catch (error) {
         logMessage("⚠️ AI app may not be running. Opening anyway...", "warning");
         logMessage("Start the AI app with: cd /home/athul/json/lenskart_backend/AI_DXF && python3 web_app.py", "info");
