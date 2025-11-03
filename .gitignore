@@ -15,9 +15,9 @@ db.sqlite3
 *.log
 
 # Static files (locally collected ones)
-staticfiles/
-static/
-media/
+/staticfiles/
+/static/
+/media/
 
 # Gunicorn/PID files (if any)
 *.pid
