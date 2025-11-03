@@ -286,10 +286,30 @@
                 const response = await fetch(API_CONFIG.getEndpoint(`/download/${currentSessionId}`));
                 
                 if (!response.ok) {
-                    throw new Error('Download failed');
+                    // Try to get error message from response
+                    const contentType = response.headers.get('content-type');
+                    let errorMsg = 'Download failed';
+                    
+                    if (contentType && contentType.includes('application/json')) {
+                        const errorData = await response.json();
+                        errorMsg = errorData.error || errorMsg;
+                    } else {
+                        // HTML error page returned
+                        const errorText = await response.text();
+                        console.error('Server returned HTML error:', errorText.substring(0, 500));
+                        errorMsg = `Server error (${response.status}). Check console for details.`;
+                    }
+                    
+                    throw new Error(errorMsg);
                 }
 
                 const blob = await response.blob();
+                
+                // Verify it's a valid DXF file (check blob type or size)
+                if (blob.size === 0) {
+                    throw new Error('Empty file received from server');
+                }
+                
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
