@@ -60,7 +60,8 @@ def upload_from_url():
     """
     Handle DXF file upload from a URL (e.g., from Django)
     
-    Expects JSON: { "url": "http://localhost:8001/media/..." }
+    Expects JSON: { "url": "<Django server URL>/media/..." }
+    Works for both localhost and production server URLs.
     
     Returns:
         JSON with session_id and canvas_data
