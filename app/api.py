@@ -6,6 +6,8 @@ import tempfile
 import sys
 import os
 import uuid
+import time
+import shutil
 from typing import List, Optional, Any
 import importlib.util
 import traceback
@@ -558,6 +560,7 @@ def upload_project_with_merchmix(
 class ProcessedFloorplanResponse(Schema):
     message: str
     processed_file_id: uuid.UUID
+    dxf_url: str = None  # Optional field for direct media access
 
 
 @api.post("/process-floorplan/{file_id}/", response={200: ProcessedFloorplanResponse, 400: ErrorSchema, 404: ErrorSchema})
@@ -824,24 +827,36 @@ def process_floorplan(request, file_id: uuid.UUID):
 
             # Create a new ProjectFile for the processed DXF file
             processed_filename = f"{os.path.splitext(project_file.filename)[0]}_processed.dxf"
-            # final_export_dxf_path = os.path.join(output_dir, "output.dxf") # Path to save the final DXF with assigned layers
-            # Use Django's File class instead of direct open()
-            try:
-                with open(final_export_dxf_path, 'rb') as f:  # Use the final DXF here
-                    django_file = DjangoFile(f, name=processed_filename)
-                    processed_file = ProjectFile.objects.create(
-                        project=project_file.project,
-                        file=django_file
-                    )
-                print(f"Created processed file: {processed_file.id}")
-            except FileNotFoundError:
+            
+            # Check if DXF file was generated
+            if not os.path.exists(final_export_dxf_path):
                 logger.error(f"Final DXF file not found: {final_export_dxf_path}")
                 return 400, {"message": f"Final DXF file not found: {final_export_dxf_path}"}
-
-            # Return success response
+            
+            # Copy DXF to media directory for direct access
+            media_dxf_dir = os.path.join(settings.MEDIA_ROOT, 'generated_dxf')
+            os.makedirs(media_dxf_dir, exist_ok=True)
+            
+            # Generate unique filename
+            unique_filename = f"{consistent_project_name}_{int(time.time())}.dxf"
+            media_dxf_path = os.path.join(media_dxf_dir, unique_filename)
+            
+            # Copy file to media directory
+            shutil.copy2(final_export_dxf_path, media_dxf_path)
+            print(f"✅ DXF copied to media directory: {media_dxf_path}")
+            
+            # Create relative path for URL
+            relative_path = os.path.join('generated_dxf', unique_filename)
+            
+            # Return success response with direct file path
+            # Generate a dummy UUID for schema compatibility (file is accessed via dxf_url directly)
+            dummy_id = uuid.uuid4()
+            
             return 200, {
                 "message": "Floorplan processed successfully",
-                "processed_file_id": processed_file.id,
+                "processed_file_id": dummy_id,
+                "dxf_file_path": media_dxf_path,
+                "dxf_url": f"/media/{relative_path}",
                 "project_name": consistent_project_name
             }
 

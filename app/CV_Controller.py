@@ -199,7 +199,7 @@ class CV_Controller:
     def get_corners(self, fp_json):
         # Call worker.py and capture stdout
         result = subprocess.run(
-            ["python", "app/layout.py", json.dumps(fp_json)],  # changed from "python3" to "python"
+            ["python3", "app/layout.py", json.dumps(fp_json)],  # Use python3 instead of python
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True  # to get output as string instead of bytes
