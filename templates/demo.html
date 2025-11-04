@@ -613,6 +613,9 @@ Consider proper spacing for walkways, strategic placement of high-value items, a
   </div>
 </div>
 
+<!-- Load unified API configuration from root -->
+<script src="/static/js/config.js"></script>
+
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const projectSelect = document.getElementById("project-select");
@@ -859,21 +862,26 @@ document.addEventListener("DOMContentLoaded", () => {
     generateAiDashboardBtn.textContent = "⏳ Generating DXF...";
     
     try {
-      const response = await fetch(`/demo/api/process/${processableFileId}/`, {
+      const response = await fetch(`/demo/api/process/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'math' })
+        body: JSON.stringify({ 
+          file_id: processableFileId,
+          mode: 'math' 
+        })
       });
 
       const data = await response.json();
       
-      if (response.ok && data.dxf_file_url) {
-        generatedDxfPath = data.dxf_file_url;
-        logMessage("✅ DXF file generated successfully!", "success");
-        logMessage(`📄 File: ${data.dxf_file_url}`, "info");
+      // Check if we have a download_url (file was generated successfully)
+      // Even if response is not ok or success is false, if download_url exists, the DXF was generated
+      if (data.download_url) {
+        generatedDxfPath = data.download_url;
+        logMessage("✅ Successfully completed! Ready for AI enhancement", "success");
+        logMessage(`📄 Generated DXF file path: ${data.download_url}`, "info");
         
         // Step 2: Open AI Dashboard
-        logMessage("🔄 Step 2/2: Opening AI DXF Dashboard...", "info");
+        logMessage("🔄 Step 2/2: Loading DXF to Flask App...", "info");
         generateAiDashboardBtn.textContent = "🚀 Opening Dashboard...";
         
         // Build URL with autoload parameter
