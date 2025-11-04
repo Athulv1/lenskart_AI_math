@@ -12,7 +12,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>AI Floor Plan Canvas Editor</h1>
+            <img src="/static/images/logo.png" alt="Lenskart" class="header-logo">
             <p>Professional fixture management with real-time AI-powered layout optimization</p>
             <div class="ai-badge">
                 ✨ Powered by Thinkneural.ai
@@ -127,7 +127,7 @@
             <div class="loading-content">
                 <div class="loading-logo">
                     <div class="spinner-ring"></div>
-                    <div class="loading-icon">🏗️</div>
+                    <img src="/static/images/logo.png" alt="Lenskart Logo" class="loading-logo-img">
                 </div>
                 <h2 id="loading-title">Processing Floor Plan</h2>
                 <p class="loading-subtitle" id="loading-subtitle">Please wait while we process your floor plan...</p>
@@ -286,10 +286,30 @@
                 const response = await fetch(API_CONFIG.getEndpoint(`/download/${currentSessionId}`));
                 
                 if (!response.ok) {
-                    throw new Error('Download failed');
+                    // Try to get error message from response
+                    const contentType = response.headers.get('content-type');
+                    let errorMsg = 'Download failed';
+                    
+                    if (contentType && contentType.includes('application/json')) {
+                        const errorData = await response.json();
+                        errorMsg = errorData.error || errorMsg;
+                    } else {
+                        // HTML error page returned
+                        const errorText = await response.text();
+                        console.error('Server returned HTML error:', errorText.substring(0, 500));
+                        errorMsg = `Server error (${response.status}). Check console for details.`;
+                    }
+                    
+                    throw new Error(errorMsg);
                 }
 
                 const blob = await response.blob();
+                
+                // Verify it's a valid DXF file (check blob type or size)
+                if (blob.size === 0) {
+                    throw new Error('Empty file received from server');
+                }
+                
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;

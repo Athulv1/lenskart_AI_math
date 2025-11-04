@@ -1843,47 +1843,69 @@ def download_dxf(session_id):
     """
     try:
         if session_id not in session_storage:
-            return jsonify({'error': 'Invalid session'}), 400
+            print(f"❌ Invalid session: {session_id}")
+            return jsonify({'error': 'Invalid session ID'}), 404
         
         session_data = session_storage[session_id]
-        original_filename = session_data['filename']
+        original_filename = session_data.get('filename', 'unknown.dxf')
         
-        print(f"\n📥 Generating DXF for download...")
+        print(f"\n📥 Generating DXF for download (Session: {session_id})...")
         
         # Check if AI-generated file exists and is valid
         if 'ai_output_path' in session_data and session_data.get('ai_output_path') and os.path.exists(session_data['ai_output_path']):
             output_path = session_data['ai_output_path']
-            print(f"✅ Using AI-generated DXF")
+            print(f"✅ Using AI-generated DXF: {output_path}")
         else:
             # Fallback: Generate from JSON data
+            if 'json_data' not in session_data:
+                print(f"❌ No JSON data in session")
+                return jsonify({'error': 'No data available for download'}), 400
+                
             json_data = session_data['json_data']
             base_name = os.path.splitext(original_filename)[0]
             output_filename = f"{base_name}-MODIFIED.dxf"
             output_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{session_id}_{output_filename}")
             
             # Convert JSON back to DXF
+            print(f"🔄 Converting JSON to DXF...")
             json_to_dxf(json_data, output_path)
-            print(f"✅ Generated from JSON")
+            print(f"✅ Generated from JSON: {output_path}")
+        
+        # Verify file exists and is not empty
+        if not os.path.exists(output_path):
+            print(f"❌ Output file not found: {output_path}")
+            return jsonify({'error': 'Output file not found'}), 500
+            
+        file_size = os.path.getsize(output_path)
+        if file_size == 0:
+            print(f"❌ Output file is empty")
+            return jsonify({'error': 'Generated file is empty'}), 500
         
         # Generate download filename
         base_name = os.path.splitext(original_filename)[0]
         download_filename = f"{base_name}-MODIFIED.dxf"
         
-        print(f"✅ Ready for download: {download_filename}")
+        print(f"✅ Ready for download: {download_filename} ({file_size} bytes)")
         
-        # Send file for download
-        return send_file(
+        # Send file for download with proper headers
+        response = send_file(
             output_path,
             as_attachment=True,
             download_name=download_filename,
             mimetype='application/dxf'
         )
+        
+        # Add CORS headers
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        
+        return response
     
     except Exception as e:
         print(f"❌ Download error: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Download failed: {str(e)}'}), 500
 
 
 @app.route('/session/<session_id>')
