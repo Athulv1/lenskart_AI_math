@@ -14,7 +14,15 @@ def demo_projects_api(request):
     """API endpoint to get projects for the demo frontend"""
     from .models import Project
     
-    projects = Project.objects.all().prefetch_related('files')
+    # Filter to show only specific projects
+    ALLOWED_PROJECT_NAMES = [
+        'Bangalore Gottigere',
+        'Whitefield',
+        'Kolanchery version 3',
+        'Bedigeri ground floor'
+    ]
+    
+    projects = Project.objects.filter(name__in=ALLOWED_PROJECT_NAMES).prefetch_related('files')
     
     projects_data = []
     for project in projects:
