@@ -889,16 +889,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const fullPath = window.location.origin + generatedDxfPath;
         aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
         
-        // Check if Flask app is running
-        try {
-          await fetch(API_CONFIG.BASE_URL + '/', { mode: 'no-cors' });
-          window.open(aiAppUrl, '_blank');
-          logMessage(`✅ AI Dashboard opened at ${API_CONFIG.BASE_URL}/canvas`, "success");
-          logMessage("📎 DXF file auto-loaded in canvas editor", "success");
-        } catch (error) {
-          logMessage("⚠️ Flask app may not be running. Opening anyway...", "warning");
-          window.open(aiAppUrl, '_blank');
-        }
+        // Open Flask AI Dashboard with autoload
+        window.open(aiAppUrl, '_blank');
+        logMessage(`✅ AI Dashboard opened at ${API_CONFIG.BASE_URL}/canvas`, "success");
+        logMessage("📎 DXF file will auto-load in canvas editor", "success");
         
       } else {
         logMessage(`❌ DXF generation failed: ${data.error || 'Unknown error'}`, "error");
