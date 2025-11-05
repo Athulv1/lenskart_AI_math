@@ -928,6 +928,74 @@ def update_json_with_modification(session_id, modification):
                     break
 
 
+@app.route('/rotate_fixture', methods=['POST'])
+def rotate_fixture():
+    """
+    Rotate a fixture to a specific angle
+    
+    Expects JSON:
+    {
+        "session_id": "...",
+        "fixture_name": "...",
+        "rotation": 90  // New rotation angle in degrees
+    }
+    """
+    try:
+        data = request.json
+        session_id = data.get('session_id')
+        
+        if session_id not in session_storage:
+            return jsonify({'error': 'Invalid session'}), 400
+        
+        fixture_name = data.get('fixture_name')
+        new_rotation = data.get('rotation', 0)
+        
+        print(f"\n🔄 Rotating fixture:")
+        print(f"   Name: {fixture_name}")
+        print(f"   New Rotation: {new_rotation}°")
+        
+        # Load the current DXF file
+        original_dxf = session_storage[session_id]['original_dxf']
+        json_data = session_storage[session_id]['json_data']
+        
+        # Update rotation in the DXF file
+        doc = ezdxf.readfile(original_dxf)
+        msp = doc.modelspace()
+        
+        # Find and update the fixture
+        updated = False
+        for entity in msp:
+            if entity.dxftype() == 'INSERT' and entity.dxf.name == fixture_name:
+                entity.dxf.rotation = new_rotation
+                updated = True
+                print(f"   ✅ Updated rotation in DXF")
+                break
+        
+        if not updated:
+            return jsonify({'success': False, 'error': 'Fixture not found'}), 404
+        
+        # Save the modified DXF
+        doc.saveas(original_dxf)
+        
+        # Also update in JSON data
+        for entity in json_data.get('modelspace', []):
+            if entity.get('name') == fixture_name:
+                entity['rotation'] = new_rotation
+                print(f"   ✅ Updated rotation in JSON")
+                break
+        
+        return jsonify({
+            'success': True,
+            'message': f'Rotated {fixture_name} to {new_rotation}°'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error rotating fixture: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/generate_with_ai', methods=['POST'])
 def generate_with_ai():
     """
