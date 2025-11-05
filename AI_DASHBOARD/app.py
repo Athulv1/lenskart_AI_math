@@ -31,6 +31,7 @@ app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable static file caching in development
 
 # Ensure folders exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
