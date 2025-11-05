@@ -513,11 +513,9 @@ class CanvasEditor {
                 this.ctx.fillRect(rectX, rectY, rectWidth, rectHeight);
             }
             
-            // Draw the image
-            // Note: Canvas is Y-flipped, so we need to flip the image vertically
-            this.ctx.translate(rectX, rectY + rectHeight);
-            this.ctx.scale(1, -1);  // Flip image vertically to match DXF coordinate system
-            this.ctx.drawImage(fixtureImage, 0, 0, rectWidth, rectHeight);
+            // Draw the image directly - no additional flip needed
+            // The global canvas transform already handles Y-axis flipping
+            this.ctx.drawImage(fixtureImage, rectX, rectY, rectWidth, rectHeight);
             
             this.ctx.restore();
             
