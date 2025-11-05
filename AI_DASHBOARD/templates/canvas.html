@@ -102,6 +102,10 @@
                         <label>Distance Moved:</label>
                         <span id="distance-moved" class="value">0.00 mm</span>
                     </div>
+                    <div class="info-item">
+                        <label>Rotation:</label>
+                        <span id="fixture-rotation" class="value">0°</span>
+                    </div>
                 </div>
             </div>
 
@@ -389,6 +393,9 @@
 
         // Add movement to prompt list
         function addMovementPrompt(fixtureName, startPos, endPos, delta) {
+            // Check if this fixture already has a prompt (find by fixture name)
+            const existingIndex = movementPrompts.findIndex(p => p.fixture === fixtureName);
+            
             const prompt = {
                 fixture: fixtureName,
                 start: startPos,
@@ -397,7 +404,16 @@
                 description: generatePromptDescription(fixtureName, delta, startPos, endPos)
             };
             
-            movementPrompts.push(prompt);
+            if (existingIndex >= 0) {
+                // Replace existing prompt for this fixture with the latest position
+                console.log(`🔄 Updating prompt for ${fixtureName} (replacing previous move)`);
+                movementPrompts[existingIndex] = prompt;
+            } else {
+                // Add new prompt for this fixture
+                console.log(`➕ Adding new prompt for ${fixtureName}`);
+                movementPrompts.push(prompt);
+            }
+            
             updatePromptDisplay();
             
             // Enable generate button

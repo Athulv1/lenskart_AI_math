@@ -42,6 +42,12 @@ class CanvasEditor {
         this.panStartOffset = null;
         this.panStartMouse = null;
         
+        // Rotation mode
+        this.isRotating = false;
+        this.rotationStartAngle = 0;
+        this.rotationStartFixtureAngle = 0;
+        this.rotationHandlePos = null;
+        
         // View transform
         this.scale = 1;
         this.offsetX = 0;
@@ -636,7 +642,110 @@ class CanvasEditor {
         this.ctx.font = '12px monospace';
         this.ctx.fillText(`Scale: ${(this.scale * 100).toFixed(0)}%`, 10, 20);
         
-        // Fixture legend removed - not needed
+        // Draw rotation handle if fixture is selected
+        if (this.selectedFixture && !this.isDragging) {
+            this.drawRotationHandle(this.selectedFixture);
+        }
+    }
+    
+    drawRotationHandle(fixture) {
+        const [x, y] = fixture.position;
+        const width = fixture.width || 300;
+        const height = fixture.height || 300;
+        
+        // Calculate handle position (top-center of fixture, like MS Word)
+        const handleOffsetY = 60; // 60mm above fixture top edge
+        const handleX = x;
+        const handleY = y + height/2 + handleOffsetY;
+        
+        // Transform to canvas coordinates
+        const canvasX = x * this.scale + this.offsetX;
+        const canvasY = -y * this.scale + this.offsetY;
+        const handleCanvasX = handleX * this.scale + this.offsetX;
+        const handleCanvasY = -handleY * this.scale + this.offsetY;
+        
+        // Calculate top-center of fixture
+        const fixtureTopCanvasY = -(y + height/2) * this.scale + this.offsetY;
+        
+        this.ctx.save();
+        
+        // Draw connecting line from fixture top-center to handle (thin dashed line)
+        this.ctx.strokeStyle = '#2dd4bf';
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([5, 5]);
+        this.ctx.beginPath();
+        this.ctx.moveTo(handleCanvasX, fixtureTopCanvasY);
+        this.ctx.lineTo(handleCanvasX, handleCanvasY);
+        this.ctx.stroke();
+        this.ctx.setLineDash([]);
+        
+        // Draw outer glow (hover effect)
+        if (this.isHoveringRotationHandle) {
+            this.ctx.beginPath();
+            this.ctx.arc(handleCanvasX, handleCanvasY, 24, 0, Math.PI * 2);
+            this.ctx.fillStyle = 'rgba(46, 212, 191, 0.2)';
+            this.ctx.fill();
+        }
+        
+        // Draw main rotation handle circle with gradient
+        const handleRadius = 18;
+        const gradient = this.ctx.createRadialGradient(
+            handleCanvasX, handleCanvasY - 5, 5,
+            handleCanvasX, handleCanvasY, handleRadius
+        );
+        gradient.addColorStop(0, '#2dd4bf');
+        gradient.addColorStop(1, '#0d9488');
+        
+        this.ctx.fillStyle = gradient;
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 3;
+        this.ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        this.ctx.shadowBlur = 8;
+        this.ctx.shadowOffsetY = 2;
+        
+        this.ctx.beginPath();
+        this.ctx.arc(handleCanvasX, handleCanvasY, handleRadius, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Reset shadow
+        this.ctx.shadowColor = 'transparent';
+        this.ctx.shadowBlur = 0;
+        this.ctx.shadowOffsetY = 0;
+        
+        // Draw circular rotation arrows icon (like MS Word)
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 2.5;
+        this.ctx.lineCap = 'round';
+        this.ctx.lineJoin = 'round';
+        
+        // Draw main circular arrow (almost full circle)
+        this.ctx.beginPath();
+        this.ctx.arc(handleCanvasX, handleCanvasY, 10, -Math.PI * 0.8, Math.PI * 0.8, false);
+        this.ctx.stroke();
+        
+        // Draw arrow head at top-right
+        const arrowAngle = Math.PI * 0.8;
+        const arrowX = handleCanvasX + 10 * Math.cos(arrowAngle);
+        const arrowY = handleCanvasY + 10 * Math.sin(arrowAngle);
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(arrowX, arrowY);
+        this.ctx.lineTo(arrowX - 6, arrowY - 2);
+        this.ctx.moveTo(arrowX, arrowY);
+        this.ctx.lineTo(arrowX - 2, arrowY + 6);
+        this.ctx.stroke();
+        
+        this.ctx.restore();
+        
+        // Store handle position for click detection
+        this.rotationHandlePos = { 
+            x: handleCanvasX, 
+            y: handleCanvasY, 
+            radius: handleRadius,
+            fixtureX: x,
+            fixtureY: y
+        };
     }
     
     drawFixtureLegend() {
@@ -741,6 +850,31 @@ class CanvasEditor {
             return;
         }
         
+        // Check if clicked on rotation handle first
+        if (this.rotationHandlePos && this.selectedFixture) {
+            const dx = canvasX - this.rotationHandlePos.x;
+            const dy = canvasY - this.rotationHandlePos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance <= this.rotationHandlePos.radius) {
+                // Clicked on rotation handle - start rotation mode
+                this.isRotating = true;
+                this.isDragging = false;
+                this.canvas.style.cursor = 'grab';
+                
+                // Calculate initial angle from fixture center
+                const fx = this.selectedFixture.position[0];
+                const fy = this.selectedFixture.position[1];
+                const centerX = fx * this.scale + this.offsetX;
+                const centerY = -fy * this.scale + this.offsetY;
+                
+                // Negate Y to convert from canvas coordinates (Y+ down) to math coordinates (Y+ up)
+                this.rotationStartAngle = Math.atan2(-(canvasY - centerY), canvasX - centerX);
+                this.rotationStartFixtureAngle = this.selectedFixture.rotation || 0;
+                return;
+            }
+        }
+        
         // Transform to world coordinates (Y-axis is flipped with negative scale)
         const worldX = (canvasX - this.offsetX) / this.scale;
         const worldY = -(canvasY - this.offsetY) / this.scale;
@@ -759,6 +893,9 @@ class CanvasEditor {
             document.getElementById('start-coords').textContent = 
                 `(${fixture.position[0].toFixed(2)}, ${fixture.position[1].toFixed(2)})`;
             
+            // Update rotation controls
+            this.updateRotationControls();
+            
             this.render();
         }
     }
@@ -770,10 +907,22 @@ class CanvasEditor {
         const canvasX = (e.clientX - rect.left) * scaleX;
         const canvasY = (e.clientY - rect.top) * scaleY;
         
+        // Check if hovering over rotation handle
+        if (this.rotationHandlePos && !this.isDragging && !this.isPanning && !this.isRotating) {
+            const dx = canvasX - this.rotationHandlePos.x;
+            const dy = canvasY - this.rotationHandlePos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance <= this.rotationHandlePos.radius) {
+                this.canvas.style.cursor = 'grab';
+                return;
+            }
+        }
+        
         // Update cursor based on Ctrl key state
-        if ((e.ctrlKey || e.metaKey) && !this.isDragging) {
+        if ((e.ctrlKey || e.metaKey) && !this.isDragging && !this.isRotating) {
             this.canvas.style.cursor = 'grab';
-        } else if (!this.isPanning && !this.isDragging) {
+        } else if (!this.isPanning && !this.isDragging && !this.isRotating) {
             this.canvas.style.cursor = 'default';
         }
         
@@ -784,6 +933,35 @@ class CanvasEditor {
             
             this.offsetX = this.panStartOffset[0] + deltaX;
             this.offsetY = this.panStartOffset[1] + deltaY;
+            
+            this.render();
+            return;
+        }
+        
+        // Handle rotation
+        if (this.isRotating && this.selectedFixture) {
+            const fx = this.selectedFixture.position[0];
+            const fy = this.selectedFixture.position[1];
+            const centerX = fx * this.scale + this.offsetX;
+            const centerY = -fy * this.scale + this.offsetY;
+            
+            // Calculate current angle relative to fixture center
+            // Canvas Y increases downward, so we negate to get proper math angle
+            const currentAngle = Math.atan2(-(canvasY - centerY), canvasX - centerX);
+            let angleDelta = (currentAngle - this.rotationStartAngle) * (180 / Math.PI);
+            
+            // The angle delta represents counter-clockwise rotation in math coordinates
+            // To make clockwise drag = clockwise rotation visually, we negate it
+            let newRotation = this.rotationStartFixtureAngle + angleDelta;
+            
+            // Normalize to 0-360
+            while (newRotation < 0) newRotation += 360;
+            while (newRotation >= 360) newRotation -= 360;
+            
+            this.selectedFixture.rotation = newRotation;
+            
+            // Update rotation display
+            document.getElementById('fixture-rotation').textContent = `${newRotation.toFixed(0)}°`;
             
             this.render();
             return;
@@ -824,6 +1002,21 @@ class CanvasEditor {
     }
     
     async onMouseUp(e) {
+        // Handle rotation mode end
+        if (this.isRotating) {
+            this.isRotating = false;
+            this.canvas.style.cursor = 'default';
+            
+            if (this.selectedFixture) {
+                const newRotation = this.selectedFixture.rotation || 0;
+                console.log(`🔄 Fixture rotated: ${this.selectedFixture.name} to ${newRotation.toFixed(0)}°`);
+                
+                // Send rotation to backend
+                this.sendRotationToBackend(this.selectedFixture.name, newRotation);
+            }
+            return;
+        }
+        
         // Handle pan mode
         if (this.isPanning) {
             this.isPanning = false;
@@ -904,6 +1097,8 @@ class CanvasEditor {
             // Clicked empty space - clear selection if not using Ctrl
             if (!e.ctrlKey && !e.metaKey) {
                 this.selectedFixtures = [];
+                this.selectedFixture = null;
+                this.updateRotationControls(); // Hide rotation controls
                 this.render();
                 if (typeof window.onFixtureClicked === 'function') {
                     // Update prompt to show no selection
@@ -927,7 +1122,11 @@ class CanvasEditor {
         } else {
             // Single select (replace selection)
             this.selectedFixtures = [fixture];
+            this.selectedFixture = fixture; // Also update selectedFixture for rotation
         }
+        
+        // Update rotation controls
+        this.updateRotationControls();
         
         // Notify parent page
         if (typeof window.onFixtureClicked === 'function') {
@@ -1129,6 +1328,99 @@ class CanvasEditor {
         // Disable pan cursor when Ctrl is released
         if ((e.key === 'Control' || e.key === 'Meta') && !this.isPanning && !this.isDragging) {
             this.canvas.style.cursor = 'default';
+        }
+    }
+    
+    /**
+     * Rotate the selected fixture by a given angle (in degrees)
+     * @param {number} degrees - Rotation angle in degrees (positive = clockwise)
+     */
+    rotateSelectedFixture(degrees) {
+        if (!this.selectedFixture) {
+            console.warn('No fixture selected for rotation');
+            return;
+        }
+        
+        // Get current rotation
+        const currentRotation = this.selectedFixture.rotation || 0;
+        
+        // Calculate new rotation (normalize to 0-360 range)
+        let newRotation = (currentRotation + degrees) % 360;
+        if (newRotation < 0) newRotation += 360;
+        
+        // Update fixture rotation
+        this.selectedFixture.rotation = newRotation;
+        
+        console.log(`🔄 Rotated ${this.selectedFixture.name}: ${currentRotation}° → ${newRotation}°`);
+        
+        // Update the rotation display
+        document.getElementById('fixture-rotation').textContent = `${newRotation.toFixed(0)}°`;
+        
+        // Send rotation to backend
+        this.sendRotationToBackend(this.selectedFixture.name, newRotation);
+        
+        // Re-render canvas
+        this.render();
+    }
+    
+    /**
+     * Send rotation change to backend
+     */
+    async sendRotationToBackend(fixtureName, newRotation) {
+        try {
+            const response = await fetch('/rotate_fixture', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    session_id: this.sessionId,
+                    fixture_name: fixtureName,
+                    rotation: newRotation
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                console.log('✅ Rotation updated in backend');
+            } else {
+                console.error('❌ Backend rotation update failed:', result.error);
+            }
+            
+        } catch (error) {
+            console.error('❌ Error sending rotation to backend:', error);
+        }
+    }
+    
+    /**
+     * Update UI when fixture is selected to show rotation controls
+     */
+    updateRotationControls() {
+        const rotationControls = document.getElementById('rotation-controls');
+        const rotationDisplay = document.getElementById('fixture-rotation');
+        
+        if (this.selectedFixture) {
+            // Show rotation controls
+            if (rotationControls) {
+                rotationControls.style.display = 'block';
+            }
+            
+            // Update rotation display
+            const currentRotation = this.selectedFixture.rotation || 0;
+            if (rotationDisplay) {
+                rotationDisplay.textContent = `${currentRotation.toFixed(0)}°`;
+            }
+        } else {
+            // Hide rotation controls
+            if (rotationControls) {
+                rotationControls.style.display = 'none';
+            }
+            
+            // Reset rotation display
+            if (rotationDisplay) {
+                rotationDisplay.textContent = '0°';
+            }
         }
     }
 }
