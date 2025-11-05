@@ -440,18 +440,9 @@ class CanvasEditor {
         // Save context for transformation
         this.ctx.save();
 
-        // Compute insertion (translation) point. Keep existing clinic adjustment as a fallback
-        // but prefer using a consistent combined transform matrix below.
+        // Compute insertion (translation) point.
         let translateX = x;
         let translateY = y;
-        const isClinic = fixture.name.toUpperCase().includes('CLINIC');
-        if (isClinic && scaleX < 0) {
-            if (rotation === 0) {
-                translateX = x ;
-            } else if (rotation === 0) {
-                translateX = x - width;
-            }
-        }
 
         // Build a single local transform matrix (maps block-local coords -> world coords):
         // [ a c e ]   [ scaleX * cos  -scaleY * sin  translateX ]
@@ -997,17 +988,8 @@ class CanvasEditor {
             // Calculate the actual bounding box in world coordinates
             // We need to apply the same transformation matrix as drawFixture
             
-            // Handle clinic special case
             let translateX = fx;
             let translateY = fy;
-            const isClinic = fixture.name.toUpperCase().includes('CLINIC');
-            if (isClinic && scaleX < 0) {
-                if (rotation === 0) {
-                    translateX = fx;
-                } else if (rotation === 90) {
-                    translateX = fx - height;
-                }
-            }
             
             // Build transformation matrix
             const rad = rotation * Math.PI / 180;
@@ -1037,8 +1019,20 @@ class CanvasEditor {
             
             // Check if local point is inside the bounding box
             // The box is drawn from (blockMinX, blockMinY) with size (width, height)
-            if (localX >= blockMinX && localX <= blockMinX + width &&
-                localY >= blockMinY && localY <= blockMinY + height) {
+            const isInside = localX >= blockMinX && localX <= blockMinX + width &&
+                             localY >= blockMinY && localY <= blockMinY + height;
+            
+            // Debug CLINIC_WITH_SINK clicks
+            if (fixture.name.toUpperCase().includes('CLINIC_WITH_SINK')) {
+                console.log(`🎯 Click test for ${fixture.name}:`);
+                console.log(`   World click: (${worldX.toFixed(1)}, ${worldY.toFixed(1)})`);
+                console.log(`   Local click: (${localX.toFixed(1)}, ${localY.toFixed(1)})`);
+                console.log(`   BBox: [${blockMinX}, ${blockMinY}] to [${blockMinX + width}, ${blockMinY + height}]`);
+                console.log(`   Width: ${width}, Height: ${height}`);
+                console.log(`   Result: ${isInside ? '✅ HIT' : '❌ MISS'}`);
+            }
+            
+            if (isInside) {
                 return fixture;
             }
         }

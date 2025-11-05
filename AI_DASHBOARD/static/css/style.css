@@ -449,6 +449,12 @@ header p {
     border: 1px solid #ef4444;
 }
 
+.status-message.warning {
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #f59e0b;
+}
+
 .status-message.info {
     background: #dbeafe;
     color: #1e40af;
@@ -875,6 +881,13 @@ footer {
     color: #10B981;
     padding: 12px;
     border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.ai-status .warning {
+    background: rgba(245, 158, 11, 0.2);
+    color: #F59E0B;
+    padding: 12px;
+    border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
 .ai-status .error {

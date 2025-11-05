@@ -175,6 +175,10 @@
                     })
                 });
 
+                if (!response.ok) {
+                    throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+                }
+
                 const data = await response.json();
 
                 if (data.error) {
@@ -472,6 +476,15 @@
                 });
 
                 const data = await response.json();
+
+                // Check for warnings (validation issues but still successful)
+                if (data.warning) {
+                    hideLoading();
+                    document.getElementById('ai-status').innerHTML = 
+                        `<div class="warning">${data.warning}</div>`;
+                    showStatus('⚠️ ' + data.warning, 'warning');
+                    return;
+                }
 
                 if (data.error || !data.success) {
                     throw new Error(data.error || 'AI generation failed');

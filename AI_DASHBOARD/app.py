@@ -955,6 +955,22 @@ def generate_with_ai():
         print(f"   Session: {session_id}")
         print(f"   User Prompt: {user_prompt}")
         
+        # Check if this is an "architect rearrange" request (requires validation)
+        # vs manual customer movement (no validation needed - customer knows what they want)
+        architect_keywords = ['rearrange like an architect', 'arrange like an architect', 'organize like an architect',
+                             'layout like an architect', 'architect layout', 'architect arrangement',
+                             'rearrange these fixtures', 'rearrange fixtures']  # Add more patterns
+        
+        print(f"🔍 Checking user_prompt for architect keywords...")
+        print(f"   User prompt (first 200 chars): '{user_prompt[:200]}'")
+        
+        needs_validation = any(keyword.lower() in user_prompt.lower() for keyword in architect_keywords)
+        
+        if needs_validation:
+            print(f"   🏗️ Architect mode: Validation ENABLED")
+        else:
+            print(f"   ✋ Manual mode: Validation DISABLED (customer-approved movements)")
+        
         # Get DXF path and JSON data from session
         original_dxf = session_storage[session_id]['original_dxf']
         json_data = session_storage[session_id]['json_data']
@@ -1316,12 +1332,20 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
         print(f"   max_y: {floorplan_bounds.get('max_y')}")
         print(f"   Fixtures count: {len(canvas_data.get('fixtures', []))}")
         
-        # 🔥 VALIDATION LAYER: Check and correct out-of-bounds fixtures
-        validation_results = validate_and_correct_fixtures(
-            modifications, 
-            floorplan_bounds, 
-            canvas_data.get('fixtures', [])
-        )
+        # 🔥 VALIDATION LAYER: Only validate for "architect rearrange" mode
+        # Manual customer movements are pre-approved and don't need validation
+        validation_results = {}
+        print(f"\n📋 Before validation: {len(modifications.get('fixtures', []))} fixtures to process")
+        if needs_validation:
+            print(f"\n🏗️ Running architect validation...")
+            validation_results = validate_and_correct_fixtures(
+                modifications, 
+                floorplan_bounds, 
+                canvas_data.get('fixtures', [])
+            )
+            print(f"📋 After validation: {len(modifications.get('fixtures', []))} fixtures remain")
+        else:
+            print(f"\n✋ Skipping validation - customer manual movement (all fixtures will be applied)")
         
         # Apply modifications (move, copy, delete)
         output_path = apply_ai_modifications(
@@ -1331,24 +1355,38 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
         
         # Check if modifications were actually applied
         if not output_path:
-            # Build helpful warning message based on validation results
+            # Build helpful warning message based on validation results (only if validation was performed)
             rejected_count = validation_results.get('rejected', 0)
             rejected_names = validation_results.get('rejected_names', [])
+            rejected_details = validation_results.get('rejected_details', [])
+            room_bounds = validation_results.get('room_bounds', {})
             
-            if rejected_count > 0:
-                warning_msg = f"⚠️ All {rejected_count} fixtures were outside room boundaries. "
-                warning_msg += f"The fixtures are too large (2600×1700mm) "
-                warning_msg += f"for the detected room (1962×3204mm). Try selecting smaller fixtures or drag them manually on the canvas."
+            if needs_validation and rejected_count > 0:
+                # Build detailed warning with room dimensions
+                room_width = room_bounds.get('width', 0)
+                room_height = room_bounds.get('height', 0)
+                
+                # Get fixture sizes from rejected details
+                fixture_sizes = []
+                for detail in rejected_details[:3]:  # Show up to 3 examples
+                    size = detail.get('size', [300, 300])
+                    fixture_sizes.append(f"{size[0]:.0f}×{size[1]:.0f}mm")
+                
+                warning_msg = f"⚠️ Validation Notice: All {rejected_count} fixture(s) exceed room boundaries!\n\n"
+                warning_msg += f"💡 Suggestions:\n"
+                warning_msg += f"   • Try dragging fixtures manually on canvas\n"
+                warning_msg += f"   • Select smaller fixtures for auto-arrangement\n"
+                warning_msg += f"   • Arrange fewer fixtures at a time"
             else:
                 warning_msg = '⚠️ No changes were made. Please check fixture names and try again.'
             
             return jsonify({
-                'success': True,
+                'success': True,  # Return success but with warning
                 'warning': warning_msg,
                 'message': warning_msg,
                 'operations': {'moved': 0, 'copied': 0, 'deleted': 0, 'rotated': 0},
                 'validation_results': validation_results
-            }), 200
+            }), 200  # Return 200 OK but with warning message
         
         # Store output path in session
         session_storage[session_id]['ai_output_path'] = output_path
@@ -1385,10 +1423,20 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
         
         message = f"✅ Processed: {', '.join(parts)}"
         
-        # Add info about rejected fixtures if any
-        rejected_count = validation_results.get('rejected', 0)
-        if rejected_count > 0:
-            message += f" ⚠️ {rejected_count} fixture(s) rejected (outside room boundaries)"
+        # Add info about rejected fixtures if any (only if validation was performed)
+        rejected_count = validation_results.get('rejected', 0) if needs_validation else 0
+        rejected_names = validation_results.get('rejected_names', []) if needs_validation else []
+        
+        if needs_validation and rejected_count > 0:
+            # Build detailed warning message
+            rejected_list = ", ".join(rejected_names[:5])  # Show first 5
+            if rejected_count > 5:
+                rejected_list += f" and {rejected_count - 5} more"
+            
+            message += f"\n\n⚠️ Warning: {rejected_count} fixture(s) were outside room boundaries and were not moved:\n"
+            message += f"   {rejected_list}\n"
+            message += f"   These fixtures are too large or positioned beyond the floorplan edges.\n"
+            message += f"   Try moving them manually or selecting smaller fixtures."
         
         # Extract updated canvas data for real-time canvas update
         # Re-convert the modified JSON to canvas data
@@ -1400,7 +1448,8 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
             'operations': operations_count,
             'updated_canvas_data': updated_canvas_data,  # Send updated canvas data
             'modifications': modifications.get('fixtures', []),  # Send list of modified fixtures
-            'validation_results': validation_results  # Send validation info
+            'validation_results': validation_results,  # Send validation info
+            'warning': f"{rejected_count} fixtures rejected" if rejected_count > 0 else None
         })
     
     except json.JSONDecodeError as e:
@@ -1418,9 +1467,9 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
 
 def validate_and_correct_fixtures(modifications, bounds, all_fixtures):
     """
-    SIMPLE validation: Check if fixture is inside floorplan.
-    If YES → keep it, if NO → reject it with message
-    Uses ROOM bounds, not display bounds
+    STRICT validation: Check if fixture's BOUNDING BOX (all 4 corners) is inside floorplan.
+    If ANY corner is outside → reject it with detailed message
+    Uses ROOM bounds for validation
     """
     # Use room bounds for validation (not display bounds)
     min_x = bounds.get('room_min_x', bounds.get('min_x', 0))
@@ -1428,11 +1477,12 @@ def validate_and_correct_fixtures(modifications, bounds, all_fixtures):
     min_y = bounds.get('room_min_y', bounds.get('min_y', 0))
     max_y = bounds.get('room_max_y', bounds.get('max_y', 10000))
     
-    print(f"\n🎯 Floorplan boundaries:")
-    print(f"   X: {min_x:.0f} to {max_x:.0f} mm")
-    print(f"   Y: {min_y:.0f} to {max_y:.0f} mm")
+    print(f"\n🎯 Floorplan ROOM boundaries (strict validation):")
+    print(f"   X: {min_x:.0f} to {max_x:.0f} mm (width: {max_x - min_x:.0f} mm)")
+    print(f"   Y: {min_y:.0f} to {max_y:.0f} mm (height: {max_y - min_y:.0f} mm)")
     
     rejected = []
+    rejected_details = []  # Store detailed rejection reasons
     valid_count = 0
     
     # Filter out fixtures that are outside boundaries
@@ -1457,44 +1507,81 @@ def validate_and_correct_fixtures(modifications, bounds, all_fixtures):
                 fixture_height = f.get('height', 300)
                 break
         
-        # Check if CENTER is inside display boundaries (more lenient than checking all edges)
-        # This allows manually positioned fixtures and large fixtures to pass validation
+        # Calculate fixture's bounding box (all 4 corners)
         half_width = fixture_width / 2
         half_height = fixture_height / 2
         
-        # Use display bounds (min_x/max_x) instead of room bounds (room_min_x/room_max_x)
-        # This gives more tolerance for manual positioning
-        display_min_x = bounds.get('min_x', 0)
-        display_max_x = bounds.get('max_x', 10000)
-        display_min_y = bounds.get('min_y', 0)
-        display_max_y = bounds.get('max_y', 10000)
+        bbox_left = x - half_width
+        bbox_right = x + half_width
+        bbox_top = y + half_height
+        bbox_bottom = y - half_height
         
-        # Check if center point is within display area (not room area)
-        center_inside = (x >= display_min_x and x <= display_max_x and 
-                        y >= display_min_y and y <= display_max_y)
+        # Check if ALL corners are inside ROOM boundaries
+        left_inside = bbox_left >= min_x
+        right_inside = bbox_right <= max_x
+        top_inside = bbox_top <= max_y
+        bottom_inside = bbox_bottom >= min_y
         
-        if center_inside:
-            print(f"   ✅ {fixture_name}: ({x:.0f}, {y:.0f}) [{fixture_width:.0f}×{fixture_height:.0f}mm] - CENTER INSIDE DISPLAY")
+        all_corners_inside = left_inside and right_inside and top_inside and bottom_inside
+        
+        if all_corners_inside:
+            print(f"   ✅ {fixture_name}: center({x:.0f}, {y:.0f}) size[{fixture_width:.0f}×{fixture_height:.0f}mm]")
+            print(f"      BBox: X[{bbox_left:.0f}, {bbox_right:.0f}] Y[{bbox_bottom:.0f}, {bbox_top:.0f}] - ALL CORNERS INSIDE")
             valid_fixtures.append(mod)
             valid_count += 1
         else:
-            print(f"   ❌ {fixture_name}: ({x:.0f}, {y:.0f}) [{fixture_width:.0f}×{fixture_height:.0f}mm] - CENTER OUTSIDE DISPLAY")
-            print(f"      Position: ({x:.0f}, {y:.0f})")
-            print(f"      Display Bounds: X[{display_min_x:.0f},{display_max_x:.0f}] Y[{display_min_y:.0f},{display_max_y:.0f}]")
+            # Detailed rejection reason
+            violations = []
+            if not left_inside:
+                violations.append(f"left edge {bbox_left:.0f} < room min {min_x:.0f}")
+            if not right_inside:
+                violations.append(f"right edge {bbox_right:.0f} > room max {max_x:.0f}")
+            if not bottom_inside:
+                violations.append(f"bottom edge {bbox_bottom:.0f} < room min {min_y:.0f}")
+            if not top_inside:
+                violations.append(f"top edge {bbox_top:.0f} > room max {max_y:.0f}")
+            
+            violation_msg = ", ".join(violations)
+            
+            print(f"   ❌ {fixture_name}: center({x:.0f}, {y:.0f}) size[{fixture_width:.0f}×{fixture_height:.0f}mm]")
+            print(f"      BBox: X[{bbox_left:.0f}, {bbox_right:.0f}] Y[{bbox_bottom:.0f}, {bbox_top:.0f}]")
+            print(f"      VIOLATION: {violation_msg}")
+            
             rejected.append(fixture_name)
+            rejected_details.append({
+                'name': fixture_name,
+                'center': [x, y],
+                'size': [fixture_width, fixture_height],
+                'bbox': {
+                    'left': bbox_left,
+                    'right': bbox_right,
+                    'top': bbox_top,
+                    'bottom': bbox_bottom
+                },
+                'violations': violations
+            })
     
     # Update modifications to only include valid fixtures
     modifications['fixtures'] = valid_fixtures
     
     if rejected:
-        print(f"\n⚠️  {len(rejected)} fixtures rejected (outside floorplan):")
-        for name in rejected:
-            print(f"      - {name}")
+        print(f"\n⚠️  {len(rejected)} fixtures REJECTED (bounding box outside floorplan):")
+        for detail in rejected_details:
+            print(f"      - {detail['name']}: {', '.join(detail['violations'])}")
     
     return {
         'valid': valid_count,
         'rejected': len(rejected),
-        'rejected_names': rejected
+        'rejected_names': rejected,
+        'rejected_details': rejected_details,  # Include detailed info for frontend warning
+        'room_bounds': {
+            'min_x': min_x,
+            'max_x': max_x,
+            'min_y': min_y,
+            'max_y': max_y,
+            'width': max_x - min_x,
+            'height': max_y - min_y
+        }
     }
 def apply_ai_modifications(session_id, modifications):
     """
