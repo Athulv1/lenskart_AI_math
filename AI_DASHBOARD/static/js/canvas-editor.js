@@ -1368,7 +1368,7 @@ class CanvasEditor {
      */
     async sendRotationToBackend(fixtureName, newRotation) {
         try {
-            const response = await fetch('/rotate_fixture', {
+            const response = await fetch(API_CONFIG.getEndpoint('rotate_fixture'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
