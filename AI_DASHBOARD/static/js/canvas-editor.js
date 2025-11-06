@@ -1385,18 +1385,9 @@ class CanvasEditor {
             if (result.success) {
                 console.log('✅ Rotation updated in backend');
                 
-                // Update the movement prompt to include rotation info
-                // This helps Gemini understand the complete transformation
-                if (typeof window.addMovementPrompt === 'function' && this.selectedFixture) {
-                    const currentPos = this.selectedFixture.position;
-                    window.addMovementPrompt(
-                        fixtureName,
-                        currentPos,  // start and end are same (only rotation changed)
-                        currentPos,
-                        [0, 0],      // no movement, only rotation
-                        newRotation
-                    );
-                }
+                // DON'T add a movement prompt for rotation-only changes
+                // Rotation will be included automatically when the fixture is moved
+                // This prevents coordinate confusion and stale position bugs
             } else {
                 console.error('❌ Backend rotation update failed:', result.error);
             }
