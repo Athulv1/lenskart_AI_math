@@ -1048,11 +1048,13 @@ class CanvasEditor {
         
         // Add to prompt list (if function is available from HTML)
         if (typeof window.addMovementPrompt === 'function') {
+            const rotation = this.selectedFixture.rotation || 0;
             window.addMovementPrompt(
                 this.selectedFixture.name,
                 this.dragStartPos,
                 endPos,
-                [dx, dy]
+                [dx, dy],
+                rotation  // Include current rotation
             );
         }
         
@@ -1382,6 +1384,19 @@ class CanvasEditor {
             
             if (result.success) {
                 console.log('✅ Rotation updated in backend');
+                
+                // Update the movement prompt to include rotation info
+                // This helps Gemini understand the complete transformation
+                if (typeof window.addMovementPrompt === 'function' && this.selectedFixture) {
+                    const currentPos = this.selectedFixture.position;
+                    window.addMovementPrompt(
+                        fixtureName,
+                        currentPos,  // start and end are same (only rotation changed)
+                        currentPos,
+                        [0, 0],      // no movement, only rotation
+                        newRotation
+                    );
+                }
             } else {
                 console.error('❌ Backend rotation update failed:', result.error);
             }

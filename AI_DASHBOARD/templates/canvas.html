@@ -392,7 +392,7 @@
         }
 
         // Add movement to prompt list
-        function addMovementPrompt(fixtureName, startPos, endPos, delta) {
+        function addMovementPrompt(fixtureName, startPos, endPos, delta, rotation) {
             // Check if this fixture already has a prompt (find by fixture name)
             const existingIndex = movementPrompts.findIndex(p => p.fixture === fixtureName);
             
@@ -401,7 +401,8 @@
                 start: startPos,
                 end: endPos,
                 delta: delta,
-                description: generatePromptDescription(fixtureName, delta, startPos, endPos)
+                rotation: rotation || 0,  // Include rotation angle
+                description: generatePromptDescription(fixtureName, delta, startPos, endPos, rotation)
             };
             
             if (existingIndex >= 0) {
@@ -420,7 +421,7 @@
             document.getElementById('generate-btn').disabled = false;
         }
 
-        function generatePromptDescription(fixtureName, delta, startPos, endPos) {
+        function generatePromptDescription(fixtureName, delta, startPos, endPos, rotation) {
             const [dx, dy] = delta;
             let parts = [];
             
@@ -435,13 +436,24 @@
                 parts.push(`${Math.abs(dy).toFixed(0)}mm ${direction}`);
             }
             
-            if (parts.length === 0) {
-                return `Move ${fixtureName} (no significant movement)`;
-            }
-            
             // Include ABSOLUTE target coordinates for Gemini
             const [endX, endY] = endPos;
-            return `Move ${fixtureName} ${parts.join(' and ')} to position (${endX.toFixed(1)}, ${endY.toFixed(1)})`;
+            
+            // Build description with position
+            let description = '';
+            if (parts.length === 0) {
+                description = `Move ${fixtureName} to position (${endX.toFixed(1)}, ${endY.toFixed(1)})`;
+            } else {
+                description = `Move ${fixtureName} ${parts.join(' and ')} to position (${endX.toFixed(1)}, ${endY.toFixed(1)})`;
+            }
+            
+            // Add rotation information if rotated
+            if (rotation !== undefined && rotation !== 0) {
+                const normalizedRotation = rotation % 360;
+                description += ` with rotation ${normalizedRotation.toFixed(1)}°`;
+            }
+            
+            return description;
         }
 
         function updatePromptDisplay() {

@@ -1115,6 +1115,11 @@ def generate_with_ai():
             for f in all_fixtures  # Send ALL fixtures, not just [:20]
         ]
         
+        # 🔍 DEBUG: Log first 5 fixture positions to understand coordinate system
+        print(f"\n📍 DEBUG: First 5 fixture positions being sent to Gemini:")
+        for i, f in enumerate(all_fixtures[:5]):
+            print(f"   {i+1}. {f['name']}: position={f['position']}, rotation={f.get('rotation', 0)}°")
+        
         # Check if this is a rearrangement command (user selected multiple fixtures + rearrange keywords)
         is_rearrangement = ('rearrange' in user_prompt.lower() or 'organize' in user_prompt.lower() or 
                            'layout' in user_prompt.lower() or 'architect' in user_prompt.lower()) and len(selected_fixture_names) > 1
@@ -1256,41 +1261,77 @@ Available fixtures in the DXF file (with current positions):
 User's Command:
 {user_prompt}
 
-IMPORTANT Instructions:
-1. Commands can be: MOVE, COPY, DELETE, ROTATE, or REARRANGE multiple fixtures
-2. When the command includes "to position (X, Y)" - use those EXACT coordinates as new_position
-3. When the command says "500mm right" - add 500 to the X coordinate
-4. When the command says "500mm left" - subtract 500 from the X coordinate  
-5. When the command says "500mm up" - add 500 to the Y coordinate
-6. When the command says "500mm down" - subtract 500 from the Y coordinate
-7. For ROTATE: Extract rotation angle in degrees (e.g., "rotate 90 degrees", "rotate by 45")
-8. For REARRANGE: YOU MUST move ALL fixtures listed in "Selected fixtures:" line
-   - Parse the comma-separated fixture names from the first line
-   - Create ONE move operation for EACH fixture name in that list
-   - Find their current positions from the fixtures list above
-   - Calculate non-overlapping new positions
-9. ALWAYS include original_position from the fixtures list above
+🚨 CRITICAL COORDINATE RULES - YOU MUST FOLLOW EXACTLY:
 
-Output JSON format (REQUIRED):
+1. **EXACT POSITION COMMANDS** (Highest Priority):
+   - When prompt says "to position (X, Y)" → USE THOSE EXACT NUMBERS as new_position
+   - DO NOT calculate or modify these coordinates
+   - DO NOT apply any transformations
+   - Example: "to position (-6183.8, -1019.6)" → new_position: [-6183.8, -1019.6]
+   
+2. **RELATIVE MOVEMENT COMMANDS**:
+   - "500mm right" → add 500 to original X coordinate
+   - "500mm left" → subtract 500 from original X
+   - "500mm up" → add 500 to original Y coordinate  
+   - "500mm down" → subtract 500 from original Y
+
+3. **ROTATION HANDLING**:
+   - If command includes "with rotation X°" → add "rotation": X to that fixture's JSON entry
+   - Rotation does NOT change the position - only the angle
+   - Keep the SAME position but add rotation field
+
+4. **MULTI-FIXTURE OPERATIONS**:
+   - COPY: Create duplicate with new position
+   - DELETE: No new_position needed
+   - REARRANGE: Move ALL fixtures in "Selected fixtures:" list
+
+5. **POSITION EXTRACTION** (Most Important):
+   - Search prompt text for "to position (" followed by numbers
+   - Extract those EXACT numbers: regex pattern `to position \(([^,]+), ([^)]+)\)`
+   - Use extracted values WITHOUT modification
+   
+6. **ALWAYS include**:
+   - original_position from fixtures list above
+   - new_position EXACTLY as specified in prompt
+   - rotation field if mentioned in prompt
+
+Output JSON format (REQUIRED - Follow EXACTLY):
 {{
   "fixtures": [
     {{
       "block_name": "EXACT_FIXTURE_NAME_FROM_LIST",
-      "operation": "move|copy|delete|rotate",
-      "original_position": [current_x, current_y],
-      "new_position": [new_x, new_y],
-      "rotation": 90  // Only for rotate operation, angle in degrees
+      "operation": "move|copy|delete",
+      "original_position": [current_x_from_fixtures_list, current_y_from_fixtures_list],
+      "new_position": [EXACT_X_FROM_PROMPT, EXACT_Y_FROM_PROMPT],
+      "rotation": 90.5  // OPTIONAL: Include if prompt says "with rotation"
     }}
   ]
 }}
 
-Examples:
-- "Move X to position (1500, 2000)" = operation: "move", new_position: [1500, 2000]
-- "Copy X 500mm right" = operation: "copy", calculate new_position from original + 500 in X
-- "Delete X" = operation: "delete", no new_position needed
-- "Rotate X 90 degrees" = operation: "rotate", rotation: 90, keep same position
-- "Rearrange VC_FIXTURE_1, VC_FIXTURE_2, VC_FIXTURE_3 like an architect" = 
-  Generate multiple move operations with intelligent positioning
+CRITICAL: 
+- For "Move X to position (A, B)": new_position MUST be [A, B] exactly
+- Do NOT round, do NOT modify, do NOT calculate - USE EXACT VALUES
+- If prompt says "with rotation 42.1°": add "rotation": 42.1
+
+Examples (EXACT coordinate extraction):
+
+1. Prompt: "Move EURO_CENTRE_8 697mm right and 87mm down to position (-6183.8, -1019.6) with rotation 42.1°"
+   Output: {{
+     "block_name": "EURO_CENTRE_8",
+     "operation": "move", 
+     "original_position": [-6880.5, -932.6],  // from fixtures list
+     "new_position": [-6183.8, -1019.6],      // EXACT from "to position (...)"
+     "rotation": 42.1                          // from "with rotation..."
+   }}
+
+2. Prompt: "Move X to position (1500.5, 2000.3)"
+   Output: {{"block_name": "X", "operation": "move", "new_position": [1500.5, 2000.3]}}
+
+3. Prompt: "Copy X 500mm right" (X is at [1000, 2000])
+   Output: {{"block_name": "X", "operation": "copy", "original_position": [1000, 2000], "new_position": [1500, 2000]}}
+
+4. Prompt: "Delete X"
+   Output: {{"block_name": "X", "operation": "delete"}}  // No new_position needed
 
 CRITICAL FOR REARRANGEMENT:
 - The user selected these specific fixtures (listed in "Selected fixtures:" line)
@@ -1769,15 +1810,18 @@ def apply_ai_modifications(session_id, modifications):
             
         elif operation == 'move':
             # Update position of existing fixture
+            matched = False
             for entity in msp:
                 if entity.dxftype() == 'INSERT' and entity.dxf.name == block_name:
                     if orig_pos and len(orig_pos) >= 2 and new_pos and len(new_pos) >= 2:
                         # Match by position
                         pos = entity.dxf.insert
+                        print(f"      🔍 Checking {block_name}: DXF pos ({pos.x:.2f}, {pos.y:.2f}) vs requested orig ({orig_pos[0]:.2f}, {orig_pos[1]:.2f})")
                         if abs(pos.x - orig_pos[0]) < 0.1 and abs(pos.y - orig_pos[1]) < 0.1:
                             entity.dxf.insert = (new_pos[0], new_pos[1], pos.z)
                             changes_made += 1
-                            print(f"      ✅ Moved {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
+                            matched = True
+                            print(f"      ✅ Moved {block_name} from ({pos.x:.1f}, {pos.y:.1f}) to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
                             
                             # Also update in JSON data for canvas update
                             for e in json_data.get('modelspace', []):
@@ -1787,23 +1831,9 @@ def apply_ai_modifications(session_id, modifications):
                                         e['insert'] = [new_pos[0], new_pos[1], e_pos[2] if len(e_pos) > 2 else 0]
                                         break
                             break
-                    elif new_pos and len(new_pos) >= 2:
-                        # Move first instance if no position specified
-                        pos = entity.dxf.insert
-                        entity.dxf.insert = (new_pos[0], new_pos[1], pos.z)
-                        changes_made += 1
-                        print(f"      ✅ Moved {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
-                        
-                        # Also update in JSON data
-                        for e in json_data.get('modelspace', []):
-                            if e.get('dxf_type') == 'INSERT' and e.get('name') == block_name:
-                                e_pos = e.get('insert', [0, 0, 0])
-                                e['insert'] = [new_pos[0], new_pos[1], e_pos[2] if len(e_pos) > 2 else 0]
-                                break
-                        break
-                    else:
-                        print(f"      ⚠️  Invalid position data for {block_name}")
-                        break
+            
+            if not matched:
+                print(f"      ❌ Failed to find {block_name} at position ({orig_pos[0]:.2f}, {orig_pos[1]:.2f}) in DXF!")
         
         elif operation == 'rotate':
             # Rotate fixture by specified angle
