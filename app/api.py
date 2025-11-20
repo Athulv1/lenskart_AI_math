@@ -733,86 +733,103 @@ def process_floorplan(request, file_id: uuid.UUID):
             dxfc.create_floorplan()
             dxfc.cvc.get_metadata()
             dxfc.cvc.reorder_bot_left()
-            DRAW_SEPARATOR_LINE = True 
+            DRAW_SEPARATOR_LINE = True
 
-            # 4. NEW: Call the single setup and calculation function
+            # # 4. NEW: Call the single setup and calculation function
             dxfc.merch_mix_cal(merch_mix_data, static_fixtures) # type: ignore
 
-            # --- PLACEMENT PHASE ---
-            all_placed_bboxes = dxfc.get_existing_nonwall_bboxes()
+            # # --- PLACEMENT PHASE ---
+            dxfc.get_existing_nonwall_bboxes()
             floor_area = dxfc.calculate_area_sqft()
             orientation = dxfc.cvc.orientation
             Primary = "right"
             print("Primary side for the floorplan is ", Primary)
 
 
-            if orientation == 'landscape':
+            if orientation == 'SS':
                 print("--- Applying LANDSCAPE placement strategy---")
                 # dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
                 # dxfc.place_boh_intelligently(all_placed_bboxes)
                 # dxfc.place_boh_preset(all_placed_bboxes)
-                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
-                dxfc.place_boh_fixtures(all_placed_bboxes)
-                dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
-                dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
-                dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
-                remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
-                if remaining_tables:
-                    dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
-                dxfc.place_corian_table_set_landscape(all_placed_bboxes)
-                dxfc.place_standing_tables_landscape(all_placed_bboxes)
-                dxfc.place_blue_zero_landscape(all_placed_bboxes)
-                dxfc.place_pos_ar_landscape(all_placed_bboxes)
-                dxfc.place_qms_at_entrance(all_placed_bboxes)
-                dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
+                # dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
+                # dxfc.place_boh_fixtures(all_placed_bboxes)
+                # dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
+                # dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
+                # dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
+                # remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
+                # if remaining_tables:
+                #     dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
+                # dxfc.place_corian_table_set_landscape(all_placed_bboxes)
+                # dxfc.place_standing_tables_landscape(all_placed_bboxes)
+                # dxfc.place_blue_zero_landscape(all_placed_bboxes)
+                # dxfc.place_pos_ar_landscape(all_placed_bboxes)
+                # dxfc.place_qms_at_entrance(all_placed_bboxes)
+                # dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
 
             else: # Default to portrait
                 print("---Applying PORTRAIT placement strategy---")
-                dxfc.orchestrate_clinic_placement(all_placed_bboxes)
-    
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.place_boh_fixtures(all_placed_bboxes)
+                # ***** ADD THE NEW FUNCTION CALL HERE *****
+                
+            #     back_room_location, partition_x = dxfc.detect_back_corner_room(debug=False)
+            #     print("Back room detected at location:", back_room_location, "with partition X at:", partition_x)
+                
+                res = dxfc.orchestrate_clinic_placement()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
 
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.place_benches(all_placed_bboxes) 
-                # dxfc.place_ar_under_separation_line(all_placed_bboxes)
-                dxfc.place_qms_at_entrance_center(all_placed_bboxes)
-                dxfc.place_standing_tables(all_placed_bboxes)
-                # ------------------------------------
-                # ------------------------------------
+                dxfc.place_boh_fixtures()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                # dxfc.draw_retail_separation_line(enabled=DRAW_SEPARATOR_LINE)
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                dxfc.draw_back_wall()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                dxfc.place_benches_3()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                # dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                #---RASHEEQUE--EDIT
+                # (This call replaces the old one)
+                dxfc.plan_and_place_standing_tables(debug=False) # Set debug=True to see the zone
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                #---RASHEEQUE--EDIT---END---
+
+                
                 # --- Orchestrate wall fixtures ---
-                remaining_wall_fixtures, display_calcs = dxfc.plan_and_place_wall_fixtures(
-                    all_placed_bboxes=all_placed_bboxes,
+                dxfc.plan_and_place_wall_fixtures(
                     primary_side=Primary,
-                    draw_debug=False  # Set to False to hide debug drawings
+                    draw_debug=True  # Set to False to hide debug drawings
                 )
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
 
+                
                 # --- Orchestrate Euro Center fixtures ---
                 dxfc.plan_and_place_euro_fixtures(
-                    all_placed_bboxes=all_placed_bboxes,
-                    remaining_wall_fixtures=remaining_wall_fixtures,
-                    display_calcs=display_calcs,
-                    draw_debug=False # Set to False to hide debug drawings
+                    draw_debug=False  # Set to False to hide debug drawings
                 )
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_qms_at_entrance_center()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 
-                dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
-                dxfc.place_corian_table_set(all_placed_bboxes)
+                # dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
+                # dxfc.place_corian_table_set()
                 # dxfc.place_pos_ar_portrait_dynamically(all_placed_bboxes)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)    
                 # dxfc.place_sofas_above_screen_ar(all_placed_bboxes, bottom_margin_pct=euro_bottom_margin, gap_above_ar=200)
-                dxfc.place_Blue_Zero_attached(all_placed_bboxes)
-                dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
+                dxfc.place_Blue_Zero_attached()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_tv_screens_new(primary_side=Primary)
+                
 
             dxfc.place_door(Primary)
+            dxfc._get_accurate_obstacle_bboxes(include_all=True)
             dxfc.place_lensometer()
 
             # --- Save and close ---
             dxfc.close_plan()
-            
             
             # ==================== DXF PROCESSING STARTS HERE ============================
 
@@ -824,7 +841,7 @@ def process_floorplan(request, file_id: uuid.UUID):
             # final_export_dxf_path = os.path.join(output_dir, "output.dxf") # Path to save the final DXF with assigned layers
             # Use Django's File class instead of direct open()
             try:
-                with open(final_export_dxf_path, 'rb') as f:  # Use the final DXF here
+                with open(dxfc.docs[0].final_name, 'rb') as f:  # Use the final DXF here
                     django_file = DjangoFile(f, name=processed_filename)
                     processed_file = ProjectFile.objects.create(
                         project=project_file.project,
