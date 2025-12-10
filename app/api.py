@@ -244,6 +244,7 @@ def get_project_details(request, project_id: uuid.UUID):
 def add_project_data(
     request,
     project_id: uuid.UUID,
+    mainDoorWallId: Optional[str] = Form(None),
     project_name: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
@@ -264,19 +265,11 @@ def add_project_data(
     washroom: Optional[str] = Form(None),
     remarks: Optional[str] = Form(None),
     roomMeasurements: Optional[str] = Form(None),
-    # And the original file keywords
     files: List[UploadedFile] = File([]),
     siteImages: List[UploadedFile] = File([])
 ):
-    """
-    Adds or updates data for an existing project.
-    This endpoint is for the mobile app to fill in missing details and add files.
-    It only updates fields that are provided in the request (it's additive).
-    """
     project = get_object_or_404(Project, id=project_id)
 
-    # --- Update Text Fields ---
-    # Create a dictionary of all possible text fields from the request
     update_data_map = {
         'name': project_name, 'description': description, 'address': address, 
         'location_reference': locationReference, 'total_carpet_area': carpetArea, 
@@ -289,21 +282,26 @@ def add_project_data(
         'washroom': washroom, 'remarks': remarks
     }
 
-    # Loop through the map and update the project object ONLY if a value was sent
     for field_name, value in update_data_map.items():
         if value is not None:
             setattr(project, field_name, value)
     
-    # Record the user who made the update
     project.updated_by = request.auth
 
-    # --- Handle roomMeasurements separately as it needs JSON parsing ---
-    if roomMeasurements:
-        try:
+
+    try:
+        current_measurements = project.room_measurements or {}
+        
+        if roomMeasurements:
             parsed_measurements = json.loads(roomMeasurements)
-            project.room_measurements = parsed_measurements
-            
-            # Also regenerate the standalone JSON file
+            current_measurements.update(parsed_measurements)
+
+        if mainDoorWallId is not None:
+            current_measurements['mainDoorWallId'] = mainDoorWallId
+
+        project.room_measurements = current_measurements
+        
+        if project.room_measurements: 
             room_measurements_dir = os.path.join(settings.MEDIA_ROOT, 'room_measurements')
             os.makedirs(room_measurements_dir, exist_ok=True)
             safe_project_name = "".join(c for c in project.name if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')
@@ -313,34 +311,29 @@ def add_project_data(
                 json.dump({
                     'project_id': str(project.id), 'project_name': project.name,
                     'created_at': project.created_at.isoformat(),
-                    'room_measurements': parsed_measurements
+                    'room_measurements': project.room_measurements 
                 }, json_file, indent=2, ensure_ascii=False)
             logger.info(f"Room measurements JSON file updated for project {project.id}")
 
-        except json.JSONDecodeError:
-            return 400, {"message": "Invalid JSON format for roomMeasurements"}
-        except Exception as e:
-            logger.error(f"Error saving room measurements file for project {project.id}: {str(e)}")
+    except json.JSONDecodeError:
+        return 400, {"message": "Invalid JSON format for roomMeasurements"}
+    except Exception as e:
+        logger.error(f"Error handling room measurements for project {project.id}: {str(e)}")
 
-    # --- Add New Files (Additive Only) using the original, working logic ---
-    # 1. Process files from the 'files' field
+    
     for file in files:
         _, ext = os.path.splitext(file.name)
         ext = ext.lower().lstrip('.')
-        # Your original logic: videos go to SiteMedia, others to ProjectFile
         if ext == 'mp4':
             SiteMedia.objects.create(project=project, file=file)
         else:
             ProjectFile.objects.create(project=project, file=file)
 
-    # 2. Process files from the 'siteImages' field
     for media_file in siteImages:
         SiteMedia.objects.create(project=project, file=media_file)
 
-    # Save all the changes to the database
     project.save()
 
-    # Return the full, updated project object
     return 200, project
 
 
@@ -396,7 +389,10 @@ def upload_project_with_files(
             washroom = request.POST.get('washroom')
             remarks = request.POST.get('remarks')
             room_measurements_raw = request.POST.get('roomMeasurements')
+            main_door_wall_id = request.POST.get('mainDoorWallId')
             room_measurements = json.loads(room_measurements_raw) if room_measurements_raw else {}
+            if main_door_wall_id:
+                room_measurements['mainDoorWallId'] = main_door_wall_id
 
             project = Project.objects.create(
                 name=project_name, description=description, address=address,
