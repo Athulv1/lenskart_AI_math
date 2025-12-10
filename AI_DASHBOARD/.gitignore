@@ -1,0 +1,108 @@
+# DXF Test Files
+*.dxf
+*.dwg
+*.DXF
+*.DWG
+
+# JSON Data Files
+*COCO*.json
+*FURNITURE*.json
+*FLAGSHIP*.json
+DIMENSIONS_AND_LEADERS.json
+
+# Zone Identifier Files (Windows)
+*:Zone.Identifier
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Flask
+flask.log
+nohup.out
+*.log
+
+# Uploads Directory
+uploads/
+outputs/
+
+# Test/Temporary Files
+test_*.py
+demo_*.py
+*_test_*.dxf
+*-MODIFIED*.dxf
+*-AI-MODIFIED*.dxf
+modifications.json
+modifications_TEMPLATE.json
+
+# Documentation (keep only essential)
+CURRENT_APP_ANALYSIS.md
+FINAL_SOLUTION.md
+FIXTURE_MODIFICATION_GUIDE.md
+FIXTURE_MOVER_GUIDE.md
+IMPLEMENTATION_ROADMAP.md
+MANUAL_EDIT_WORKFLOW.md
+PROFESSIONAL_SOLUTION_GUIDE.md
+PROPOSED_CANVAS_ARCHITECTURE.md
+QUICK_REFERENCE.md
+QUICK_START_GUIDE.md
+README_AUTOCAD_SOLUTION.md
+README_DOCUMENTATION.md
+RECONSTRUCTION_SUMMARY.md
+START_HERE.md
+SYSTEM_COMPARISON.md
+WEB_APP_GUIDE.md
+WHY_DEMO_FAILED_AND_SOLUTION.md
+WORKING_SOLUTION_SUMMARY.md
+
+# Keep only essential Python files
+autocad_method_reconstruction.py
+complete_reconstruction.py
+convert_to_r2018_mm.py
+correct_fixture_modification.py
+demo_fixture_modification.py
+dxf_fixture_modifier.py
+export_dimensions.py
+extract_fixture_details.py
+final_working_solution.py
+find_fixtures.py
+fix_for_autocad.py
+hybrid_r2018_mm.py
+hybrid_reconstruction.py
+json_to_dwg.py
+json_to_dxf.py
+json_to_dxf_r2018_mm.py
+just2_dxf_to_json.py
+move_fixtures.py
+perfect_reconstruction.py
+rebuild_for_autocad.py
+test_analyze_fix.py
+test_bounding_box.py
+test_clinic_fix.py
+test_dxf_to_json.py
+test_fixture_change.py
+test_fixture_sizes.py
+test_remove_fixture.py
+ultimate_reconstruction.py
+universal_dxf_converter.py
+verify_vc_fix.py
+web_app.py
+
+# Images
+*.png
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

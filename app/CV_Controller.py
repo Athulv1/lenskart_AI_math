@@ -203,7 +203,10 @@ class CV_Controller:
         # Use the currently running Python interpreter to invoke the helper script
         # (avoids relying on "python3" being present on Windows)
         result = subprocess.run(
+
             [sys.executable, "app/layout.py", json.dumps(fp_json)],
+
+            ["python3", "app/layout.py", json.dumps(fp_json)],  # Use python3 instead of python
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True  # to get output as string instead of bytes

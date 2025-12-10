@@ -1,0 +1,41 @@
+{
+  "walls": [
+    {
+      "start": {"x": 0, "y": 0},
+      "end": {"x": 1000, "y": 0},
+      "thickness": 200,
+      "type": "exterior"
+    },
+    {
+      "start": {"x": 1000, "y": 0},
+      "end": {"x": 1000, "y": 800},
+      "thickness": 200,
+      "type": "exterior"
+    },
+    {
+      "start": {"x": 1000, "y": 800},
+      "end": {"x": 0, "y": 800},
+      "thickness": 200,
+      "type": "exterior"
+    },
+    {
+      "start": {"x": 0, "y": 800},
+      "end": {"x": 0, "y": 0},
+      "thickness": 200,
+      "type": "exterior"
+    }
+  ],
+  "corners": [
+    {"x": 0, "y": 0},
+    {"x": 1000, "y": 0},
+    {"x": 1000, "y": 800},
+    {"x": 0, "y": 800}
+  ],
+  "metadata": {
+    "unit": "mm",
+    "building_type": "optical_store",
+    "total_area": 800000,
+    "created_by": "manual_measurement",
+    "notes": "Example wall configuration for a 10m x 8m optical store"
+  }
+}

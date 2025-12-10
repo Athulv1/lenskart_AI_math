@@ -1,0 +1,494 @@
+{
+  "project_id": "sample-wall-project",
+  "project_name": "Sample Store Floor Plan (with Fixtures)",
+  "created_at": "2025-09-19T12:00:00+00:00",
+  "room_measurements": {
+    "walls": [
+      {
+        "id": "wall_1",
+        "start": [
+          0,
+          0,
+          0
+        ],
+        "end": [
+          5,
+          0,
+          0
+        ]
+      },
+      {
+        "id": "wall_2",
+        "start": [
+          5,
+          0,
+          0
+        ],
+        "end": [
+          5,
+          0,
+          10
+        ]
+      },
+      {
+        "id": "wall_3",
+        "start": [
+          5,
+          0,
+          10
+        ],
+        "end": [
+          0,
+          0,
+          10
+        ]
+      },
+      {
+        "id": "wall_4",
+        "start": [
+          0,
+          0,
+          10
+        ],
+        "end": [
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "placed_fixtures": [
+      {
+        "name": "vc_repair_table",
+        "center_mm": {
+          "x": 915.0,
+          "y": 709.9999999999999
+        },
+        "size_mm": {
+          "width": 1165.0,
+          "height": 709.9999999999999
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "sc_front_desk",
+        "center_mm": {
+          "x": 875.0,
+          "y": 1470.0
+        },
+        "size_mm": {
+          "width": 1085.0,
+          "height": 590.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "nummi_bilen",
+        "center_mm": {
+          "x": 1665.0,
+          "y": 470.0
+        },
+        "size_mm": {
+          "width": 915.0,
+          "height": 590.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "soins_lens_large",
+        "center_mm": {
+          "x": 2834.9999999999995,
+          "y": 470.0
+        },
+        "size_mm": {
+          "width": 1085.0,
+          "height": 590.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "vasagle_storage_cabinet",
+        "center_mm": {
+          "x": 3915.0,
+          "y": 650.0
+        },
+        "size_mm": {
+          "width": 500.0,
+          "height": 590.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "wascon_desk_meallier",
+        "center_mm": {
+          "x": 4064.9999999999995,
+          "y": 2560.0
+        },
+        "size_mm": {
+          "width": 875.0,
+          "height": 1000.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "screen_55",
+        "center_mm": {
+          "x": 1585.0,
+          "y": 2240.0
+        },
+        "size_mm": {
+          "width": 500.0,
+          "height": 590.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "euro_ccvlite",
+        "center_mm": {
+          "x": 2540.0,
+          "y": 2240.0
+        },
+        "size_mm": {
+          "width": 500.0,
+          "height": 590.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "staff_rack",
+        "center_mm": {
+          "x": 1250.0,
+          "y": 3240.0
+        },
+        "size_mm": {
+          "width": 835.0,
+          "height": 820.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center_mm": {
+          "x": 290.0,
+          "y": 3240.0
+        },
+        "size_mm": {
+          "width": 165.0,
+          "height": 1530.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center_mm": {
+          "x": 290.0,
+          "y": 5290.0
+        },
+        "size_mm": {
+          "width": 165.0,
+          "height": 1530.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center_mm": {
+          "x": 290.0,
+          "y": 6590.0
+        },
+        "size_mm": {
+          "width": 165.0,
+          "height": 820.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "vc_future_medium",
+        "center_mm": {
+          "x": 290.0,
+          "y": 8000.0
+        },
+        "size_mm": {
+          "width": 165.0,
+          "height": 1530.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "jjke_lens",
+        "center_mm": {
+          "x": 4710.0,
+          "y": 2470.0
+        },
+        "size_mm": {
+          "width": 165.0,
+          "height": 820.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "pos_Noire_medium",
+        "center_mm": {
+          "x": 4710.0,
+          "y": 3760.0
+        },
+        "size_mm": {
+          "width": 165.0,
+          "height": 1530.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "mirror_different",
+        "center_mm": {
+          "x": 4460.0,
+          "y": 5030.0
+        },
+        "size_mm": {
+          "width": 335.0,
+          "height": 530.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "jjtensoldfone_large",
+        "center_mm": {
+          "x": 4710.0,
+          "y": 6240.0
+        },
+        "size_mm": {
+          "width": 165.0,
+          "height": 1530.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "mirror_large",
+        "center_mm": {
+          "x": 4460.0,
+          "y": 7820.0
+        },
+        "size_mm": {
+          "width": 335.0,
+          "height": 1180.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "mirror_large",
+        "center_mm": {
+          "x": 4460.0,
+          "y": 9240.0
+        },
+        "size_mm": {
+          "width": 335.0,
+          "height": 1180.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "euro_centre",
+        "center_mm": {
+          "x": 2500.0,
+          "y": 3350.0
+        },
+        "size_mm": {
+          "width": 585.0,
+          "height": 709.9999999999999
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "euro_centre",
+        "center_mm": {
+          "x": 2500.0,
+          "y": 4560.0
+        },
+        "size_mm": {
+          "width": 585.0,
+          "height": 1000.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "euro_centre",
+        "center_mm": {
+          "x": 2500.0,
+          "y": 5850.0
+        },
+        "size_mm": {
+          "width": 585.0,
+          "height": 1000.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "euro_centre",
+        "center_mm": {
+          "x": 2500.0,
+          "y": 7150.0
+        },
+        "size_mm": {
+          "width": 585.0,
+          "height": 1000.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "euro_centre",
+        "center_mm": {
+          "x": 2500.0,
+          "y": 8440.0
+        },
+        "size_mm": {
+          "width": 585.0,
+          "height": 1000.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center_mm": {
+          "x": 1019.9999999999999,
+          "y": 4880.0
+        },
+        "size_mm": {
+          "width": 290.0,
+          "height": 1409.9999999999998
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center_mm": {
+          "x": 1019.9999999999999,
+          "y": 6760.0
+        },
+        "size_mm": {
+          "width": 290.0,
+          "height": 1409.9999999999998
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center_mm": {
+          "x": 1019.9999999999999,
+          "y": 8410.0
+        },
+        "size_mm": {
+          "width": 290.0,
+          "height": 1409.9999999999998
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center_mm": {
+          "x": 3980.0,
+          "y": 4880.0
+        },
+        "size_mm": {
+          "width": 290.0,
+          "height": 1409.9999999999998
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "mirror_large",
+        "center_mm": {
+          "x": 3980.0,
+          "y": 7940.0
+        },
+        "size_mm": {
+          "width": 290.0,
+          "height": 1409.9999999999998
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "euro_csinle",
+        "center_mm": {
+          "x": 1750.0,
+          "y": 5820.0
+        },
+        "size_mm": {
+          "width": 500.0,
+          "height": 470.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "seimony_lens",
+        "center_mm": {
+          "x": 3565.0,
+          "y": 6850.000000000001
+        },
+        "size_mm": {
+          "width": 375.0,
+          "height": 650.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "jjke_lens",
+        "center_mm": {
+          "x": 1460.0,
+          "y": 9470.0
+        },
+        "size_mm": {
+          "width": 500.0,
+          "height": 470.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "accuairte",
+        "center_mm": {
+          "x": 3540.0,
+          "y": 9470.0
+        },
+        "size_mm": {
+          "width": 500.0,
+          "height": 470.0
+        },
+        "rotation_deg": 0
+      },
+      {
+        "name": "large_bench",
+        "center_mm": {
+          "x": 2500.0,
+          "y": 9530.0
+        },
+        "size_mm": {
+          "width": 1085.0,
+          "height": 590.0
+        },
+        "rotation_deg": 0
+      }
+    ],
+    "floor_polygon_mm": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        10000.0
+      ],
+      [
+        5000.0,
+        10000.0
+      ],
+      [
+        5000.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ]
+    ]
+  },
+  "rotation": 0.0
+}

@@ -1,0 +1,14 @@
+{
+  "project_id": "sample-wall-project",
+  "project_name": "Sample Store Floor Plan",
+  "created_at": "2025-09-19T12:00:00+00:00",
+  "room_measurements": {
+    "walls": [
+      { "id": "wall_1", "start": [0, 0, 0], "end": [5, 0, 0] },
+      { "id": "wall_2", "start": [5, 0, 0], "end": [5, 0, 10] },
+      { "id": "wall_3", "start": [5, 0, 10], "end": [0, 0, 10] },
+      { "id": "wall_4", "start": [0, 0, 10], "end": [0, 0, 0] }
+    ]
+  },
+  "rotation": 0.0
+}

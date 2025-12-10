@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Project Demo</title>
+<style>
+body {
+  background: #111;
+  color: #eee;
+  font-family: "Segoe UI", sans-serif;
+  margin: 0;
+  padding: 20px;
+}
+.container {
+  max-width: 700px;
+  margin: auto;
+}
+select, button, textarea {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  background: #222;
+  color: #fff;
+  border: 1px solid #444;
+  border-radius: 8px;
+}
+button {
+  background: #007bff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+button:hover {
+  background: #0056b3;
+}
+.log {
+  background: #1c1c1c;
+  border-radius: 8px;
+  padding: 10px;
+  height: 150px;
+  overflow-y: auto;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #ccc;
+}
+h1 {
+  text-align: center;
+  color: #00d1ff;
+}
+.card {
+  background: #1a1a1a;
+  padding: 15px;
+  border-radius: 10px;
+  margin-top: 15px;
+  box-shadow: 0 0 10px #0005;
+}
+a {
+  color: #00d1ff;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>AI Project Dashboard</h1>
+
+  <div class="card">
+    <label for="project-select">Select Project:</label>
+    <select id="project-select" disabled>
+      <option>Loading projects...</option>
+    </select>
+    <p id="file-info"></p>
+    <button id="generate-math-btn" disabled>Generate with Math</button>
+    <button id="generate-ai-btn" disabled>Generate with AI</button>
+  </div>
+
+  <div class="card">
+    <h3>Logs</h3>
+    <div id="log-container" class="log"></div>
+  </div>
+
+  <div id="results" class="card"></div>
+</div>
+
+<script>
+const API_BASE_URL = "/api/demo";
+
+document.addEventListener("DOMContentLoaded", () => {
+  const projectSelect = document.getElementById("project-select");
+  const fileInfo = document.getElementById("file-info");
+  const generateMathBtn = document.getElementById("generate-math-btn");
+  const generateAiBtn = document.getElementById("generate-ai-btn");
+  const logContainer = document.getElementById("log-container");
+  const resultsContainer = document.getElementById("results");
+
+  let projects = [];
+  let currentProject = null;
+  let processableFile = null;
+
+  function logMessage(msg, type = "info") {
+    const entry = document.createElement("div");
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    entry.style.color = type === "error" ? "#ff5555" : (type === "success" ? "#33ff99" : "#00d1ff");
+    logContainer.appendChild(entry);
+    logContainer.scrollTop = logContainer.scrollHeight;
+  }
+
+  async function loadProjects() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/projects/`);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      projects = await response.json();
+      
+      projectSelect.innerHTML = '<option value="">-- Select a Project --</option>';
+      projects.forEach(p => {
+        const option = document.createElement("option");
+        option.value = p.id;
+        option.textContent = p.name;
+        projectSelect.appendChild(option);
+      });
+      projectSelect.disabled = false;
+      logMessage("Projects loaded successfully.");
+    } catch (error) {
+      logMessage(`Failed to load projects: ${error}`, "error");
+    }
+  }
+
+  function loadProjectData(projectId) {
+    currentProject = projects.find(p => p.id == projectId);
+    if (!currentProject) {
+        fileInfo.textContent = "";
+        generateMathBtn.disabled = true;
+        generateAiBtn.disabled = true;
+        return;
+    }
+
+    const images = currentProject.files.filter(f => f.file && (f.file.endsWith(".png") || f.file.endsWith(".jpg") || f.file.endsWith(".jpeg")));
+    if (images.length > 0) {
+      processableFile = images[0];
+      fileInfo.textContent = `Selected image: ${processableFile.file.split('/').pop()}`;
+      generateMathBtn.disabled = false;
+      generateAiBtn.disabled = false;
+      logMessage(`Ready to process project "${currentProject.name}"`);
+    } else {
+      fileInfo.textContent = "No processable image file found for this project.";
+      generateMathBtn.disabled = true;
+      generateAiBtn.disabled = true;
+      logMessage("No processable file found.", "error");
+    }
+  }
+
+  async function generateWithMath() {
+    if (!processableFile) {
+      logMessage("No file to process.", "error");
+      return;
+    }
+    logMessage("Generating DXF using Math Flow...");
+    generateMathBtn.disabled = true;
+    generateAiBtn.disabled = true;
+    resultsContainer.innerHTML = "";
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/process/${processableFile.id}/`, { method: 'POST' });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      
+      resultsContainer.innerHTML = `<a href="${result.output_url}" download>Download DXF Output</a>`;
+      logMessage("DXF Generation complete.", "success");
+    } catch (error) {
+      logMessage(`Math generation failed: ${error}`, "error");
+    } finally {
+        generateMathBtn.disabled = false;
+        generateAiBtn.disabled = false;
+    }
+  }
+
+  // "Generate with AI" → open new page
+  generateAiBtn.addEventListener("click", () => {
+    if (!currentProject || !processableFile) {
+      logMessage("Select a valid project before AI generation.", "error");
+      return;
+    }
+    const llmPageUrl = `${window.location.origin}/demo/?page=llm&project_id=${currentProject.id}&file_id=${processableFile.id}`;
+    window.location.href = llmPageUrl;
+  });
+
+  projectSelect.addEventListener("change", e => loadProjectData(e.target.value));
+  generateMathBtn.addEventListener("click", generateWithMath);
+  loadProjects();
+});
+
+// -----------------------------
+// LLM PAGE SECTION (same file)
+// -----------------------------
+if (new URLSearchParams(window.location.search).get("page") === "llm") {
+  document.body.innerHTML = `
+  <div class="container">
+    <h1>LLM Prompt Refinement</h1>
+    <div class="card">
+      <p id="info"></p>
+      <textarea id="prompt" placeholder="Edit your AI generation prompt here..."></textarea>
+      <button id="generate-btn">Generate</button>
+      <div id="ai-log" class="log"></div>
+    </div>
+  </div>
+  `;
+
+  const params = new URLSearchParams(window.location.search);
+  const projectId = params.get("project_id");
+  const fileId = params.get("file_id");
+  document.getElementById("info").innerText = `Project ID: ${projectId}, File ID: ${fileId}`;
+  const aiLog = document.getElementById("ai-log");
+
+  document.getElementById("generate-btn").addEventListener("click", () => {
+    aiLog.innerHTML = "";
+    const msg = document.createElement("div");
+    msg.textContent = "🧠 Generating AI Output...";
+    aiLog.appendChild(msg);
+    setTimeout(() => {
+      msg.textContent = "✅ AI Output generated successfully (mock result).";
+      const download = document.createElement("a");
+      download.href = "#";
+      download.textContent = "Download AI Result";
+      download.style.display = "block";
+      download.style.marginTop = "10px";
+      aiLog.appendChild(download);
+    }, 1500);
+  });
+}
+</script>
+</body>
+</html>
