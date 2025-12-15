@@ -23,11 +23,15 @@ from werkzeug.utils import secure_filename
 import ezdxf
 from enhanced_dxf_to_json import dxf_to_json, json_to_dxf
 from ai_fixture_mover import AIFixtureMover
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
-app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
@@ -41,7 +45,9 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 session_storage = {}
 
 # Gemini AI configuration
-GEMINI_API_KEY = "AIzaSyDYivSaB99eiXW__eYF_WprJsa8qCZGQ2M"
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+if not GEMINI_API_KEY:
+    print("⚠️  WARNING: GEMINI_API_KEY not found in environment variables")
 
 
 @app.route('/')
@@ -54,6 +60,12 @@ def index():
 def canvas():
     """Canvas editor page"""
     return render_template('canvas.html')
+
+
+@app.route('/canvas-preview')
+def canvas_preview():
+    """Canvas preview page (read-only, optimized for selection modal)"""
+    return render_template('canvas_preview.html')
 
 
 @app.route('/upload-from-url', methods=['POST'])
@@ -1276,9 +1288,10 @@ User's Command:
    - "500mm down" → subtract 500 from original Y
 
 3. **ROTATION HANDLING**:
-   - If command includes "with rotation X°" → add "rotation": X to that fixture's JSON entry
-   - Rotation does NOT change the position - only the angle
-   - Keep the SAME position but add rotation field
+   - For ROTATION ONLY: use operation "rotate" with "rotation": X field
+   - For MOVE WITH ROTATION: use operation "move" with BOTH "new_position" AND "rotation": X
+   - If command says "rotate FIXTURE_X to Y degrees" → operation: "rotate", rotation: Y
+   - If command says "move FIXTURE_X ... with rotation Y°" → operation: "move", new_position: [...], rotation: Y
 
 4. **MULTI-FIXTURE OPERATIONS**:
    - COPY: Create duplicate with new position
@@ -1511,10 +1524,16 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
         }
         for fixture in modifications.get('fixtures', []):
             op = fixture.get('operation', 'move').lower()
+            has_rotation = fixture.get('rotation') is not None
+            
             if op == 'move':
                 operations_count['moved'] += 1
+                if has_rotation:
+                    operations_count['rotated'] += 1
             elif op == 'copy':
                 operations_count['copied'] += 1
+                if has_rotation:
+                    operations_count['rotated'] += 1
             elif op == 'delete':
                 operations_count['deleted'] += 1
             elif op == 'rotate':
@@ -1761,8 +1780,10 @@ def apply_ai_modifications(session_id, modifications):
                 ]
             
         elif operation == 'copy':
-            # Find original fixture and create a copy
+            # Find original fixture and create a copy (with optional rotation)
             source_entity = None
+            rotation_angle = mod.get('rotation', None)  # Get rotation if specified
+            
             for entity in msp:
                 if entity.dxftype() == 'INSERT' and entity.dxf.name == block_name:
                     if orig_pos and len(orig_pos) >= 2:
@@ -1777,7 +1798,10 @@ def apply_ai_modifications(session_id, modifications):
                         break
             
             if source_entity and new_pos and len(new_pos) >= 2:
-                # Create a copy with new position
+                # Use specified rotation if provided, otherwise use source rotation
+                copy_rotation = rotation_angle if rotation_angle is not None else source_entity.dxf.rotation
+                
+                # Create a copy with new position and rotation
                 new_entity = msp.add_blockref(
                     block_name,
                     (new_pos[0], new_pos[1], source_entity.dxf.insert.z),
@@ -1786,11 +1810,12 @@ def apply_ai_modifications(session_id, modifications):
                         'xscale': source_entity.dxf.xscale,
                         'yscale': source_entity.dxf.yscale,
                         'zscale': source_entity.dxf.zscale,
-                        'rotation': source_entity.dxf.rotation,
+                        'rotation': copy_rotation,
                     }
                 )
                 changes_made += 1
-                print(f"      ✅ Copied {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
+                rotation_msg = f" with rotation {rotation_angle}°" if rotation_angle is not None else ""
+                print(f"      ✅ Copied {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f}){rotation_msg}")
                 
                 # Also add to JSON data for canvas update
                 for e in json_data.get('modelspace', []):
@@ -1801,6 +1826,8 @@ def apply_ai_modifications(session_id, modifications):
                                 # Found source, create copy in JSON
                                 new_json_entity = e.copy()
                                 new_json_entity['insert'] = [new_pos[0], new_pos[1], pos[2] if len(pos) > 2 else 0]
+                                if rotation_angle is not None:
+                                    new_json_entity['rotation'] = rotation_angle
                                 json_data.get('modelspace', []).append(new_json_entity)
                                 break
             elif not source_entity:
@@ -1809,8 +1836,10 @@ def apply_ai_modifications(session_id, modifications):
                 print(f"      ⚠️  No target position provided for {block_name}")
             
         elif operation == 'move':
-            # Update position of existing fixture
+            # Update position of existing fixture (and rotation if specified)
             matched = False
+            rotation_angle = mod.get('rotation', None)  # Get rotation if specified
+            
             for entity in msp:
                 if entity.dxftype() == 'INSERT' and entity.dxf.name == block_name:
                     if orig_pos and len(orig_pos) >= 2 and new_pos and len(new_pos) >= 2:
@@ -1819,9 +1848,16 @@ def apply_ai_modifications(session_id, modifications):
                         print(f"      🔍 Checking {block_name}: DXF pos ({pos.x:.2f}, {pos.y:.2f}) vs requested orig ({orig_pos[0]:.2f}, {orig_pos[1]:.2f})")
                         if abs(pos.x - orig_pos[0]) < 0.1 and abs(pos.y - orig_pos[1]) < 0.1:
                             entity.dxf.insert = (new_pos[0], new_pos[1], pos.z)
+                            
+                            # Apply rotation if specified
+                            if rotation_angle is not None:
+                                entity.dxf.rotation = rotation_angle
+                                print(f"      🔄 Setting rotation to {rotation_angle}°")
+                            
                             changes_made += 1
                             matched = True
-                            print(f"      ✅ Moved {block_name} from ({pos.x:.1f}, {pos.y:.1f}) to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
+                            rotation_msg = f" with rotation {rotation_angle}°" if rotation_angle is not None else ""
+                            print(f"      ✅ Moved {block_name} from ({pos.x:.1f}, {pos.y:.1f}) to ({new_pos[0]:.1f}, {new_pos[1]:.1f}){rotation_msg}")
                             
                             # Also update in JSON data for canvas update
                             for e in json_data.get('modelspace', []):
@@ -1829,6 +1865,8 @@ def apply_ai_modifications(session_id, modifications):
                                     e_pos = e.get('insert', [0, 0, 0])
                                     if abs(e_pos[0] - orig_pos[0]) < 0.1 and abs(e_pos[1] - orig_pos[1]) < 0.1:
                                         e['insert'] = [new_pos[0], new_pos[1], e_pos[2] if len(e_pos) > 2 else 0]
+                                        if rotation_angle is not None:
+                                            e['rotation'] = rotation_angle
                                         break
                             break
             
@@ -2130,4 +2168,6 @@ Features:
 Press Ctrl+C to stop the server
 """)
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Use environment variable for debug mode
+    debug_mode = os.getenv('DEBUG', 'False').lower() == 'true'
+    app.run(debug=debug_mode, host='0.0.0.0', port=5000)

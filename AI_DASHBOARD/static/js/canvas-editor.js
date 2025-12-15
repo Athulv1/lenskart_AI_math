@@ -640,10 +640,10 @@ class CanvasEditor {
         this.ctx.font = '12px monospace';
         this.ctx.fillText(`Scale: ${(this.scale * 100).toFixed(0)}%`, 10, 20);
         
-        // Draw rotation handle if fixture is selected
-        if (this.selectedFixture && !this.isDragging) {
-            this.drawRotationHandle(this.selectedFixture);
-        }
+        // Rotation handle disabled - use AI prompt for rotation
+        // if (this.selectedFixture && !this.isDragging) {
+        //     this.drawRotationHandle(this.selectedFixture);
+        // }
     }
     
     drawRotationHandle(fixture) {
@@ -848,30 +848,30 @@ class CanvasEditor {
             return;
         }
         
-        // Check if clicked on rotation handle first
-        if (this.rotationHandlePos && this.selectedFixture) {
-            const dx = canvasX - this.rotationHandlePos.x;
-            const dy = canvasY - this.rotationHandlePos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance <= this.rotationHandlePos.radius) {
-                // Clicked on rotation handle - start rotation mode
-                this.isRotating = true;
-                this.isDragging = false;
-                this.canvas.style.cursor = 'grab';
-                
-                // Calculate initial angle from fixture center
-                const fx = this.selectedFixture.position[0];
-                const fy = this.selectedFixture.position[1];
-                const centerX = fx * this.scale + this.offsetX;
-                const centerY = -fy * this.scale + this.offsetY;
-                
-                // Negate Y to convert from canvas coordinates (Y+ down) to math coordinates (Y+ up)
-                this.rotationStartAngle = Math.atan2(-(canvasY - centerY), canvasX - centerX);
-                this.rotationStartFixtureAngle = this.selectedFixture.rotation || 0;
-                return;
-            }
-        }
+        // Rotation handle disabled - use AI prompt for rotation
+        // if (this.rotationHandlePos && this.selectedFixture) {
+        //     const dx = canvasX - this.rotationHandlePos.x;
+        //     const dy = canvasY - this.rotationHandlePos.y;
+        //     const distance = Math.sqrt(dx * dx + dy * dy);
+        //     
+        //     if (distance <= this.rotationHandlePos.radius) {
+        //         // Clicked on rotation handle - start rotation mode
+        //         this.isRotating = true;
+        //         this.isDragging = false;
+        //         this.canvas.style.cursor = 'grab';
+        //         
+        //         // Calculate initial angle from fixture center
+        //         const fx = this.selectedFixture.position[0];
+        //         const fy = this.selectedFixture.position[1];
+        //         const centerX = fx * this.scale + this.offsetX;
+        //         const centerY = -fy * this.scale + this.offsetY;
+        //         
+        //         // Negate Y to convert from canvas coordinates (Y+ down) to math coordinates (Y+ up)
+        //         this.rotationStartAngle = Math.atan2(-(canvasY - centerY), canvasX - centerX);
+        //         this.rotationStartFixtureAngle = this.selectedFixture.rotation || 0;
+        //         return;
+        //     }
+        // }
         
         // Transform to world coordinates (Y-axis is flipped with negative scale)
         const worldX = (canvasX - this.offsetX) / this.scale;
