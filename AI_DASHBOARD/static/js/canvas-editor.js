@@ -513,11 +513,9 @@ class CanvasEditor {
                 this.ctx.fillRect(rectX, rectY, rectWidth, rectHeight);
             }
             
-            // Draw the image
-            // Note: Canvas is Y-flipped, so we need to flip the image vertically
-            this.ctx.translate(rectX, rectY + rectHeight);
-            this.ctx.scale(1, -1);  // Flip image vertically to match DXF coordinate system
-            this.ctx.drawImage(fixtureImage, 0, 0, rectWidth, rectHeight);
+            // Draw the image directly - no additional flip needed
+            // The global canvas transform already handles Y-axis flipping
+            this.ctx.drawImage(fixtureImage, rectX, rectY, rectWidth, rectHeight);
             
             this.ctx.restore();
             
@@ -642,10 +640,10 @@ class CanvasEditor {
         this.ctx.font = '12px monospace';
         this.ctx.fillText(`Scale: ${(this.scale * 100).toFixed(0)}%`, 10, 20);
         
-        // Draw rotation handle if fixture is selected
-        if (this.selectedFixture && !this.isDragging) {
-            this.drawRotationHandle(this.selectedFixture);
-        }
+        // Rotation handle disabled - use AI prompt for rotation
+        // if (this.selectedFixture && !this.isDragging) {
+        //     this.drawRotationHandle(this.selectedFixture);
+        // }
     }
     
     drawRotationHandle(fixture) {
@@ -850,30 +848,30 @@ class CanvasEditor {
             return;
         }
         
-        // Check if clicked on rotation handle first
-        if (this.rotationHandlePos && this.selectedFixture) {
-            const dx = canvasX - this.rotationHandlePos.x;
-            const dy = canvasY - this.rotationHandlePos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance <= this.rotationHandlePos.radius) {
-                // Clicked on rotation handle - start rotation mode
-                this.isRotating = true;
-                this.isDragging = false;
-                this.canvas.style.cursor = 'grab';
-                
-                // Calculate initial angle from fixture center
-                const fx = this.selectedFixture.position[0];
-                const fy = this.selectedFixture.position[1];
-                const centerX = fx * this.scale + this.offsetX;
-                const centerY = -fy * this.scale + this.offsetY;
-                
-                // Negate Y to convert from canvas coordinates (Y+ down) to math coordinates (Y+ up)
-                this.rotationStartAngle = Math.atan2(-(canvasY - centerY), canvasX - centerX);
-                this.rotationStartFixtureAngle = this.selectedFixture.rotation || 0;
-                return;
-            }
-        }
+        // Rotation handle disabled - use AI prompt for rotation
+        // if (this.rotationHandlePos && this.selectedFixture) {
+        //     const dx = canvasX - this.rotationHandlePos.x;
+        //     const dy = canvasY - this.rotationHandlePos.y;
+        //     const distance = Math.sqrt(dx * dx + dy * dy);
+        //     
+        //     if (distance <= this.rotationHandlePos.radius) {
+        //         // Clicked on rotation handle - start rotation mode
+        //         this.isRotating = true;
+        //         this.isDragging = false;
+        //         this.canvas.style.cursor = 'grab';
+        //         
+        //         // Calculate initial angle from fixture center
+        //         const fx = this.selectedFixture.position[0];
+        //         const fy = this.selectedFixture.position[1];
+        //         const centerX = fx * this.scale + this.offsetX;
+        //         const centerY = -fy * this.scale + this.offsetY;
+        //         
+        //         // Negate Y to convert from canvas coordinates (Y+ down) to math coordinates (Y+ up)
+        //         this.rotationStartAngle = Math.atan2(-(canvasY - centerY), canvasX - centerX);
+        //         this.rotationStartFixtureAngle = this.selectedFixture.rotation || 0;
+        //         return;
+        //     }
+        // }
         
         // Transform to world coordinates (Y-axis is flipped with negative scale)
         const worldX = (canvasX - this.offsetX) / this.scale;
@@ -1050,11 +1048,13 @@ class CanvasEditor {
         
         // Add to prompt list (if function is available from HTML)
         if (typeof window.addMovementPrompt === 'function') {
+            const rotation = this.selectedFixture.rotation || 0;
             window.addMovementPrompt(
                 this.selectedFixture.name,
                 this.dragStartPos,
                 endPos,
-                [dx, dy]
+                [dx, dy],
+                rotation  // Include current rotation
             );
         }
         
@@ -1368,7 +1368,7 @@ class CanvasEditor {
      */
     async sendRotationToBackend(fixtureName, newRotation) {
         try {
-            const response = await fetch('/rotate_fixture', {
+            const response = await fetch(API_CONFIG.getEndpoint('rotate_fixture'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -1384,6 +1384,10 @@ class CanvasEditor {
             
             if (result.success) {
                 console.log('✅ Rotation updated in backend');
+                
+                // DON'T add a movement prompt for rotation-only changes
+                // Rotation will be included automatically when the fixture is moved
+                // This prevents coordinate confusion and stale position bugs
             } else {
                 console.error('❌ Backend rotation update failed:', result.error);
             }

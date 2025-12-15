@@ -24,9 +24,7 @@ import argparse
 import json
 import math
 from pathlib import Path
-from typing import Dict, List, Tuple
-
-from typing import List, Tuple
+from typing import Dict, List, Tuple, Any
 from shapely.geometry import LinearRing, Polygon
 from shapely.geometry.polygon import orient
 
@@ -34,8 +32,8 @@ import ezdxf
 from ezdxf import units
 
 # Types
-Seg2D = Tuple[float, float, float, float]        # (x1, y1, x2, y2) mm
-Wall3D = Tuple[float, float, float, float, float]  # (x1, y1, x2, y2, height_mm)
+Seg2D = Tuple[float, float, float, float, str]        # (x1, y1, x2, y2) mm
+Wall3D = Tuple[float, float, float, float, float, str]  # (x1, y1, x2, y2, height_mm)
 Pt = Tuple[float, float]
 
 SNAP_MM = 1e-6  # quantization grid for node snapping during graph build
@@ -45,19 +43,122 @@ def load_json(path: Path) -> dict:
     with path.open("r") as f:
         return json.load(f)
 
+def compute_rotation_angle_from_measurements_json(room_json: Dict[str, Any]) -> float:
+    """
+    Adapter for your existing measurements.json structure, where:
+      - room_json["walls"] is a list of walls
+      - room_json["mainDoorWallId"] is the door wall id
+      - each wall["start"] / wall["end"] = [x, y, z] and we use x = [0], y = [2]
+    """
+    walls_2d = []
+    for w in room_json["walls"]:
+        sx, sy = w["start"][0], w["start"][2]
+        ex, ey = w["end"][0], w["end"][2]
+        walls_2d.append({
+            "id": w["id"],
+            "start": (sx, sy),
+            "end": (ex, ey),
+        })
 
-def extract_walls_mm(data: dict) -> Tuple[List[Seg2D], List[Wall3D], float]:
+    return compute_rotation_angle(
+        walls=walls_2d,
+        main_door_wall_id=room_json["mainDoorWallId"],
+    )
+
+def compute_rotation_angle(
+    walls: List[Dict[str, Any]],
+    main_door_wall_id: str
+) -> float:
+    """
+    Given a set of walls and the id of the main door wall, return the rotation
+    angle (in degrees) that should be applied to all points (about the room's
+    centroid) so that:
+      - the main door wall becomes perfectly horizontal, and
+      - it ends up as the *bottom* edge (below the centroid).
+
+    Assumes each wall is of the form:
+      {
+        "id": "Wall_1",
+        "start": (x1, y1),
+        "end":   (x2, y2),
+      }
+    """
+
+    # --- 1) Find the main door wall ---
+    try:
+        door_wall = next(w for w in walls if w["id"] == main_door_wall_id)
+    except StopIteration:
+        raise ValueError(f"mainDoorWallId {main_door_wall_id!r} not found in walls")
+
+    x1, y1 = door_wall["start"]
+    x2, y2 = door_wall["end"]
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    # Current angle of the door wall (in degrees), measured from +x axis
+    theta_current_deg = math.degrees(math.atan2(dy, dx))
+
+    # --- 2) Compute a simple centroid of the room from all endpoints ---
+    xs = []
+    ys = []
+    for w in walls:
+        sx, sy = w["start"]
+        ex, ey = w["end"]
+        xs.extend([sx, ex])
+        ys.extend([sy, ey])
+
+    cx = sum(xs) / len(xs)
+    cy = sum(ys) / len(ys)
+
+    # --- 3) First pass: rotate so that the door wall becomes horizontal ---
+    # We want the wall to align with angle 0° (pointing along +x).
+    # So the initial rotation is the negative of its current angle.
+    rot_deg = -theta_current_deg
+
+    # --- 4) Decide whether we need an additional 180° flip
+    # to ensure the wall ends up as the *bottom* edge.
+    #
+    # Take the midpoint of the door wall, transform it with the candidate
+    # rotation (about the centroid), and see whether it ends up above or
+    # below the centroid afterwards.
+    mx = (x1 + x2) / 2.0
+    my = (y1 + y2) / 2.0
+
+    # Translate midpoint so centroid is at origin
+    mx0 = mx - cx
+    my0 = my - cy
+
+    rot_rad = math.radians(rot_deg)
+
+    # Standard 2D rotation:
+    # x' = x*cos(a) - y*sin(a)
+    # y' = x*sin(a) + y*cos(a)
+    rotated_my = mx0 * math.sin(rot_rad) + my0 * math.cos(rot_rad)
+
+    # If the rotated midpoint is *above* the centroid (y > 0),
+    # flip the rotation by 180° so the door wall goes to the bottom.
+    if rotated_my > 0:
+        rot_deg += 180.0
+
+    # Normalize angle into (-180, 180]
+    rot_deg = ((rot_deg + 180.0) % 360.0) - 180.0
+
+    return rot_deg
+
+def extract_walls_mm(data: dict):
     walls = data.get("walls") or []
-    # walls = (data.get("room_measurements") or {}).get("walls") or []
-    rotation_deg = float(data.get("rotation", 0.0))
+    windows = data.get("windows") or []
+    doors = data.get("doors") or []
 
-    plan: List[Seg2D] = []
-    walls3d: List[Wall3D] = []
+    plan = []
+    walls3d = []
 
     for w in walls:
         sx, sy, sz = w.get("start", [0.0, 0.0, 0.0])
         ex, ey, ez = w.get("end", [0.0, 0.0, 0.0])
         h_m = float(w.get("height", 0.0))
+        id = w.get("id", "")
 
         # Map JSON (x, z) -> DXF (X, Y). Ignore JSON Y.
         x1 = float(sx) * 1000.0
@@ -66,16 +167,46 @@ def extract_walls_mm(data: dict) -> Tuple[List[Seg2D], List[Wall3D], float]:
         y2 = float(ez) * 1000.0
         h_mm = h_m * 1000.0
 
-        plan.append((x1, y1, x2, y2))
-        walls3d.append((x1, y1, x2, y2, h_mm))
+        plan.append((x1, y1, x2, y2, id))
+        walls3d.append((x1, y1, x2, y2, h_mm, id))
 
-    return plan, walls3d, rotation_deg
+    extracted_windows = []
+    extracted_doors = []
+    for w in windows:
+        # print(w)
+        # print()
+        height = w.get("height", 0)
+        start = [i*1000 for i in w.get("start", [0, 0, 0])]
+        end = [i*1000 for i in w.get("end", [0, 0, 0])]
+        wall = w.get("wallId", "")
+        width = w.get("width", 0)
+
+        extracted_windows.append({"height": height, "start": start, "end": end, "wall": wall, "width":width})
+    # print()
+    for d in doors:
+        # print(d)
+        # print()
+        wall = d.get("wallId", "")
+        height = d.get("height", 0)*1000
+        width = d.get("width", 0)*1000
+        start = [i*1000 for i in d.get("start", [0, 0, 0])]
+        end = [i*1000 for i in d.get("end", [0, 0, 0])]
+
+        # height = d.get("height", 0)
+        # width = d.get("width", 0)
+        # start = d.get("start", [0, 0, 0])
+        # end = d.get("end", [0, 0, 0])
+
+        extracted_doors.append({"height": height, "start": start, "end": end, "wall": wall, "width":width})
+
+    # print(extracted_doors)
+    return plan, walls3d, extracted_windows, extracted_doors
 
 
 def centroid_xy(plan_segments: List[Seg2D]) -> Tuple[float, float]:
     xs: List[float] = []
     ys: List[float] = []
-    for x1, y1, x2, y2 in plan_segments:
+    for x1, y1, x2, y2, id in plan_segments:
         xs.extend([x1, x2])
         ys.extend([y1, y2])
     if not xs:
@@ -92,47 +223,84 @@ def rotate_xy(x: float, y: float, cx: float, cy: float, theta_deg: float) -> Tup
     return rx, ry
 
 
-def apply_rotation(plan_segments: List[Seg2D], walls3d: List[Wall3D], rot_deg: float) -> Tuple[List[Seg2D], List[Wall3D]]:
+def apply_rotation(plan_segments, walls3d, windows, doors, rot_deg: float):
     if abs(rot_deg) < 1e-12:
-        return list(plan_segments), list(walls3d)
+        return list(plan_segments), list(walls3d), list(doors), list(windows)
     cx, cy = centroid_xy(plan_segments)
 
-    plan_rot: List[Seg2D] = []
-    for x1, y1, x2, y2 in plan_segments:
+    plan_rot = []
+    for x1, y1, x2, y2, id in plan_segments:
         rx1, ry1 = rotate_xy(x1, y1, cx, cy, rot_deg)
         rx2, ry2 = rotate_xy(x2, y2, cx, cy, rot_deg)
-        plan_rot.append((rx1, ry1, rx2, ry2))
+        plan_rot.append((rx1, ry1, rx2, ry2, id))
 
-    walls_rot: List[Wall3D] = []
-    for x1, y1, x2, y2, h in walls3d:
+    walls_rot = []
+    for x1, y1, x2, y2, h, id in walls3d:
         rx1, ry1 = rotate_xy(x1, y1, cx, cy, rot_deg)
         rx2, ry2 = rotate_xy(x2, y2, cx, cy, rot_deg)
-        walls_rot.append((rx1, ry1, rx2, ry2, h))
+        walls_rot.append((rx1, ry1, rx2, ry2, h, id))
 
-    return plan_rot, walls_rot
+    windows_rot = []
+    for w in windows:
+        rx1, ry1 = rotate_xy(w["start"][0], w["start"][2], cx, cy, rot_deg)
+        rx2, ry2 = rotate_xy(w["end"][0], w["end"][2], cx, cy, rot_deg)
+        windows_rot.append({"height": w["height"], "start": [rx1, w["start"][1], ry1], "end": [rx2, w["end"][1], ry2], "wall": w["wall"], "width":w["width"]})
+
+    doors_rot = []
+    for d in doors:
+        # print("center = ", cx, cy)
+        # print("rotation = ", rot_deg)
+        # print("pre: ", d["start"][0], d["start"][2])
+        # print("pre: ", d["end"][0], d["end"][2])
+        rx1, ry1 = rotate_xy(d["start"][0], d["start"][2], cx, cy, rot_deg)
+        # print("post: ", rx1, ry1)
+        rx2, ry2 = rotate_xy(d["end"][0], d["end"][2], cx, cy, rot_deg)
+        # print("post: ", rx2, ry2)
+        # print()
+        doors_rot.append({"height": d["height"], "start": [rx1, d["start"][1], ry1], "end": [rx2, d["end"][1], ry2], "wall": d["wall"], "width":d["width"]})
+
+    return plan_rot, walls_rot, windows_rot, doors_rot
 
 
-def flip_horizontal(plan_segments: List[Seg2D], walls3d: List[Wall3D]) -> Tuple[List[Seg2D], List[Wall3D]]:
+def flip_horizontal(plan_segments, walls3d, windows, doors):
     """Mirror across the vertical axis through centroid X (y-axis at center x)."""
     cx, cy = centroid_xy(plan_segments)
-    plan_flipped: List[Seg2D] = []
-    for x1, y1, x2, y2 in plan_segments:
+    plan_flipped = []
+    for x1, y1, x2, y2, id in plan_segments:
         fx1 = 2 * cx - x1
         fx2 = 2 * cx - x2
-        plan_flipped.append((fx1, y1, fx2, y2))
+        plan_flipped.append((fx1, y1, fx2, y2, id))
 
-    walls_flipped: List[Wall3D] = []
-    for x1, y1, x2, y2, h in walls3d:
+    walls_flipped = []
+    for x1, y1, x2, y2, h, id in walls3d:
         fx1 = 2 * cx - x1
         fx2 = 2 * cx - x2
-        walls_flipped.append((fx1, y1, fx2, y2, h))
+        walls_flipped.append((fx1, y1, fx2, y2, h, id))
 
-    return plan_flipped, walls_flipped
+    windows_flipped = []
+    for w in windows:
+        fx1 = 2 * cx - w["start"][0]
+        fx2 = 2 * cx - w["end"][0]
+        windows_flipped.append({"height": w["height"], "start": [fx1, w["start"][1], w["start"][2]], "end": [fx2, w["end"][1], w["end"][2]], "wall": w["wall"], "width":w["width"]})
+
+    doors_flipped = []
+    for d in doors:
+        fx1 = 2 * cx - d["start"][0]
+        fx2 = 2 * cx - d["end"][0]
+        # print("center = ", cx, cy)
+        # print("pre: ", d["start"][0], d["start"][2])
+        # print("pre: ", d["end"][0], d["end"][2])
+        # print("post: ", fx1, d["start"][2])
+        # print("post: ", fx2, d["end"][2])
+        # print()
+        doors_flipped.append({"height": d["height"], "start": [fx1, d["start"][1], d["start"][2]], "end": [fx2, d["end"][1], d["end"][2]], "wall": d["wall"], "width":d["width"]})
+
+    return plan_flipped, walls_flipped, windows_flipped, doors_flipped
 
 
 # ------------------ Outer Perimeter Corners ------------------
 def unique_points_with_buffer(
-    plan_segments: List[Seg2D],
+    plan_segments,
     buffer_mm: float = 100.0,
     rounding: int = 3,
 ) -> Dict[Tuple[float, float], int]:
@@ -142,7 +310,7 @@ def unique_points_with_buffer(
     """
     # Collect all endpoints
     pts: List[Tuple[float, float]] = []
-    for x1, y1, x2, y2 in plan_segments:
+    for x1, y1, x2, y2, id in plan_segments:
         pts.append((float(x1), float(y1)))
         pts.append((float(x2), float(y2)))
 
@@ -205,7 +373,7 @@ def unique_points_with_buffer(
     return result
 
 def ring_order_from_points(
-    plan_segments: List[Seg2D],
+    plan_segments,
     corners: List[Pt],               # your list of points with count>=2 (clustered at 100mm)
     assign_thresh_mm: float = 100.0, # must match how you clustered
     prefer: str = "cw",              # "cw" or "ccw" walk
@@ -239,7 +407,7 @@ def ring_order_from_points(
         return best_i  # -1 if nothing within threshold
 
     nbrs: Dict[int, set] = {i: set() for i in range(nC)}
-    for x1, y1, x2, y2 in plan_segments:
+    for x1, y1, x2, y2, id in plan_segments:
         a = nearest_corner_id(x1, y1)
         b = nearest_corner_id(x2, y2)
         if a == -1 or b == -1 or a == b:
@@ -436,18 +604,22 @@ def main() -> None:
     ap.add_argument("--no-flip", action="store_true", help="Disable the horizontal flip across centroid X.")
     args = ap.parse_args()
 
+    # print("HERE")
     # json_file = Path(args.json_path)
     # if not json_file.exists():
     #     raise SystemExit(f"JSON not found: {json_file}")
 
-    # data = load_json(json_file)
     data = json.loads(args.json_path)
-    plan_mm, walls3d_mm, rot_deg = extract_walls_mm(data)
-    plan_rot, walls3d_rot = apply_rotation(plan_mm, walls3d_mm, rot_deg)
+
+    rot_deg = compute_rotation_angle_from_measurements_json(data)
+    # print(data)
+    plan_mm, walls3d_mm, windows, doors = extract_walls_mm(data)
+    plan_rot, walls3d_rot, windows_rot, doors_rot  = apply_rotation(plan_mm, walls3d_mm, windows, doors, rot_deg)
     if args.no_flip:
-        plan_final, walls3d_final = plan_rot, walls3d_rot
+        plan_final, walls3d_final, windows_fin, doors_fin = plan_rot, walls3d_rot, windows_rot, doors_rot
     else:
-        plan_final, walls3d_final = flip_horizontal(plan_rot, walls3d_rot)
+        plan_final, walls3d_final, windows_fin, doors_fin = flip_horizontal(plan_rot, walls3d_rot, windows_rot, doors_rot)
+    # plan_final, walls3d_final, windows_fin, doors_fin = plan_rot, walls3d_rot, windows_rot, doors_rot
 
     # corners in CCW from final plan (after rotation + optional flip)
     all_points = unique_points_with_buffer(plan_final)
@@ -455,18 +627,48 @@ def main() -> None:
     # out_path = json_file.with_name(json_file.stem + "_walls_mm.dxf")
     # write_dxf(plan_final, walls3d_final, out_path)
 
-    # print(plan_final)
     for i in plan_final:
-        print(i[0], i[1], i[2], i[3])
+        print(i[4], i[0], i[1], i[2], i[3])
     print()
     for i in walls3d_final:
-        print(i[0], i[1], i[2], i[3], i[4])
+        print(i[5], i[0], i[1], i[2], i[3], i[4])
+    print()
+    for i in windows_fin:
+        temp = []
+        for j in i["start"]:
+            temp.append(round(j, 3))
+        i["start"] = temp
+        temp = []
+        for j in i["end"]:
+            temp.append(round(j, 3))
+        i["end"] = temp
+        print(i)
+    print()
+    for i in doors_fin:
+        temp = []
+        for j in i["start"]:
+            temp.append(round(j, 3))
+        i["start"] = temp
+        temp = []
+        for j in i["end"]:
+            temp.append(round(j, 3))
+        i["end"] = temp
+        print(i)
+    print()
+    print(data["mainDoorWallId"])
+    print()
+    #---RASHEEQUE--EDITED--11-12-2025
+    # CHANGE: Output rotation angle to stdout for CV_Controller to capture
+    # - rot_deg is calculated by compute_rotation_angle_from_measurements_json()
+    # - Makes main door wall horizontal at bottom of floor plan
+    # - CV_Controller parses this value to adjust hatch pattern angles accordingly
+    print(rot_deg)
     print()
     corners = [pt for pt, cnt in all_points.items() if cnt > 1]
 
     ordered = ring_order_from_points(plan_final, corners, assign_thresh_mm=100.0, prefer="cw")
-    cleaned_points = remove_nearly_straight_vertices(ordered, tol_deg=2.0)
-    for p in cleaned_points:
+    # cleaned_points = remove_nearly_straight_vertices(ordered, tol_deg=2.0)
+    for p in ordered:
         print(p[0], p[1])
 
 if __name__ == "__main__":

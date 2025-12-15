@@ -23,14 +23,19 @@ from werkzeug.utils import secure_filename
 import ezdxf
 from enhanced_dxf_to_json import dxf_to_json, json_to_dxf
 from ai_fixture_mover import AIFixtureMover
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
-app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable static file caching in development
 
 # Ensure folders exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -40,7 +45,9 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 session_storage = {}
 
 # Gemini AI configuration
-GEMINI_API_KEY = "AIzaSyDYivSaB99eiXW__eYF_WprJsa8qCZGQ2M"
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+if not GEMINI_API_KEY:
+    print("⚠️  WARNING: GEMINI_API_KEY not found in environment variables")
 
 
 @app.route('/')
@@ -53,6 +60,12 @@ def index():
 def canvas():
     """Canvas editor page"""
     return render_template('canvas.html')
+
+
+@app.route('/canvas-preview')
+def canvas_preview():
+    """Canvas preview page (read-only, optimized for selection modal)"""
+    return render_template('canvas_preview.html')
 
 
 @app.route('/upload-from-url', methods=['POST'])
@@ -1114,6 +1127,11 @@ def generate_with_ai():
             for f in all_fixtures  # Send ALL fixtures, not just [:20]
         ]
         
+        # 🔍 DEBUG: Log first 5 fixture positions to understand coordinate system
+        print(f"\n📍 DEBUG: First 5 fixture positions being sent to Gemini:")
+        for i, f in enumerate(all_fixtures[:5]):
+            print(f"   {i+1}. {f['name']}: position={f['position']}, rotation={f.get('rotation', 0)}°")
+        
         # Check if this is a rearrangement command (user selected multiple fixtures + rearrange keywords)
         is_rearrangement = ('rearrange' in user_prompt.lower() or 'organize' in user_prompt.lower() or 
                            'layout' in user_prompt.lower() or 'architect' in user_prompt.lower()) and len(selected_fixture_names) > 1
@@ -1255,41 +1273,78 @@ Available fixtures in the DXF file (with current positions):
 User's Command:
 {user_prompt}
 
-IMPORTANT Instructions:
-1. Commands can be: MOVE, COPY, DELETE, ROTATE, or REARRANGE multiple fixtures
-2. When the command includes "to position (X, Y)" - use those EXACT coordinates as new_position
-3. When the command says "500mm right" - add 500 to the X coordinate
-4. When the command says "500mm left" - subtract 500 from the X coordinate  
-5. When the command says "500mm up" - add 500 to the Y coordinate
-6. When the command says "500mm down" - subtract 500 from the Y coordinate
-7. For ROTATE: Extract rotation angle in degrees (e.g., "rotate 90 degrees", "rotate by 45")
-8. For REARRANGE: YOU MUST move ALL fixtures listed in "Selected fixtures:" line
-   - Parse the comma-separated fixture names from the first line
-   - Create ONE move operation for EACH fixture name in that list
-   - Find their current positions from the fixtures list above
-   - Calculate non-overlapping new positions
-9. ALWAYS include original_position from the fixtures list above
+🚨 CRITICAL COORDINATE RULES - YOU MUST FOLLOW EXACTLY:
 
-Output JSON format (REQUIRED):
+1. **EXACT POSITION COMMANDS** (Highest Priority):
+   - When prompt says "to position (X, Y)" → USE THOSE EXACT NUMBERS as new_position
+   - DO NOT calculate or modify these coordinates
+   - DO NOT apply any transformations
+   - Example: "to position (-6183.8, -1019.6)" → new_position: [-6183.8, -1019.6]
+   
+2. **RELATIVE MOVEMENT COMMANDS**:
+   - "500mm right" → add 500 to original X coordinate
+   - "500mm left" → subtract 500 from original X
+   - "500mm up" → add 500 to original Y coordinate  
+   - "500mm down" → subtract 500 from original Y
+
+3. **ROTATION HANDLING**:
+   - For ROTATION ONLY: use operation "rotate" with "rotation": X field
+   - For MOVE WITH ROTATION: use operation "move" with BOTH "new_position" AND "rotation": X
+   - If command says "rotate FIXTURE_X to Y degrees" → operation: "rotate", rotation: Y
+   - If command says "move FIXTURE_X ... with rotation Y°" → operation: "move", new_position: [...], rotation: Y
+
+4. **MULTI-FIXTURE OPERATIONS**:
+   - COPY: Create duplicate with new position
+   - DELETE: No new_position needed
+   - REARRANGE: Move ALL fixtures in "Selected fixtures:" list
+
+5. **POSITION EXTRACTION** (Most Important):
+   - Search prompt text for "to position (" followed by numbers
+   - Extract those EXACT numbers: regex pattern `to position \(([^,]+), ([^)]+)\)`
+   - Use extracted values WITHOUT modification
+   
+6. **ALWAYS include**:
+   - original_position from fixtures list above
+   - new_position EXACTLY as specified in prompt
+   - rotation field if mentioned in prompt
+
+Output JSON format (REQUIRED - Follow EXACTLY):
 {{
   "fixtures": [
     {{
       "block_name": "EXACT_FIXTURE_NAME_FROM_LIST",
-      "operation": "move|copy|delete|rotate",
-      "original_position": [current_x, current_y],
-      "new_position": [new_x, new_y],
-      "rotation": 90  // Only for rotate operation, angle in degrees
+      "operation": "move|copy|delete",
+      "original_position": [current_x_from_fixtures_list, current_y_from_fixtures_list],
+      "new_position": [EXACT_X_FROM_PROMPT, EXACT_Y_FROM_PROMPT],
+      "rotation": 90.5  // OPTIONAL: Include if prompt says "with rotation"
     }}
   ]
 }}
 
-Examples:
-- "Move X to position (1500, 2000)" = operation: "move", new_position: [1500, 2000]
-- "Copy X 500mm right" = operation: "copy", calculate new_position from original + 500 in X
-- "Delete X" = operation: "delete", no new_position needed
-- "Rotate X 90 degrees" = operation: "rotate", rotation: 90, keep same position
-- "Rearrange VC_FIXTURE_1, VC_FIXTURE_2, VC_FIXTURE_3 like an architect" = 
-  Generate multiple move operations with intelligent positioning
+CRITICAL: 
+- For "Move X to position (A, B)": new_position MUST be [A, B] exactly
+- Do NOT round, do NOT modify, do NOT calculate - USE EXACT VALUES
+- If prompt says "with rotation 42.1°": add "rotation": 42.1
+
+Examples (EXACT coordinate extraction):
+
+1. Prompt: "Move EURO_CENTRE_8 697mm right and 87mm down to position (-6183.8, -1019.6) with rotation 42.1°"
+   Output: {{
+     "block_name": "EURO_CENTRE_8",
+     "operation": "move", 
+     "original_position": [-6880.5, -932.6],  // from fixtures list
+     "new_position": [-6183.8, -1019.6],      // EXACT from "to position (...)"
+     "rotation": 42.1                          // from "with rotation..."
+   }}
+
+2. Prompt: "Move X to position (1500.5, 2000.3)"
+   Output: {{"block_name": "X", "operation": "move", "new_position": [1500.5, 2000.3]}}
+
+3. Prompt: "Copy X 500mm right" (X is at [1000, 2000])
+   Output: {{"block_name": "X", "operation": "copy", "original_position": [1000, 2000], "new_position": [1500, 2000]}}
+
+4. Prompt: "Delete X"
+   Output: {{"block_name": "X", "operation": "delete"}}  // No new_position needed
 
 CRITICAL FOR REARRANGEMENT:
 - The user selected these specific fixtures (listed in "Selected fixtures:" line)
@@ -1469,10 +1524,16 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
         }
         for fixture in modifications.get('fixtures', []):
             op = fixture.get('operation', 'move').lower()
+            has_rotation = fixture.get('rotation') is not None
+            
             if op == 'move':
                 operations_count['moved'] += 1
+                if has_rotation:
+                    operations_count['rotated'] += 1
             elif op == 'copy':
                 operations_count['copied'] += 1
+                if has_rotation:
+                    operations_count['rotated'] += 1
             elif op == 'delete':
                 operations_count['deleted'] += 1
             elif op == 'rotate':
@@ -1719,8 +1780,10 @@ def apply_ai_modifications(session_id, modifications):
                 ]
             
         elif operation == 'copy':
-            # Find original fixture and create a copy
+            # Find original fixture and create a copy (with optional rotation)
             source_entity = None
+            rotation_angle = mod.get('rotation', None)  # Get rotation if specified
+            
             for entity in msp:
                 if entity.dxftype() == 'INSERT' and entity.dxf.name == block_name:
                     if orig_pos and len(orig_pos) >= 2:
@@ -1735,7 +1798,10 @@ def apply_ai_modifications(session_id, modifications):
                         break
             
             if source_entity and new_pos and len(new_pos) >= 2:
-                # Create a copy with new position
+                # Use specified rotation if provided, otherwise use source rotation
+                copy_rotation = rotation_angle if rotation_angle is not None else source_entity.dxf.rotation
+                
+                # Create a copy with new position and rotation
                 new_entity = msp.add_blockref(
                     block_name,
                     (new_pos[0], new_pos[1], source_entity.dxf.insert.z),
@@ -1744,11 +1810,12 @@ def apply_ai_modifications(session_id, modifications):
                         'xscale': source_entity.dxf.xscale,
                         'yscale': source_entity.dxf.yscale,
                         'zscale': source_entity.dxf.zscale,
-                        'rotation': source_entity.dxf.rotation,
+                        'rotation': copy_rotation,
                     }
                 )
                 changes_made += 1
-                print(f"      ✅ Copied {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
+                rotation_msg = f" with rotation {rotation_angle}°" if rotation_angle is not None else ""
+                print(f"      ✅ Copied {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f}){rotation_msg}")
                 
                 # Also add to JSON data for canvas update
                 for e in json_data.get('modelspace', []):
@@ -1759,6 +1826,8 @@ def apply_ai_modifications(session_id, modifications):
                                 # Found source, create copy in JSON
                                 new_json_entity = e.copy()
                                 new_json_entity['insert'] = [new_pos[0], new_pos[1], pos[2] if len(pos) > 2 else 0]
+                                if rotation_angle is not None:
+                                    new_json_entity['rotation'] = rotation_angle
                                 json_data.get('modelspace', []).append(new_json_entity)
                                 break
             elif not source_entity:
@@ -1767,16 +1836,28 @@ def apply_ai_modifications(session_id, modifications):
                 print(f"      ⚠️  No target position provided for {block_name}")
             
         elif operation == 'move':
-            # Update position of existing fixture
+            # Update position of existing fixture (and rotation if specified)
+            matched = False
+            rotation_angle = mod.get('rotation', None)  # Get rotation if specified
+            
             for entity in msp:
                 if entity.dxftype() == 'INSERT' and entity.dxf.name == block_name:
                     if orig_pos and len(orig_pos) >= 2 and new_pos and len(new_pos) >= 2:
                         # Match by position
                         pos = entity.dxf.insert
+                        print(f"      🔍 Checking {block_name}: DXF pos ({pos.x:.2f}, {pos.y:.2f}) vs requested orig ({orig_pos[0]:.2f}, {orig_pos[1]:.2f})")
                         if abs(pos.x - orig_pos[0]) < 0.1 and abs(pos.y - orig_pos[1]) < 0.1:
                             entity.dxf.insert = (new_pos[0], new_pos[1], pos.z)
+                            
+                            # Apply rotation if specified
+                            if rotation_angle is not None:
+                                entity.dxf.rotation = rotation_angle
+                                print(f"      🔄 Setting rotation to {rotation_angle}°")
+                            
                             changes_made += 1
-                            print(f"      ✅ Moved {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
+                            matched = True
+                            rotation_msg = f" with rotation {rotation_angle}°" if rotation_angle is not None else ""
+                            print(f"      ✅ Moved {block_name} from ({pos.x:.1f}, {pos.y:.1f}) to ({new_pos[0]:.1f}, {new_pos[1]:.1f}){rotation_msg}")
                             
                             # Also update in JSON data for canvas update
                             for e in json_data.get('modelspace', []):
@@ -1784,25 +1865,13 @@ def apply_ai_modifications(session_id, modifications):
                                     e_pos = e.get('insert', [0, 0, 0])
                                     if abs(e_pos[0] - orig_pos[0]) < 0.1 and abs(e_pos[1] - orig_pos[1]) < 0.1:
                                         e['insert'] = [new_pos[0], new_pos[1], e_pos[2] if len(e_pos) > 2 else 0]
+                                        if rotation_angle is not None:
+                                            e['rotation'] = rotation_angle
                                         break
                             break
-                    elif new_pos and len(new_pos) >= 2:
-                        # Move first instance if no position specified
-                        pos = entity.dxf.insert
-                        entity.dxf.insert = (new_pos[0], new_pos[1], pos.z)
-                        changes_made += 1
-                        print(f"      ✅ Moved {block_name} to ({new_pos[0]:.1f}, {new_pos[1]:.1f})")
-                        
-                        # Also update in JSON data
-                        for e in json_data.get('modelspace', []):
-                            if e.get('dxf_type') == 'INSERT' and e.get('name') == block_name:
-                                e_pos = e.get('insert', [0, 0, 0])
-                                e['insert'] = [new_pos[0], new_pos[1], e_pos[2] if len(e_pos) > 2 else 0]
-                                break
-                        break
-                    else:
-                        print(f"      ⚠️  Invalid position data for {block_name}")
-                        break
+            
+            if not matched:
+                print(f"      ❌ Failed to find {block_name} at position ({orig_pos[0]:.2f}, {orig_pos[1]:.2f}) in DXF!")
         
         elif operation == 'rotate':
             # Rotate fixture by specified angle
@@ -2099,4 +2168,6 @@ Features:
 Press Ctrl+C to stop the server
 """)
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Use environment variable for debug mode
+    debug_mode = os.getenv('DEBUG', 'False').lower() == 'true'
+    app.run(debug=debug_mode, host='0.0.0.0', port=5000)

@@ -6,8 +6,6 @@ import tempfile
 import sys
 import os
 import uuid
-import time
-import shutil
 from typing import List, Optional, Any
 import importlib.util
 import traceback
@@ -556,14 +554,23 @@ def upload_project_with_merchmix(
         return 400, {"message": str(e)}
     
     
+# ================= NEW SCHEMAS FOR MULTI-FILE RESPONSE =================
+class ProcessedFileInfo(Schema):
+    processed_file_id: uuid.UUID
+    dxf_url: str
+
+class ProcessedFloorplanListResponse(Schema):
+    message: str
+    processed_files: List[ProcessedFileInfo]
+    project_name: str
+# ======================================================================
 
 class ProcessedFloorplanResponse(Schema):
     message: str
     processed_file_id: uuid.UUID
-    dxf_url: str = None  # Optional field for direct media access
 
 
-@api.post("/process-floorplan/{file_id}/", response={200: ProcessedFloorplanResponse, 400: ErrorSchema, 404: ErrorSchema})
+@api.post("/process-floorplan/{file_id}/", response={200: ProcessedFloorplanListResponse, 400: ErrorSchema, 404: ErrorSchema})
 def process_floorplan(request, file_id: uuid.UUID):
     """Process an image into a FreeCAD floorplan"""
     
@@ -736,129 +743,158 @@ def process_floorplan(request, file_id: uuid.UUID):
             dxfc.create_floorplan()
             dxfc.cvc.get_metadata()
             dxfc.cvc.reorder_bot_left()
-            DRAW_SEPARATOR_LINE = True 
+            DRAW_SEPARATOR_LINE = True
 
-            # 4. NEW: Call the single setup and calculation function
+            # # 4. NEW: Call the single setup and calculation function
             dxfc.merch_mix_cal(merch_mix_data, static_fixtures) # type: ignore
 
-            # --- PLACEMENT PHASE ---
-            all_placed_bboxes = dxfc.get_existing_nonwall_bboxes()
+            # # --- PLACEMENT PHASE ---
+            dxfc.get_existing_nonwall_bboxes()
             floor_area = dxfc.calculate_area_sqft()
             orientation = dxfc.cvc.orientation
             Primary = "right"
             print("Primary side for the floorplan is ", Primary)
 
 
-            if orientation == 'landscape':
+            if orientation == 'SS':
                 print("--- Applying LANDSCAPE placement strategy---")
                 # dxfc.place_clinics_perimeter_walk(all_placed_bboxes)
                 # dxfc.place_boh_intelligently(all_placed_bboxes)
                 # dxfc.place_boh_preset(all_placed_bboxes)
-                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
-                dxfc.place_boh_fixtures(all_placed_bboxes)
-                dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
-                dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
-                dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
-                remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
-                if remaining_tables:
-                    dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
-                dxfc.place_corian_table_set_landscape(all_placed_bboxes)
-                dxfc.place_standing_tables_landscape(all_placed_bboxes)
-                dxfc.place_blue_zero_landscape(all_placed_bboxes)
-                dxfc.place_pos_ar_landscape(all_placed_bboxes)
-                dxfc.place_qms_at_entrance(all_placed_bboxes)
-                dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
+                # dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
+                # dxfc.place_boh_fixtures(all_placed_bboxes)
+                # dxfc.place_wall_fixtures_perimeter_until_boh(all_placed_bboxes)
+                # dxfc.place_benches_near_clinics_with_multiple_strategies(all_placed_bboxes)
+                # dxfc.place_fixtures_iteratively_with_dynamic_stacks(all_placed_bboxes)
+                # remaining_tables = dxfc.place_discussion_tables_landscape(all_placed_bboxes)
+                # if remaining_tables:
+                #     dxfc.place_remaining_tables_in_aisles(remaining_tables, all_placed_bboxes)
+                # dxfc.place_corian_table_set_landscape(all_placed_bboxes)
+                # dxfc.place_standing_tables_landscape(all_placed_bboxes)
+                # dxfc.place_blue_zero_landscape(all_placed_bboxes)
+                # dxfc.place_pos_ar_landscape(all_placed_bboxes)
+                # dxfc.place_qms_at_entrance(all_placed_bboxes)
+                # dxfc.place_sofas_dynamically_landscape(all_placed_bboxes)
 
             else: # Default to portrait
                 print("---Applying PORTRAIT placement strategy---")
                 # ***** ADD THE NEW FUNCTION CALL HERE *****
                 
+            #     back_room_location, partition_x = dxfc.detect_back_corner_room(debug=False)
+            #     print("Back room detected at location:", back_room_location, "with partition X at:", partition_x)
                 
-                dxfc.orchestrate_clinic_placement(all_placed_bboxes) 
-                
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.place_boh_fixtures(all_placed_bboxes)
+                res = dxfc.orchestrate_clinic_placement()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
 
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.draw_retail_separation_line(all_placed_bboxes, enabled=DRAW_SEPARATOR_LINE)
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
-                dxfc.place_benches_under_separation_line(all_placed_bboxes) 
-                # dxfc.place_ar_under_separation_line(all_placed_bboxes)
-                dxfc.place_qms_at_entrance_center(all_placed_bboxes)
-                dxfc.place_standing_tables(all_placed_bboxes)
-                # ------------------------------------
-                # ------------------------------------
+                dxfc.place_boh_fixtures()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                # dxfc.draw_retail_separation_line(enabled=DRAW_SEPARATOR_LINE)
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                dxfc.draw_back_wall()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                dxfc.place_benches_3()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                # dxfc._get_accurate_obstacle_bboxes(include_all=True)
+
+                #---RASHEEQUE--EDIT
+                # (This call replaces the old one)
+                dxfc.plan_and_place_standing_tables(debug=False) # Set debug=True to see the zone
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                #---RASHEEQUE--EDIT---END---
+
+                
                 # --- Orchestrate wall fixtures ---
-                remaining_wall_fixtures, display_calcs = dxfc.plan_and_place_wall_fixtures(
-                    all_placed_bboxes=all_placed_bboxes,
+                dxfc.plan_and_place_wall_fixtures(
                     primary_side=Primary,
                     draw_debug=False  # Set to False to hide debug drawings
                 )
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
 
+                
                 # --- Orchestrate Euro Center fixtures ---
                 dxfc.plan_and_place_euro_fixtures(
-                    all_placed_bboxes=all_placed_bboxes,
-                    remaining_wall_fixtures=remaining_wall_fixtures,
-                    display_calcs=display_calcs,
-                    draw_debug=False # Set to False to hide debug drawings
+                    draw_debug=False  # Set to False to hide debug drawings
                 )
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 
-                all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_qms_at_entrance_center()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
                 
-                dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
-                dxfc.place_corian_table_set(all_placed_bboxes)
+                # dxfc.place_discussion_tables_attached_to_euros(all_placed_bboxes)
+                # dxfc.place_corian_table_set()
                 # dxfc.place_pos_ar_portrait_dynamically(all_placed_bboxes)
                 all_placed_bboxes = dxfc._get_accurate_obstacle_bboxes(include_all=True)    
                 # dxfc.place_sofas_above_screen_ar(all_placed_bboxes, bottom_margin_pct=euro_bottom_margin, gap_above_ar=200)
-                dxfc.place_Blue_Zero_attached(all_placed_bboxes)
-                dxfc.place_tv_screens(all_placed_bboxes, primary_side=Primary)
+                dxfc.place_Blue_Zero_attached()
+                dxfc._get_accurate_obstacle_bboxes(include_all=True)
+                dxfc.place_tv_screens_new(primary_side=Primary)
+                
 
             dxfc.place_door(Primary)
+            dxfc._get_accurate_obstacle_bboxes(include_all=True)
             dxfc.place_lensometer()
 
             # --- Save and close ---
             dxfc.close_plan()
-            
-            
-            # ==================== DXF PROCESSING STARTS HERE ============================
 
 
-            # ==================== DXF PROCESSING ENDS HERE ============================
+            # ==================== NEW: DXF PROCESSING LOGIC FOR MULTIPLE FILES ============================
+            
+            processed_files_data = []
 
-            # Create a new ProjectFile for the processed DXF file
-            processed_filename = f"{os.path.splitext(project_file.filename)[0]}_processed.dxf"
-            
-            # Check if DXF file was generated
-            if not os.path.exists(final_export_dxf_path):
-                logger.error(f"Final DXF file not found: {final_export_dxf_path}")
-                return 400, {"message": f"Final DXF file not found: {final_export_dxf_path}"}
-            
-            # Copy DXF to media directory for direct access
-            media_dxf_dir = os.path.join(settings.MEDIA_ROOT, 'generated_dxf')
-            os.makedirs(media_dxf_dir, exist_ok=True)
-            
-            # Generate unique filename
-            unique_filename = f"{consistent_project_name}_{int(time.time())}.dxf"
-            media_dxf_path = os.path.join(media_dxf_dir, unique_filename)
-            
-            # Copy file to media directory
-            shutil.copy2(final_export_dxf_path, media_dxf_path)
-            print(f"✅ DXF copied to media directory: {media_dxf_path}")
-            
-            # Create relative path for URL
-            relative_path = os.path.join('generated_dxf', unique_filename)
-            
-            # Return success response with direct file path
-            # Generate a dummy UUID for schema compatibility (file is accessed via dxf_url directly)
-            dummy_id = uuid.uuid4()
-            
+            # Loop through the document objects generated by the DXF_Controller
+            for i, doc in enumerate(dxfc.docs):
+                source_dxf_path = doc.final_name
+                
+                # Safety check to ensure the file exists before we try to process it
+                if not os.path.exists(source_dxf_path):
+                    logger.warning(f"DXF Controller reported file '{source_dxf_path}' but it was not found on disk. Skipping.")
+                    continue
+                
+                logger.info(f"Processing generated file: {source_dxf_path}")
+                
+                try:
+                    # Open the generated DXF file and save it as a new ProjectFile
+                    with open(source_dxf_path, 'rb') as f:
+                        processed_filename = f"{os.path.splitext(project_file.filename)[0]}_processed_plan_{i+1}.dxf"
+                        
+                        django_file = DjangoFile(f, name=processed_filename)
+                        
+                        processed_project_file = ProjectFile.objects.create(
+                            project=project_file.project,
+                            file=django_file
+                        )
+                        
+                        logger.info(f"Created processed file in DB with ID: {processed_project_file.id}")
+                        
+                        processed_files_data.append({
+                            "processed_file_id": processed_project_file.id,
+                            "dxf_url": processed_project_file.file.url
+                        })
+                
+                except Exception as e:
+                    logger.error(f"Failed to save processed file {source_dxf_path} to database: {str(e)}")
+                    continue
+
+            # ==================== END OF NEW DXF PROCESSING LOGIC ============================
+
+            # Check if any files were successfully processed and saved
+            if not processed_files_data:
+                logger.error(f"No valid DXF files were generated or saved for project {project.id}.")
+                return 400, {"message": "Floorplan processing ran but no valid output files were generated."}
+
+            # Return a success response containing the list of all processed files
             return 200, {
-                "message": "Floorplan processed successfully",
-                "processed_file_id": dummy_id,
-                "dxf_file_path": media_dxf_path,
-                "dxf_url": f"/media/{relative_path}",
+                "message": f"Floorplan processed successfully. {len(processed_files_data)} plans generated.",
+                "processed_files": processed_files_data,
                 "project_name": consistent_project_name
             }
+            
+            
 
         except Exception as e:
             logger.exception(f"Error during floorplan processing: {str(e)}")
