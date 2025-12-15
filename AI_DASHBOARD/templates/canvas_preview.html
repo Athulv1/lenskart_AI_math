@@ -239,7 +239,7 @@
                 // Start both operations in parallel
                 const imageLoadPromise = loadFixtureImages();
                 // Detect Flask server URL
-                const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === 'lenskart.thinkneural.ai'|| window.location.hostname === '13.201.224.32';
                 const flaskUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
                 const dxfFetchPromise = fetch(`${flaskUrl}/upload-from-url`, {
                     method: 'POST',
