@@ -404,6 +404,183 @@ button:disabled::before {
   content: '⚠️ ';
 }
 
+/* DXF Selection Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(10, 22, 40, 0.95);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: var(--arch-dark);
+  border: 1px solid var(--arch-border);
+  border-radius: 20px;
+  padding: 40px;
+  max-width: 1200px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-content h2 {
+  color: var(--arch-accent);
+  margin-bottom: 12px;
+  font-size: 1.8em;
+  text-align: center;
+}
+
+.modal-subtitle {
+  text-align: center;
+  color: var(--text-secondary);
+  margin-bottom: 32px;
+  font-size: 1.1em;
+}
+
+.dxf-options {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+@media (max-width: 768px) {
+  .dxf-options {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dxf-option {
+  background: rgba(30, 58, 95, 0.3);
+  border: 2px solid var(--arch-border);
+  border-radius: 16px;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dxf-option-preview {
+  width: 100%;
+  height: 350px;
+  background: rgba(10, 22, 40, 0.8);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+.dxf-option-preview iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  pointer-events: none;
+}
+
+.dxf-option::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(46, 212, 191, 0.1) 0%, transparent 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.dxf-option:hover {
+  border-color: var(--arch-accent);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(46, 212, 191, 0.2);
+}
+
+.dxf-option:hover::before {
+  opacity: 1;
+}
+
+.dxf-option-number {
+  font-size: 3em;
+  font-weight: 800;
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 16px;
+}
+
+.dxf-option-label {
+  color: var(--text-primary);
+  font-size: 1.2em;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.dxf-option-info {
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.secondary-btn {
+  background: rgba(100, 116, 139, 0.2);
+  color: var(--text-secondary);
+  border: 1px solid var(--arch-border);
+  padding: 14px 32px;
+  border-radius: 12px;
+  font-size: 1em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: block;
+  margin: 0 auto;
+  font-family: 'Sora', sans-serif;
+}
+
+.secondary-btn:hover {
+  background: rgba(100, 116, 139, 0.3);
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
 /* Links */
 a {
   color: var(--arch-accent);
@@ -580,8 +757,27 @@ button:disabled:hover::after {
     <div id="log-container" class="log"></div>
   </div>
 
+  <!-- Reopen Selection Button (shown after user selects a layout) -->
+  <div id="reopen-selection-container" class="card hidden">
+    <h3>📋 Layout Selection</h3>
+    <p style="margin: 16px 0;">You have selected a layout. Want to try a different one?</p>
+    <button id="reopen-selection-btn">🔄 Choose Different Layout</button>
+  </div>
+
   <!-- Results Card -->
   <div id="results" class="card hidden"></div>
+</div>
+
+<!-- DXF Selection Modal -->
+<div id="dxf-selection-modal" class="modal hidden">
+  <div class="modal-content">
+    <h2>🎨 Select Your Preferred Layout</h2>
+    <p class="modal-subtitle">4 DXF layouts have been generated. Click on your preferred option:</p>
+    <div id="dxf-options-container" class="dxf-options">
+      <!-- Options will be dynamically inserted here -->
+    </div>
+    <button id="close-modal-btn" class="secondary-btn">Cancel</button>
+  </div>
 </div>
 
 <!-- LLM Page (hidden by default) -->
@@ -635,6 +831,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentProject = null;
   let processableFileId = null;
   let generatedDxfPath = null; // Store the generated DXF file path from Math processing
+  let currentProcessedFiles = []; // Store all 4 DXF options for re-selection
 
   function logMessage(msg, type = "info") {
     const entry = document.createElement("div");
@@ -849,6 +1046,102 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Function to open AI Dashboard with selected DXF
+  function openAiDashboard(dxfUrl) {
+    logMessage("🔄 Step 2/2: Loading DXF to Flask App...", "info");
+    generateAiDashboardBtn.textContent = "🚀 Opening Dashboard...";
+    
+    // Detect environment and build appropriate URLs
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const djangoServerUrl = isLocal ? 'http://localhost:8001' : window.location.origin;
+    const flaskServerUrl = isLocal ? 'http://localhost:5000' : 'https://ai-dashboard.' + window.location.hostname.replace('www.', '');
+    
+    // Build URL with autoload parameter
+    let aiAppUrl = flaskServerUrl + '/canvas';
+    const fullPath = djangoServerUrl + dxfUrl;
+    aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
+    
+    console.log('🚀 Opening Flask canvas:', aiAppUrl);
+    console.log('📄 DXF URL:', fullPath);
+    
+    // Open Flask AI Dashboard with autoload
+    window.open(aiAppUrl, '_blank');
+    logMessage(`✅ AI Dashboard opened at ${aiAppUrl}`, "success");
+    logMessage("📎 DXF file will auto-load in canvas editor", "success");
+    
+    generateAiDashboardBtn.disabled = false;
+    generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
+  }
+
+  // Function to show DXF selection modal
+  function showDxfSelectionModal(processedFiles) {
+    const modal = document.getElementById('dxf-selection-modal');
+    const optionsContainer = document.getElementById('dxf-options-container');
+    const reopenContainer = document.getElementById('reopen-selection-container');
+    
+    // Store processed files globally for re-selection
+    currentProcessedFiles = processedFiles;
+    
+    // Clear previous options
+    optionsContainer.innerHTML = '';
+    
+    // Create option cards for each DXF file
+    processedFiles.forEach((file, index) => {
+      const optionCard = document.createElement('div');
+      optionCard.className = 'dxf-option';
+      
+      // Create preview iframe using dedicated preview page (no UI, just canvas)
+      // Detect environment and build appropriate URLs
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const djangoServerUrl = isLocal ? 'http://localhost:8001' : window.location.origin;
+      const flaskServerUrl = isLocal ? 'http://localhost:5000' : 'https://ai-dashboard.' + window.location.hostname.replace('www.', '');
+      const fullPath = djangoServerUrl + file.dxf_url;
+      const previewUrl = `${flaskServerUrl}/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
+      
+      optionCard.innerHTML = `
+        <div class="dxf-option-preview">
+          <iframe src="${previewUrl}" scrolling="no" title="Layout ${index + 1} Preview" loading="lazy"></iframe>
+        </div>
+        <div class="dxf-option-number">${index + 1}</div>
+        <div class="dxf-option-label">Layout Option ${index + 1}</div>
+        <div class="dxf-option-info">Click to select & edit</div>
+      `;
+      
+      // Add click handler to select this option
+      optionCard.addEventListener('click', () => {
+        logMessage(`✅ Selected Layout Option ${index + 1}`, "success");
+        modal.classList.add('hidden');
+        
+        // Show reopen button after selection
+        reopenContainer.classList.remove('hidden');
+        
+        openAiDashboard(file.dxf_url);
+      });
+      
+      optionsContainer.appendChild(optionCard);
+    });
+    
+    // Show modal
+    modal.classList.remove('hidden');
+  }
+
+  // Close modal button
+  document.getElementById('close-modal-btn').addEventListener('click', () => {
+    document.getElementById('dxf-selection-modal').classList.add('hidden');
+    generateAiDashboardBtn.disabled = false;
+    generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
+  });
+
+  // Reopen selection modal button
+  document.getElementById('reopen-selection-btn').addEventListener('click', () => {
+    if (currentProcessedFiles.length > 0) {
+      logMessage("🔄 Reopening layout selection...", "info");
+      showDxfSelectionModal(currentProcessedFiles);
+    } else {
+      logMessage("⚠️ No layouts available. Please generate new layouts.", "warning");
+    }
+  });
+
   // Combined button: Generate DXF + Open AI Dashboard
   generateAiDashboardBtn.addEventListener("click", async () => {
     if (!currentProject || !processableFileId) {
@@ -857,7 +1150,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Step 1: Generate DXF using Math Model
-    logMessage("🔄 Step 1/2: Generating DXF file...", "info");
+    logMessage("🔄 Step 1/2: Generating DXF layouts...", "info");
     generateAiDashboardBtn.disabled = true;
     generateAiDashboardBtn.textContent = "⏳ Generating DXF...";
     
@@ -873,34 +1166,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const data = await response.json();
       
-      // Check if we have a download_url (file was generated successfully)
-      // Even if response is not ok or success is false, if download_url exists, the DXF was generated
-      if (data.download_url) {
+      // Check if multiple files were generated (new format)
+      if (data.multiple_files && data.processed_files && data.processed_files.length > 0) {
+        logMessage(`✅ Generated ${data.processed_files.length} layout options!`, "success");
+        logMessage("🎨 Please select your preferred layout to continue...", "info");
+        
+        // Show selection modal
+        showDxfSelectionModal(data.processed_files);
+        
+      }
+      // Fallback: Single file format (backward compatibility)
+      else if (data.download_url) {
         generatedDxfPath = data.download_url;
         logMessage("✅ Successfully completed! Ready for AI enhancement", "success");
         logMessage(`📄 Generated DXF file path: ${data.download_url}`, "info");
         
-        // Step 2: Open AI Dashboard
-        logMessage("🔄 Step 2/2: Loading DXF to Flask App...", "info");
-        generateAiDashboardBtn.textContent = "🚀 Opening Dashboard...";
-        
-        // Build URL with autoload parameter
-        let aiAppUrl = API_CONFIG.BASE_URL + '/canvas';
-        const fullPath = window.location.origin + generatedDxfPath;
-        aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
-        
-        // Open Flask AI Dashboard with autoload
-        window.open(aiAppUrl, '_blank');
-        logMessage(`✅ AI Dashboard opened at ${API_CONFIG.BASE_URL}/canvas`, "success");
-        logMessage("📎 DXF file will auto-load in canvas editor", "success");
+        openAiDashboard(data.download_url);
         
       } else {
         logMessage(`❌ DXF generation failed: ${data.error || 'Unknown error'}`, "error");
+        generateAiDashboardBtn.disabled = false;
+        generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
       }
       
     } catch (error) {
       logMessage(`❌ Error: ${error.message}`, "error");
-    } finally {
       generateAiDashboardBtn.disabled = false;
       generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
     }
