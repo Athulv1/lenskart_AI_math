@@ -3,6 +3,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 import json
+import os
 
 def demo_page(request):
     """Serve the AI Project Demo frontend"""
@@ -20,7 +21,10 @@ def demo_projects_api(request):
         'Whitefield',
         'Kolanchery version 3',
         'Bedigeri ground floor',
-        'project 1'
+        'project 1',
+        'pizza hut',
+        'Bedigeri'
+
     ]
     
     projects = Project.objects.filter(name__in=ALLOWED_PROJECT_NAMES).prefetch_related('files')
@@ -85,8 +89,9 @@ def demo_process_api(request):
             except ProjectFile.DoesNotExist:
                 return JsonResponse({'error': 'Project file not found'}, status=404)
         
-        # Call the internal process API
-        process_url = f"http://localhost:8001/api/app1/process-floorplan/{file_id}/"
+        # Call the internal process API - use environment variable or build from request
+        django_url = os.getenv('DJANGO_SERVER_URL', request.build_absolute_uri('/').rstrip('/'))
+        process_url = f"{django_url}/api/app1/process-floorplan/{file_id}/"
         
         response = requests.post(process_url, headers={
             'Content-Type': 'application/json',
@@ -98,7 +103,22 @@ def demo_process_api(request):
             # DEBUG: Log the actual API response
             print(f"🔍 DEBUG: API response = {result}")
             
-            # Prioritize dxf_url (direct media access) over processed_file_id (download API)
+            # Check if multiple files were generated (new format)
+            processed_files = result.get('processed_files', [])
+            
+            if processed_files and len(processed_files) > 0:
+                # Multiple DXF files generated - return all for user selection
+                print(f"✅ Found {len(processed_files)} DXF files for user selection")
+                return JsonResponse({
+                    'success': True,
+                    'message': result.get('message'),
+                    'multiple_files': True,
+                    'processed_files': processed_files,  # Array of {processed_file_id, dxf_url}
+                    'processing_mode': processing_mode,
+                    'project_name': result.get('project_name')
+                })
+            
+            # Fallback: Single file format (backward compatibility)
             download_url = result.get('dxf_url')
             print(f"🔍 DEBUG: dxf_url from response = {download_url}")
             
