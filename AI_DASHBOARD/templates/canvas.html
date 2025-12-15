@@ -102,10 +102,6 @@
                         <label>Distance Moved:</label>
                         <span id="distance-moved" class="value">0.00 mm</span>
                     </div>
-                    <div class="info-item">
-                        <label>Rotation:</label>
-                        <span id="fixture-rotation" class="value">0°</span>
-                    </div>
                 </div>
             </div>
 
@@ -612,13 +608,7 @@
             const fixtureList = selectedFixtures.map(f => f.name).join(', ');
             
             let promptText = `Selected fixtures: ${fixtureList}\n\n`;
-            promptText += `You can now give commands like:\n`;
-            promptText += `- "Rearrange these fixtures like an architect"\n`;
-            promptText += `- "Organize these fixtures in a grid layout"\n`;
-            promptText += `- "Space these fixtures 500mm apart"\n`;
-            promptText += `- "Align these fixtures horizontally"\n`;
-            promptText += `- "Move these fixtures to the left wall"\n\n`;
-            promptText += `Edit this text to give your own instructions...`;
+            promptText += `Enter your instructions (e.g., "rotate 90 degrees", "move to center", "space 500mm apart")...`;
             
             promptArea.value = promptText;
             

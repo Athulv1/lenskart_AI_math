@@ -24,9 +24,7 @@ import argparse
 import json
 import math
 from pathlib import Path
-from typing import Dict, List, Tuple
-
-from typing import List, Tuple
+from typing import Dict, List, Tuple, Any
 from shapely.geometry import LinearRing, Polygon
 from shapely.geometry.polygon import orient
 
@@ -45,10 +43,111 @@ def load_json(path: Path) -> dict:
     with path.open("r") as f:
         return json.load(f)
 
+def compute_rotation_angle_from_measurements_json(room_json: Dict[str, Any]) -> float:
+    """
+    Adapter for your existing measurements.json structure, where:
+      - room_json["walls"] is a list of walls
+      - room_json["mainDoorWallId"] is the door wall id
+      - each wall["start"] / wall["end"] = [x, y, z] and we use x = [0], y = [2]
+    """
+    walls_2d = []
+    for w in room_json["walls"]:
+        sx, sy = w["start"][0], w["start"][2]
+        ex, ey = w["end"][0], w["end"][2]
+        walls_2d.append({
+            "id": w["id"],
+            "start": (sx, sy),
+            "end": (ex, ey),
+        })
+
+    return compute_rotation_angle(
+        walls=walls_2d,
+        main_door_wall_id=room_json["mainDoorWallId"],
+    )
+
+def compute_rotation_angle(
+    walls: List[Dict[str, Any]],
+    main_door_wall_id: str
+) -> float:
+    """
+    Given a set of walls and the id of the main door wall, return the rotation
+    angle (in degrees) that should be applied to all points (about the room's
+    centroid) so that:
+      - the main door wall becomes perfectly horizontal, and
+      - it ends up as the *bottom* edge (below the centroid).
+
+    Assumes each wall is of the form:
+      {
+        "id": "Wall_1",
+        "start": (x1, y1),
+        "end":   (x2, y2),
+      }
+    """
+
+    # --- 1) Find the main door wall ---
+    try:
+        door_wall = next(w for w in walls if w["id"] == main_door_wall_id)
+    except StopIteration:
+        raise ValueError(f"mainDoorWallId {main_door_wall_id!r} not found in walls")
+
+    x1, y1 = door_wall["start"]
+    x2, y2 = door_wall["end"]
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    # Current angle of the door wall (in degrees), measured from +x axis
+    theta_current_deg = math.degrees(math.atan2(dy, dx))
+
+    # --- 2) Compute a simple centroid of the room from all endpoints ---
+    xs = []
+    ys = []
+    for w in walls:
+        sx, sy = w["start"]
+        ex, ey = w["end"]
+        xs.extend([sx, ex])
+        ys.extend([sy, ey])
+
+    cx = sum(xs) / len(xs)
+    cy = sum(ys) / len(ys)
+
+    # --- 3) First pass: rotate so that the door wall becomes horizontal ---
+    # We want the wall to align with angle 0° (pointing along +x).
+    # So the initial rotation is the negative of its current angle.
+    rot_deg = -theta_current_deg
+
+    # --- 4) Decide whether we need an additional 180° flip
+    # to ensure the wall ends up as the *bottom* edge.
+    #
+    # Take the midpoint of the door wall, transform it with the candidate
+    # rotation (about the centroid), and see whether it ends up above or
+    # below the centroid afterwards.
+    mx = (x1 + x2) / 2.0
+    my = (y1 + y2) / 2.0
+
+    # Translate midpoint so centroid is at origin
+    mx0 = mx - cx
+    my0 = my - cy
+
+    rot_rad = math.radians(rot_deg)
+
+    # Standard 2D rotation:
+    # x' = x*cos(a) - y*sin(a)
+    # y' = x*sin(a) + y*cos(a)
+    rotated_my = mx0 * math.sin(rot_rad) + my0 * math.cos(rot_rad)
+
+    # If the rotated midpoint is *above* the centroid (y > 0),
+    # flip the rotation by 180° so the door wall goes to the bottom.
+    if rotated_my > 0:
+        rot_deg += 180.0
+
+    # Normalize angle into (-180, 180]
+    rot_deg = ((rot_deg + 180.0) % 360.0) - 180.0
+
+    return rot_deg
 
 def extract_walls_mm(data: dict):
     walls = data.get("walls") or []
-    rotation_deg = float(data.get("rotation", 0.0))
     windows = data.get("windows") or []
     doors = data.get("doors") or []
 
@@ -101,7 +200,7 @@ def extract_walls_mm(data: dict):
         extracted_doors.append({"height": height, "start": start, "end": end, "wall": wall, "width":width})
 
     # print(extracted_doors)
-    return plan, walls3d, rotation_deg, extracted_windows, extracted_doors
+    return plan, walls3d, extracted_windows, extracted_doors
 
 
 def centroid_xy(plan_segments: List[Seg2D]) -> Tuple[float, float]:
@@ -511,8 +610,10 @@ def main() -> None:
     #     raise SystemExit(f"JSON not found: {json_file}")
 
     data = json.loads(args.json_path)
+
+    rot_deg = compute_rotation_angle_from_measurements_json(data)
     # print(data)
-    plan_mm, walls3d_mm, rot_deg, windows, doors = extract_walls_mm(data)
+    plan_mm, walls3d_mm, windows, doors = extract_walls_mm(data)
     plan_rot, walls3d_rot, windows_rot, doors_rot  = apply_rotation(plan_mm, walls3d_mm, windows, doors, rot_deg)
     if args.no_flip:
         plan_final, walls3d_final, windows_fin, doors_fin = plan_rot, walls3d_rot, windows_rot, doors_rot
@@ -526,7 +627,6 @@ def main() -> None:
     # out_path = json_file.with_name(json_file.stem + "_walls_mm.dxf")
     # write_dxf(plan_final, walls3d_final, out_path)
 
-    # print(plan_final)
     for i in plan_final:
         print(i[4], i[0], i[1], i[2], i[3])
     print()
@@ -554,6 +654,15 @@ def main() -> None:
             temp.append(round(j, 3))
         i["end"] = temp
         print(i)
+    print()
+    print(data["mainDoorWallId"])
+    print()
+    #---RASHEEQUE--EDITED--11-12-2025
+    # CHANGE: Output rotation angle to stdout for CV_Controller to capture
+    # - rot_deg is calculated by compute_rotation_angle_from_measurements_json()
+    # - Makes main door wall horizontal at bottom of floor plan
+    # - CV_Controller parses this value to adjust hatch pattern angles accordingly
+    print(rot_deg)
     print()
     corners = [pt for pt, cnt in all_points.items() if cnt > 1]
 

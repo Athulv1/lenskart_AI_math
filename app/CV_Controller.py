@@ -199,14 +199,16 @@ class CV_Controller:
         return flipped_points
 
     def get_corners(self, fp_json):
+        # Load the JSON file
+        # with open(fp_json, 'r') as f:
+        #     fp_data = json.load(f)
+        
         # Call worker.py and capture stdout
         # Use the currently running Python interpreter to invoke the helper script
         # (avoids relying on "python3" being present on Windows)
         result = subprocess.run(
-
+            # [sys.executable, "app/layout.py", json.dumps(fp_data)],
             [sys.executable, "app/layout.py", json.dumps(fp_json)],
-
-            ["python3", "app/layout.py", json.dumps(fp_json)],  # Use python3 instead of python
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True  # to get output as string instead of bytes
@@ -223,10 +225,17 @@ class CV_Controller:
         self.windows = []
         self.doors = []
         self.corners = []
+        #---RASHEEQUE--EDITED--11-12-2025
+        # CHANGE: Added rotation_angle attribute to store floor plan rotation
+        # - Captures the rotation angle calculated by layout.py
+        # - Used by DXF_Controller to adjust hatch pattern angles
+        self.rotation_angle = 0.0
         end1 = False
         end2 = False
         end3 = False
         end4 = False
+        end5 = False
+        end6 = False
         output = result.stdout.strip()  # remove trailing newline
         output = output.split("\n")
         # print("HERE2")
@@ -261,15 +270,34 @@ class CV_Controller:
                     self.doors.append(temp)
                 else:
                     end4 = True
+            elif not end5:
+                if len(row.strip()) > 0:
+                    # print(4, row.strip().replace("'", '"'))
+                    self.front_wall_id = row.strip().replace("'", '"')
+                else:
+                    end5 = True
+            #---RASHEEQUE--EDITED--11-12-2025
+            # CHANGE: Added parsing section to capture rotation angle from layout.py output
+            # - layout.py now outputs rotation angle after mainDoorWallId
+            # - This angle is used to rotate the entire floor plan for proper orientation
+            elif not end6:
+                if len(row.strip()) > 0:
+                    # print(5, row.strip())
+                    self.rotation_angle = float(row.strip())
+                else:
+                    end6 = True
             else:
                 if len(row.strip()) > 0:
-                    # print(5, row)
+                    # print(6, row)
                     self.corners.append([float(rArr[0]), float(rArr[1])])
         #     print()
 
         # print("HERE2")
-
-            
+        logger.info(f"front wall: {self.front_wall_id}")
+        #---RASHEEQUE--EDITED--11-12-2025
+        # CHANGE: Added logging for rotation angle for debugging and tracking
+        logger.info(f"rotation angle: {self.rotation_angle}°")
+                    
         
     def apply_rotation(self, plan_segments: List[Seg2D], walls3d: List[Wall3D], rot_deg: float) -> Tuple[List[Seg2D], List[Wall3D]]:
 
