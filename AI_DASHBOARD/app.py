@@ -160,7 +160,7 @@ def upload_dxf():
         file = request.files['dxf_file']
         
         if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
+            return jsonify({'error': 'No file selected — ensure fixture and room measurement details are provided'}), 400
         
         if not file.filename.lower().endswith('.dxf'):
             return jsonify({'error': 'File must be a DXF file'}), 400

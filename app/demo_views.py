@@ -31,7 +31,8 @@ def demo_projects_api(request):
                 'id': str(file.id),
                 'filename': file.file.name.split('/')[-1] if file.file else 'Unknown',
                 'file_type': file.file_type if hasattr(file, 'file_type') else 'unknown',
-                'created_at': file.created_at.isoformat()
+                'created_at': file.created_at.isoformat(),
+                'file_url': (file.file.url if (hasattr(file, 'file') and hasattr(file.file, 'url')) else ("/media/" + file.file.name)) if file.file else None
             })
         
         projects_data.append({

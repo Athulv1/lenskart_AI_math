@@ -1048,14 +1048,17 @@ document.addEventListener("DOMContentLoaded", () => {
       const images = currentProject.files.filter(f => ["png", "jpg", "jpeg"].includes(f.file_type));
       if (images.length > 0) {
         processableFileId = images[0].id;
-        fileInfo.textContent = `Selected image: ${images[0].filename}`;
+        // Show an inline preview above the filename when available
+        const imgSrc = images[0].file_url || null;
+        const imgHtml = imgSrc ? `<img src="${imgSrc}" alt="Selected image" style="max-width:100%;height:auto;display:block;margin-bottom:8px;border-radius:8px;">` : '';
+        fileInfo.innerHTML = `${imgHtml}<span>Selected image: ${images[0].filename}</span>`;
         generateAiDashboardBtn.disabled = false;
         logMessage(`Ready to process project "${currentProject.name}"`, "success");
       } else {
-        fileInfo.textContent = "No image file found.";
+        fileInfo.textContent = "Missing fixture or room measurement details.";
         generateAiDashboardBtn.disabled = true;
         processableFileId = null;
-        logMessage("No processable image file found.", "error");
+        logMessage("Missing fixture or room measurement details.", "error");
       }
     } catch (error) {
       logMessage(`Error loading project data: ${error.message}`, "error");
@@ -1064,7 +1067,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function processFloorplan(mode) {
     if (!processableFileId) {
-      logMessage("No file selected for processing.", "error");
+      logMessage("No file selected for processing — ensure fixture and room measurement details are present.", "error");
       return;
     }
 
@@ -1135,7 +1138,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function processWithAI() {
     if (!processableFileId) {
-      aiLogMessage("No file selected for processing.", "error");
+      aiLogMessage("No file selected for processing — ensure fixture and room measurement details are present.", "error");
       return;
     }
 

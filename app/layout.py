@@ -50,6 +50,14 @@ def compute_rotation_angle_from_measurements_json(room_json: Dict[str, Any]) -> 
       - room_json["mainDoorWallId"] is the door wall id
       - each wall["start"] / wall["end"] = [x, y, z] and we use x = [0], y = [2]
     """
+    # Validate expected structure early to provide helpful errors
+    if not room_json or not isinstance(room_json, dict):
+        raise ValueError("Missing room measurement JSON (expected an object)")
+    if "walls" not in room_json or not isinstance(room_json["walls"], list) or len(room_json["walls"]) == 0:
+        raise ValueError("Missing room measurement details: 'walls' not present or empty in measurements JSON")
+    if "mainDoorWallId" not in room_json:
+        raise ValueError("Missing room measurement detail: 'mainDoorWallId' not found in measurements JSON")
+
     walls_2d = []
     for w in room_json["walls"]:
         sx, sy = w["start"][0], w["start"][2]
@@ -612,6 +620,7 @@ def main() -> None:
     data = json.loads(args.json_path)
 
     rot_deg = compute_rotation_angle_from_measurements_json(data)
+
     # print(data)
     plan_mm, walls3d_mm, windows, doors = extract_walls_mm(data)
     plan_rot, walls3d_rot, windows_rot, doors_rot  = apply_rotation(plan_mm, walls3d_mm, windows, doors, rot_deg)
