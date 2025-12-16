@@ -1023,13 +1023,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadProjectData(projectId) {
     try {
+      logMessage("Loading project details from backend...");
       const response = await fetch('/demo/api/projects/');
       const data = await response.json();
-      
+
+      // Debug: show available projects and requested id
+      try {
+        console.debug("Available project IDs:", data.projects.map(p => p.id));
+        console.debug("Requested projectId:", projectId);
+      } catch (e) {}
+
       currentProject = data.projects.find(p => p.id === projectId);
       if (!currentProject) {
-        logMessage("Project not found.", "error");
-        return;
+        // Try refreshing the client-side list once in case a new project was just created
+        await loadProjects();
+        currentProject = projectDropdownData.find(p => p.id === projectId);
+        if (!currentProject) {
+          logMessage("Project not found. Try refreshing the page or reloading projects.", "error");
+          console.warn("Project not found after refresh. Available:", projectDropdownData.map(p => p.id));
+          return;
+        }
       }
 
       const images = currentProject.files.filter(f => ["png", "jpg", "jpeg"].includes(f.file_type));
