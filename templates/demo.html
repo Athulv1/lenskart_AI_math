@@ -725,6 +725,36 @@ button:disabled:hover::after {
   border: 1px solid var(--arch-border);
   margin-bottom: 8px;
 }
+
+/* Searchable select styling */
+.select-search-wrapper input#project-search {
+  background: linear-gradient(180deg, rgba(18,32,47,0.9), rgba(18,32,47,0.85));
+  color: var(--text-primary);
+  border: 1px solid var(--arch-border);
+  box-shadow: 0 6px 18px rgba(2,6,23,0.6);
+  outline: none;
+}
+.select-search-wrapper input#project-search::placeholder {
+  color: var(--text-muted);
+}
+.select-search-wrapper ul#project-dropdown li {
+  transition: background 120ms ease, color 120ms ease;
+  color: var(--text-primary);
+}
+.select-search-wrapper ul#project-dropdown li:hover,
+.select-search-wrapper ul#project-dropdown li:focus {
+  background: rgba(46,212,191,0.06);
+  color: var(--text-primary);
+  outline: none;
+}
+.select-search-wrapper ul#project-dropdown li.selected {
+  background: linear-gradient(90deg, rgba(46,212,191,0.06), rgba(20,184,166,0.03));
+  border-left: 3px solid var(--arch-accent);
+}
+.select-search-wrapper ul#project-dropdown {
+  backdrop-filter: blur(6px);
+}
+.select-search-wrapper { margin-bottom: 12px; }
 </style>
 </head>
 <body>
@@ -814,7 +844,46 @@ Consider proper spacing for walkways, strategic placement of high-value items, a
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
+  // Replace native select with a searchable overlay dropdown
   const projectSelect = document.getElementById("project-select");
+  const selectWrapper = document.createElement('div');
+  selectWrapper.className = 'select-search-wrapper';
+  selectWrapper.style.position = 'relative';
+  selectWrapper.style.width = '100%';
+
+  const projectSearch = document.createElement('input');
+  projectSearch.id = 'project-search';
+  projectSearch.placeholder = 'Search projects...';
+  projectSearch.autocomplete = 'off';
+  projectSearch.style.width = '100%';
+  projectSearch.style.boxSizing = 'border-box';
+  projectSearch.style.padding = '8px 12px';
+  projectSearch.style.border = '1px solid var(--arch-border)';
+  projectSearch.style.borderRadius = '6px';
+
+  const dropdown = document.createElement('ul');
+  dropdown.id = 'project-dropdown';
+  dropdown.style.position = 'absolute';
+  dropdown.style.top = '100%';
+  dropdown.style.left = '0';
+  dropdown.style.right = '0';
+  dropdown.style.zIndex = '50';
+  dropdown.style.maxHeight = '260px';
+  dropdown.style.overflowY = 'auto';
+  dropdown.style.background = 'var(--card-bg, #0b1220)';
+  dropdown.style.border = '1px solid var(--arch-border)';
+  dropdown.style.borderRadius = '8px';
+  dropdown.style.marginTop = '8px';
+  dropdown.style.listStyle = 'none';
+  dropdown.style.padding = '6px';
+  dropdown.style.display = 'none';
+
+  // hide native select but keep for accessibility/value storage
+  projectSelect.style.display = 'none';
+  projectSelect.parentNode.insertBefore(selectWrapper, projectSelect);
+  selectWrapper.appendChild(projectSearch);
+  selectWrapper.appendChild(dropdown);
+  selectWrapper.appendChild(projectSelect);
   const fileInfo = document.getElementById("file-info");
   const generateAiDashboardBtn = document.getElementById("generate-ai-dashboard-btn");
   const logContainer = document.getElementById("log-container");
@@ -860,32 +929,97 @@ document.addEventListener("DOMContentLoaded", () => {
     llmInfo.textContent = `Project: ${currentProject?.name || "Unknown"} | File ID: ${processableFileId || "Unknown"}`;
   }
 
-  async function loadProjects() {
+  // Debounce helper
+  function debounce(fn, wait) {
+    let t = null;
+    return function(...args) {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), wait);
+    };
+  }
+
+  async function loadProjects(query = '') {
     try {
       logMessage("Loading projects from backend...");
-      const response = await fetch('/demo/api/projects/');
+      const url = '/demo/api/projects/' + (query ? `?q=${encodeURIComponent(query)}` : '');
+      const response = await fetch(url);
       const data = await response.json();
       
-      projectSelect.innerHTML = '<option value="">-- Select a Project --</option>';
-      
-      if (data.projects && data.projects.length > 0) {
-        data.projects.forEach(project => {
-          const option = document.createElement("option");
-          option.value = project.id;
-          option.textContent = project.name;
-          projectSelect.appendChild(option);
-        });
-        logMessage(`Loaded ${data.projects.length} projects successfully.`, "success");
-      } else {
-        logMessage("No projects found.", "error");
-      }
-      
+      projectDropdownData = data.projects || [];
+      renderDropdownOptions(projectDropdownData);
       projectSelect.disabled = false;
     } catch (error) {
       logMessage(`Error loading projects: ${error.message}`, "error");
       projectSelect.innerHTML = '<option>Error loading projects</option>';
     }
   }
+
+  // render dropdown options and populate hidden select
+  let projectDropdownData = [];
+  function renderDropdownOptions(list) {
+    dropdown.innerHTML = '';
+    projectSelect.innerHTML = '<option value="">-- Select a Project --</option>';
+    list.forEach((project, idx) => {
+      const li = document.createElement('li');
+      li.tabIndex = 0;
+      li.dataset.value = project.id;
+      li.style.padding = '8px 10px';
+      li.style.borderRadius = '6px';
+      li.style.cursor = 'pointer';
+      li.textContent = project.name;
+      li.addEventListener('click', () => selectProject(project));
+      li.addEventListener('keydown', (e) => { if (e.key === 'Enter') selectProject(project); });
+      dropdown.appendChild(li);
+
+      const option = document.createElement('option');
+      option.value = project.id;
+      option.textContent = project.name;
+      projectSelect.appendChild(option);
+    });
+    if (list.length === 0) {
+      const li = document.createElement('li');
+      li.textContent = 'No projects found';
+      li.style.padding = '8px 10px';
+      li.style.color = 'var(--text-secondary)';
+      dropdown.appendChild(li);
+    }
+  }
+
+  function openDropdown() { dropdown.style.display = 'block'; }
+  function closeDropdown() { dropdown.style.display = 'none'; }
+
+  function selectProject(project) {
+    projectSearch.value = project.name;
+    projectSelect.value = project.id;
+    closeDropdown();
+    loadProjectData(project.id);
+  }
+
+  // close dropdown on outside click
+  document.addEventListener('click', (e) => {
+    if (!selectWrapper.contains(e.target)) closeDropdown();
+  });
+
+  // keyboard navigation and filtering
+  projectSearch.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    const filtered = projectDropdownData.filter(p => p.name.toLowerCase().includes(q));
+    renderDropdownOptions(filtered);
+    openDropdown();
+  });
+
+  projectSearch.addEventListener('focus', () => { renderDropdownOptions(projectDropdownData); openDropdown(); });
+  projectSearch.addEventListener('keydown', (e) => {
+    const items = Array.from(dropdown.querySelectorAll('li'));
+    if (items.length === 0) return;
+    const active = document.activeElement;
+    if (e.key === 'ArrowDown') { e.preventDefault(); items[0].focus(); }
+    if (e.key === 'Escape') { closeDropdown(); projectSearch.blur(); }
+  });
+
+  // wire up search input
+  const debouncedLoad = debounce((e) => loadProjects(e.target.value.trim()), 300);
+  projectSearch.addEventListener('input', debouncedLoad);
 
   async function loadProjectData(projectId) {
     try {
@@ -1051,14 +1185,11 @@ document.addEventListener("DOMContentLoaded", () => {
     logMessage("🔄 Step 2/2: Loading DXF to Flask App...", "info");
     generateAiDashboardBtn.textContent = "🚀 Opening Dashboard...";
     
-    // Detect environment and build appropriate URLs
+    // Use Flask server when running locally so previews/canvas come from Flask
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const djangoServerUrl = isLocal ? 'http://localhost:8001' : window.location.origin;
-    const flaskServerUrl = isLocal ? 'http://localhost:5000' : 'https://ai-dashboard.' + window.location.hostname.replace('www.', '');
-    
-    // Build URL with autoload parameter
-    let aiAppUrl = flaskServerUrl + '/canvas';
-    const fullPath = djangoServerUrl + dxfUrl;
+    const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
+    let aiAppUrl = isLocal ? (flaskServerUrl + '/canvas') : '/canvas';
+    const fullPath = window.location.origin + dxfUrl;
     aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
     
     console.log('🚀 Opening Flask canvas:', aiAppUrl);
@@ -1091,12 +1222,11 @@ document.addEventListener("DOMContentLoaded", () => {
       optionCard.className = 'dxf-option';
       
       // Create preview iframe using dedicated preview page (no UI, just canvas)
-      // Detect environment and build appropriate URLs
+      // Use Flask server for preview when running locally so iframe loads correctly
       const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      const djangoServerUrl = isLocal ? 'http://localhost:8001' : window.location.origin;
-      const flaskServerUrl = isLocal ? 'http://localhost:5000' : 'https://ai-dashboard.' + window.location.hostname.replace('www.', '');
-      const fullPath = djangoServerUrl + file.dxf_url;
-      const previewUrl = `${flaskServerUrl}/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
+      const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
+      const fullPath = window.location.origin + file.dxf_url;
+      const previewUrl = isLocal ? (flaskServerUrl + '/canvas-preview?autoload=' + encodeURIComponent(fullPath)) : `/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
       
       optionCard.innerHTML = `
         <div class="dxf-option-preview">
