@@ -1226,8 +1226,7 @@ document.addEventListener("DOMContentLoaded", () => {
       
       // Create preview iframe using dedicated preview page (no UI, just canvas)
       // Detect environment and build appropriate URLs
-      // const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === 'lenskart.thinkneural.ai'|| window.location.hostname === '13.201.224.32';
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       const djangoServerUrl = isLocal ? 'http://localhost:8001' : window.location.origin;
       const flaskServerUrl = isLocal ? 'http://localhost:5000' : 'https://ai-dashboard.' + window.location.hostname.replace('www.', '');
       const fullPath = djangoServerUrl + file.dxf_url;
