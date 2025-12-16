@@ -1185,14 +1185,11 @@ document.addEventListener("DOMContentLoaded", () => {
     logMessage("🔄 Step 2/2: Loading DXF to Flask App...", "info");
     generateAiDashboardBtn.textContent = "🚀 Opening Dashboard...";
     
-    // Detect environment and build appropriate URLs
+    // Use Flask server when running locally so previews/canvas come from Flask
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const djangoServerUrl = isLocal ? 'http://localhost:8001' : window.location.origin;
-    const flaskServerUrl = isLocal ? 'http://localhost:5000' : 'https://ai-dashboard.' + window.location.hostname.replace('www.', '');
-    
-    // Build URL with autoload parameter
-    let aiAppUrl = flaskServerUrl + '/canvas';
-    const fullPath = djangoServerUrl + dxfUrl;
+    const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
+    let aiAppUrl = isLocal ? (flaskServerUrl + '/canvas') : '/canvas';
+    const fullPath = window.location.origin + dxfUrl;
     aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
     
     console.log('🚀 Opening Flask canvas:', aiAppUrl);
@@ -1225,13 +1222,11 @@ document.addEventListener("DOMContentLoaded", () => {
       optionCard.className = 'dxf-option';
       
       // Create preview iframe using dedicated preview page (no UI, just canvas)
-      // Detect environment and build appropriate URLs
-      // const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === 'lenskart.thinkneural.ai'|| window.location.hostname === '13.201.224.32';
-      const djangoServerUrl = isLocal ? 'http://localhost:8001' : window.location.origin;
-      const flaskServerUrl = isLocal ? 'http://localhost:5000' : 'https://ai-dashboard.' + window.location.hostname.replace('www.', '');
-      const fullPath = djangoServerUrl + file.dxf_url;
-      const previewUrl = `${flaskServerUrl}/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
+      // Use Flask server for preview when running locally so iframe loads correctly
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
+      const fullPath = window.location.origin + file.dxf_url;
+      const previewUrl = isLocal ? (flaskServerUrl + '/canvas-preview?autoload=' + encodeURIComponent(fullPath)) : `/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
       
       optionCard.innerHTML = `
         <div class="dxf-option-preview">
