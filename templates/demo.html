@@ -705,6 +705,113 @@ textarea::placeholder {
   }
 }
 
+/* Primary Side Modal Styles */
+#primary-side-modal .modal-content {
+  max-width: 500px;
+  width: 90%;
+}
+
+#primary-side-modal h2 {
+  font-size: 1.8em;
+  margin-bottom: 8px;
+  color: var(--arch-accent);
+}
+
+#primary-side-modal .modal-subtitle {
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  font-size: 1em;
+}
+
+.primary-side-options {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.primary-side-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(30, 58, 95, 0.5);
+  border: 2px solid var(--arch-border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.primary-side-option input[type="radio"] {
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  accent-color: var(--arch-accent);
+  flex-shrink: 0;
+}
+
+.primary-side-option:hover {
+  border-color: var(--arch-accent);
+  background: rgba(46, 212, 191, 0.1);
+  transform: translateX(4px);
+}
+
+.primary-side-option.selected {
+  border-color: var(--arch-accent);
+  background: rgba(46, 212, 191, 0.2);
+  box-shadow: 0 0 16px rgba(46, 212, 191, 0.3);
+}
+
+.primary-side-option .side-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.primary-side-option .side-icon {
+  font-size: 2em;
+  flex-shrink: 0;
+}
+
+.primary-side-option .side-text {
+  flex: 1;
+}
+
+.primary-side-option .side-label {
+  font-size: 1.2em;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.primary-side-option .side-description {
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  display: block;
+}
+
+#primary-side-confirm-btn {
+  width: 100%;
+  margin-top: 16px;
+  background: var(--gradient-accent);
+  border: none;
+  color: white;
+  font-weight: 700;
+  padding: 14px 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1em;
+  transition: all 0.3s ease;
+}
+
+#primary-side-confirm-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(46, 212, 191, 0.4);
+}
+
 /* Tooltip for disabled buttons */
 button:disabled {
   position: relative;
@@ -810,6 +917,37 @@ button:disabled:hover::after {
   </div>
 </div>
 
+<!-- Primary Side Selection Modal -->
+<div id="primary-side-modal" class="modal hidden">
+  <div class="modal-content">
+    <h2>🏢 Configure Fixtures for Project</h2>
+    <p class="modal-subtitle">Select the primary side for fixture placement:</p>
+    <div class="primary-side-options">
+      <label class="primary-side-option" data-side="Left">
+        <input type="radio" name="primary-side-modal" value="Left" checked>
+        <div class="side-content">
+          <span class="side-icon">⬅️</span>
+          <div class="side-text">
+            <span class="side-label">Left</span>
+            <span class="side-description">Primary fixtures on left side</span>
+          </div>
+        </div>
+      </label>
+      <label class="primary-side-option" data-side="Right">
+        <input type="radio" name="primary-side-modal" value="Right">
+        <div class="side-content">
+          <span class="side-icon">➡️</span>
+          <div class="side-text">
+            <span class="side-label">Right</span>
+            <span class="side-description">Primary fixtures on right side</span>
+          </div>
+        </div>
+      </label>
+    </div>
+    <button id="primary-side-confirm-btn" class="btn-primary">Confirm Selection</button>
+  </div>
+</div>
+
 <!-- LLM Page (hidden by default) -->
 <div id="llm-page" class="container hidden">
   <!-- LLM Page Header -->
@@ -832,6 +970,22 @@ button:disabled:hover::after {
     <textarea id="prompt" placeholder="Edit your AI generation prompt here..." rows="6">You are an expert store layout designer for optical retail stores. 
 Generate an optimal layout that maximizes customer flow, product visibility, and operational efficiency.
 Consider proper spacing for walkways, strategic placement of high-value items, and accessibility requirements.</textarea>
+    
+    <!-- Primary Side Selector -->
+    <div class="primary-side-selector">
+      <h4>🏢 Primary Side Configuration</h4>
+      <div class="side-options">
+        <div class="side-option">
+          <input type="radio" id="primary-left" name="primary-side" value="Left" checked>
+          <label for="primary-left">← Left</label>
+        </div>
+        <div class="side-option">
+          <input type="radio" id="primary-right" name="primary-side" value="Right">
+          <label for="primary-right">Right →</label>
+        </div>
+      </div>
+    </div>
+    
     <button id="generate-btn">Generate with AI</button>
     <button id="back-btn">Back to Projects</button>
     <h3 style="margin-top: 24px;">AI Processing Logs</h3>
@@ -901,6 +1055,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let processableFileId = null;
   let generatedDxfPath = null; // Store the generated DXF file path from Math processing
   let currentProcessedFiles = []; // Store all 4 DXF options for re-selection
+  
+  // Primary side radio buttons
+  const primaryLeftRadio = document.getElementById('primary-left');
+  const primaryRightRadio = document.getElementById('primary-right');
 
   function logMessage(msg, type = "info") {
     const entry = document.createElement("div");
@@ -927,6 +1085,89 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelector(".container").classList.add("hidden");
     llmPage.classList.remove("hidden");
     llmInfo.textContent = `Project: ${currentProject?.name || "Unknown"} | File ID: ${processableFileId || "Unknown"}`;
+    loadFixturesConfig();
+  }
+  
+  // Load fixtures configuration including primary side
+  async function loadFixturesConfig() {
+    if (!processableFileId) return;
+    
+    try {
+      const response = await fetch(`/admin/app/projectfile/get-fixtures-config/${processableFileId}/`);
+      const data = await response.json();
+      
+      if (data.success && data.fixtures) {
+        const primarySide = data.fixtures.primary_side || 'Left';
+        if (primarySide === 'Left') {
+          primaryLeftRadio.checked = true;
+        } else {
+          primaryRightRadio.checked = true;
+        }
+        console.log('Loaded primary side:', primarySide);
+      }
+    } catch (error) {
+      console.error('Error loading fixtures config:', error);
+    }
+  }
+  
+  // Save fixtures configuration including primary side
+  async function saveFixturesConfig() {
+    if (!processableFileId) return;
+    
+    const primarySide = primaryLeftRadio.checked ? 'Left' : 'Right';
+    return await saveFixturesConfigWithSide(primarySide);
+  }
+  
+  // Save fixtures configuration with specific side value
+  async function saveFixturesConfigWithSide(primarySide) {
+    if (!processableFileId) return;
+    
+    try {
+      const formData = new FormData();
+      formData.append('file_id', processableFileId);
+      formData.append('fixtures_data', JSON.stringify({
+        primary_side: primarySide
+      }));
+      
+      const response = await fetch('/admin/app/projectfile/save-fixtures-config/', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-CSRFToken': getCookie('csrftoken')
+        }
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        console.log('Primary side saved:', primarySide);
+        if (typeof aiLogMessage === 'function') {
+          aiLogMessage(`✅ Primary side set to: ${primarySide}`, 'success');
+        }
+        return true;
+      } else {
+        console.error('Failed to save primary side:', data.error);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error saving fixtures config:', error);
+      return false;
+    }
+  }
+  
+  // Helper function to get CSRF token
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
   }
 
   // Debounce helper
@@ -1024,47 +1265,68 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadProjectData(projectId) {
     try {
       logMessage("Loading project details from backend...");
-      const response = await fetch('/demo/api/projects/');
-      const data = await response.json();
-
-      // Debug: show available projects and requested id
-      try {
-        console.debug("Available project IDs:", data.projects.map(p => p.id));
-        console.debug("Requested projectId:", projectId);
-      } catch (e) {}
-
-      currentProject = data.projects.find(p => p.id === projectId);
-      if (!currentProject) {
-        // Try refreshing the client-side list once in case a new project was just created
-        await loadProjects();
-        currentProject = projectDropdownData.find(p => p.id === projectId);
-        if (!currentProject) {
-          logMessage("Project not found. Try refreshing the page or reloading projects.", "error");
-          console.warn("Project not found after refresh. Available:", projectDropdownData.map(p => p.id));
-          return;
-        }
+      
+      // First, try to find in existing dropdown data
+      let project = projectDropdownData.find(p => p.id === projectId);
+      
+      // If not found, refresh the project list from backend
+      if (!project) {
+        logMessage("Project not in cache, refreshing list...");
+        const response = await fetch('/demo/api/projects/');
+        const data = await response.json();
+        projectDropdownData = data.projects || [];
+        project = projectDropdownData.find(p => p.id === projectId);
       }
-
+      
+      if (!project) {
+        logMessage("❌ Project not found. Try refreshing the page or reloading projects.", "error");
+        console.warn("Project not found. Available IDs:", projectDropdownData.map(p => p.id));
+        console.warn("Requested ID:", projectId);
+        return;
+      }
+      
+      currentProject = project;
+      
       const images = currentProject.files.filter(f => ["png", "jpg", "jpeg"].includes(f.file_type));
       if (images.length > 0) {
         processableFileId = images[0].id;
-        fileInfo.textContent = `Selected image: ${images[0].filename}`;
-        generateAiDashboardBtn.disabled = false;
+        // Show an inline preview above the filename when available
+        const imgSrc = images[0].file_url || null;
+        const imgHtml = imgSrc ? `<img src="${imgSrc}" alt="Selected image" style="max-width:100%;height:auto;display:block;margin-bottom:8px;border-radius:8px;">` : '';
+        fileInfo.innerHTML = `${imgHtml}<span>Selected image: ${images[0].filename}</span>`;
         logMessage(`Ready to process project "${currentProject.name}"`, "success");
+        
+        // Show Primary Side selection modal
+        showPrimarySideModal();
       } else {
-        fileInfo.textContent = "No image file found.";
+        fileInfo.textContent = "Missing fixture or room measurement details.";
         generateAiDashboardBtn.disabled = true;
         processableFileId = null;
-        logMessage("No processable image file found.", "error");
+        logMessage("Missing fixture or room measurement details.", "error");
       }
     } catch (error) {
       logMessage(`Error loading project data: ${error.message}`, "error");
+      console.error("Error loading project:", error);
+    }
+  }
+  
+  function showPrimarySideModal() {
+    const primarySideModal = document.getElementById("primary-side-modal");
+    if (primarySideModal) {
+      primarySideModal.classList.remove("hidden");
+    }
+  }
+  
+  function hidePrimarySideModal() {
+    const primarySideModal = document.getElementById("primary-side-modal");
+    if (primarySideModal) {
+      primarySideModal.classList.add("hidden");
     }
   }
 
   async function processFloorplan(mode) {
     if (!processableFileId) {
-      logMessage("No file selected for processing.", "error");
+      logMessage("No file selected for processing — ensure fixture and room measurement details are present.", "error");
       return;
     }
 
@@ -1135,7 +1397,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function processWithAI() {
     if (!processableFileId) {
-      aiLogMessage("No file selected for processing.", "error");
+      aiLogMessage("No file selected for processing — ensure fixture and room measurement details are present.", "error");
       return;
     }
 
@@ -1178,6 +1440,68 @@ document.addEventListener("DOMContentLoaded", () => {
       generateBtn.disabled = false;
       generateBtn.textContent = originalText;
     }
+  }
+
+  // Save primary side configuration when changed (in LLM page)
+  primaryLeftRadio.addEventListener('change', () => {
+    if (primaryLeftRadio.checked) {
+      saveFixturesConfig();
+    }
+  });
+  
+  primaryRightRadio.addEventListener('change', () => {
+    if (primaryRightRadio.checked) {
+      saveFixturesConfig();
+    }
+  });
+  
+  // Handle Primary Side modal selection
+  document.querySelectorAll('.primary-side-option').forEach(option => {
+    option.addEventListener('click', () => {
+      // Update selected state visually
+      document.querySelectorAll('.primary-side-option').forEach(opt => {
+        opt.classList.remove('selected');
+      });
+      option.classList.add('selected');
+      
+      // Check the radio button
+      const radio = option.querySelector('input[type="radio"]');
+      if (radio) {
+        radio.checked = true;
+      }
+    });
+  });
+  
+  // Confirm button handler
+  const primarySideConfirmBtn = document.getElementById('primary-side-confirm-btn');
+  if (primarySideConfirmBtn) {
+    primarySideConfirmBtn.addEventListener('click', async () => {
+      const selectedRadio = document.querySelector('input[name="primary-side-modal"]:checked');
+      if (!selectedRadio) {
+        logMessage('⚠️ Please select a side', 'error');
+        return;
+      }
+      
+      const selectedSide = selectedRadio.value;
+      logMessage(`✅ Primary side selected: ${selectedSide}`, "success");
+      
+      // Update the radio buttons in LLM page
+      if (selectedSide === 'Left') {
+        primaryLeftRadio.checked = true;
+      } else {
+        primaryRightRadio.checked = true;
+      }
+      
+      // Save to backend
+      await saveFixturesConfigWithSide(selectedSide);
+      
+      // Hide modal
+      hidePrimarySideModal();
+      
+      // Enable the AI Dashboard button
+      generateAiDashboardBtn.disabled = false;
+      generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
+    });
   }
 
   // Event listeners
@@ -1341,6 +1665,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
   generateBtn.addEventListener("click", processWithAI);
   backBtn.addEventListener("click", showMainPage);
+  
+  // Load fixtures configuration including primary side
+  async function loadFixturesConfig() {
+    if (!processableFileId) return;
+    
+    try {
+      const response = await fetch(`/admin/app/projectfile/get-fixtures-config/${processableFileId}/`);
+      const data = await response.json();
+      
+      if (data.success && data.fixtures) {
+        const primarySide = data.fixtures.primary_side || 'Left';
+        if (primarySide === 'Left') {
+          primaryLeftRadio.checked = true;
+        } else {
+          primaryRightRadio.checked = true;
+        }
+        console.log('Loaded primary side:', primarySide);
+      }
+    } catch (error) {
+      console.error('Error loading fixtures config:', error);
+    }
+  }
 
   // Initialize
   loadProjects();

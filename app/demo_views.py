@@ -14,33 +14,43 @@ def demo_page(request):
 def demo_projects_api(request):
     """API endpoint to get projects for the demo frontend"""
     from .models import Project
+    import logging
+    logger = logging.getLogger('app')
     
-    # Allow searching projects by name (q) or return all projects (limited)
-    q = request.GET.get('q', '').strip()
-    if q:
-        projects = Project.objects.filter(name__icontains=q).order_by('name')[:200]
-    else:
-        projects = Project.objects.all().order_by('name')[:200]
-    projects = projects.prefetch_related('files')
-    
-    projects_data = []
-    for project in projects:
-        files_data = []
-        for file in project.files.all():
-            files_data.append({
-                'id': str(file.id),
-                'filename': file.file.name.split('/')[-1] if file.file else 'Unknown',
-                'file_type': file.file_type if hasattr(file, 'file_type') else 'unknown',
-                'created_at': file.created_at.isoformat()
+    try:
+        # Allow searching projects by name (q) or return all projects (limited)
+        q = request.GET.get('q', '').strip()
+        if q:
+            projects = Project.objects.filter(name__icontains=q).order_by('name')[:200]
+        else:
+            projects = Project.objects.all().order_by('name')[:200]
+        projects = projects.prefetch_related('files')
+        
+        logger.info(f"Demo API: Found {projects.count()} projects (query: '{q}')")
+        
+        projects_data = []
+        for project in projects:
+            files_data = []
+            for file in project.files.all():
+                files_data.append({
+                    'id': str(file.id),
+                    'filename': file.file.name.split('/')[-1] if file.file else 'Unknown',
+                    'file_type': file.file_type if hasattr(file, 'file_type') else 'unknown',
+                    'created_at': file.created_at.isoformat(),
+                    'file_url': (file.file.url if (hasattr(file, 'file') and hasattr(file.file, 'url')) else ("/media/" + file.file.name)) if file.file else None
+                })
+            
+            projects_data.append({
+                'id': str(project.id),
+                'name': project.name,
+                'files': files_data
             })
         
-        projects_data.append({
-            'id': str(project.id),
-            'name': project.name,
-            'files': files_data
-        })
-    
-    return JsonResponse({'projects': projects_data})
+        logger.info(f"Demo API: Returning {len(projects_data)} projects")
+        return JsonResponse({'projects': projects_data})
+    except Exception as e:
+        logger.error(f"Demo API Error: {str(e)}", exc_info=True)
+        return JsonResponse({'error': str(e), 'projects': []}, status=500)
 
 @csrf_exempt
 @require_http_methods(["POST"])

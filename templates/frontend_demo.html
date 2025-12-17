@@ -144,13 +144,13 @@ document.addEventListener("DOMContentLoaded", () => {
       fileInfo.textContent = "No processable image file found for this project.";
       generateMathBtn.disabled = true;
       generateAiBtn.disabled = true;
-      logMessage("No processable file found.", "error");
+      logMessage("Missing fixture or room measurement details.", "error");
     }
   }
 
   async function generateWithMath() {
     if (!processableFile) {
-      logMessage("No file to process.", "error");
+      logMessage("No file to process — ensure fixture and room measurement details are present.", "error");
       return;
     }
     logMessage("Generating DXF using Math Flow...");
