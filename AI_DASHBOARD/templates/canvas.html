@@ -549,8 +549,14 @@
                 if (data.updated_canvas_data && editor) {
                     console.log('🔄 Updating canvas with AI-generated layout...');
                     
-                    // Reload canvas with updated data (no visual effects)
+                    // Reload canvas with updated data
                     editor.loadCanvasData(data.updated_canvas_data);
+                    
+                    // Force a complete canvas refresh
+                    editor.render();
+                    
+                    // Trigger a resize event to ensure proper redraw
+                    window.dispatchEvent(new Event('resize'));
                     
                     // Clear selections and prompts since changes are applied
                     selectedFixtures = [];
@@ -612,9 +618,34 @@
             
             promptArea.value = promptText;
             
+            // Mark that sample text is present
+            promptArea.dataset.hasSampleText = 'true';
+            
             // Enable generate button
             document.getElementById('generate-btn').disabled = false;
         }
+        
+        // Clear sample text when user clicks into the prompt box
+        document.addEventListener('DOMContentLoaded', function() {
+            const promptArea = document.getElementById('movement-prompt');
+            
+            promptArea.addEventListener('focus', function() {
+                // Only clear sample text if it's still there
+                if (this.dataset.hasSampleText === 'true' && selectedFixtures.length > 0) {
+                    const fixtureList = selectedFixtures.map(f => f.name).join(', ');
+                    this.value = `Selected fixtures: ${fixtureList}\n\n`;
+                    this.dataset.hasSampleText = 'false';
+                    
+                    // Move cursor to end
+                    this.setSelectionRange(this.value.length, this.value.length);
+                }
+            });
+            
+            // Mark as modified when user types
+            promptArea.addEventListener('input', function() {
+                this.dataset.hasSampleText = 'false';
+            });
+        });
     </script>
 </body>
 </html>

@@ -277,11 +277,20 @@ class CanvasEditor {
             console.log(`  • ${f.name}: width=${f.width || 'MISSING'}, height=${f.height || 'MISSING'}`);
         });
         
+        // Clear any existing selections
+        this.selectedFixture = null;
+        
         // Auto-fit to canvas
         this.fitToCanvas();
         
-        // Render immediately (removed animation effect)
+        // Force clear the canvas before rendering
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Render immediately with forced refresh
         this.render();
+        
+        // Request another animation frame to ensure refresh
+        requestAnimationFrame(() => this.render());
         
         console.log(`✅ Loaded ${this.fixtures.length} fixtures with ${this.fixtureTypes.size} types`);
     }
