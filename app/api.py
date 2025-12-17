@@ -754,8 +754,10 @@ def process_floorplan(request, file_id: uuid.UUID):
             dxfc.get_existing_nonwall_bboxes()
             floor_area = dxfc.calculate_area_sqft()
             orientation = dxfc.cvc.orientation
-            Primary = "right"
-            print("Primary side for the floorplan is ", Primary)
+            
+            # Get primary_side from project fixtures configuration (default to "left" if not set)
+            Primary = project.fixtures.get('primary_side', 'left').lower()
+            print(f"Primary side for the floorplan is: {Primary}")
 
 
             if orientation == 'SS':
