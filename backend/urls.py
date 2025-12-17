@@ -4,7 +4,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve
 from app.api import api as app1_api
-from app.demo_views import demo_page, demo_projects_api, demo_process_api
+from app.demo_views import demo_page, demo_projects_api, demo_process_api, save_dxf_to_project
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -12,6 +12,7 @@ urlpatterns = [
     path('demo/', demo_page, name='demo_page'),
     path('demo/api/projects/', demo_projects_api, name='demo_projects_api'),
     path('demo/api/process/', demo_process_api, name='demo_process_api'),
+    path('demo/api/projects/<str:project_id>/save-dxf/', save_dxf_to_project, name='save_dxf_to_project'),
     
     # Serve media files (works in both DEBUG=True and DEBUG=False)
     re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
