@@ -313,6 +313,78 @@ button:disabled::before {
   font-weight: 500;
 }
 
+#file-info span {
+  flex: 1;
+}
+
+/* View Image Button */
+#view-image-btn {
+  width: 100%;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, var(--arch-accent), #1e3a5f);
+  color: var(--text-primary);
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 8px rgba(46, 212, 191, 0.3);
+  margin-bottom: 12px;
+}
+
+#view-image-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(46, 212, 191, 0.5);
+}
+
+#view-image-btn:disabled {
+  background: rgba(100, 116, 139, 0.3);
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+/* Image Modal Overlay */
+#image-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: none;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+  cursor: pointer;
+  animation: fadeIn 0.3s ease;
+}
+
+#image-modal-overlay.active {
+  display: flex;
+}
+
+#image-modal-overlay img {
+  max-width: 90%;
+  max-height: 90%;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: zoomIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zoomIn {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
 /* Log Container */
 .log {
   background: rgba(10, 22, 40, 0.8);
@@ -862,6 +934,196 @@ button:disabled:hover::after {
   backdrop-filter: blur(6px);
 }
 .select-search-wrapper { margin-bottom: 12px; }
+
+/* Existing Layouts Carousel */
+#existing-layouts-container h3::before {
+  content: '📁';
+}
+
+.layout-subtitle {
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  margin-bottom: 16px;
+  font-weight: 400;
+}
+
+.layouts-carousel {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  padding: 16px 0;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+.layouts-carousel::-webkit-scrollbar {
+  height: 8px;
+}
+
+.layouts-carousel::-webkit-scrollbar-track {
+  background: rgba(30, 58, 95, 0.2);
+  border-radius: 4px;
+}
+
+.layouts-carousel::-webkit-scrollbar-thumb {
+  background: var(--arch-accent);
+  border-radius: 4px;
+}
+
+.layouts-carousel::-webkit-scrollbar-thumb:hover {
+  background: #14B8A6;
+}
+
+.layout-preview-card {
+  flex: 0 0 300px;
+  background: rgba(30, 58, 95, 0.3);
+  border: 2px solid var(--arch-border);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.layout-preview-card:hover {
+  border-color: var(--arch-accent);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(46, 212, 191, 0.3);
+}
+
+.layout-preview-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(46, 212, 191, 0.1) 0%, transparent 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.layout-preview-card:hover::before {
+  opacity: 1;
+}
+
+.layout-preview-frame {
+  width: 100%;
+  height: 200px;
+  background: rgba(10, 22, 40, 0.8);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  position: relative;
+}
+
+.layout-preview-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  pointer-events: none;
+}
+
+.layout-preview-info {
+  text-align: center;
+}
+
+.layout-preview-name {
+  color: var(--text-primary);
+  font-size: 0.85em;
+  font-weight: 600;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layout-preview-date {
+  color: var(--text-secondary);
+  font-size: 0.7em;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.layout-preview-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.layout-action-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.75em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-family: 'Sora', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  width: auto;
+}
+
+.layout-design-btn {
+  background: var(--gradient-accent);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(46, 212, 191, 0.3);
+}
+
+.layout-design-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(46, 212, 191, 0.5);
+}
+
+.layout-download-btn {
+  background: rgba(100, 116, 139, 0.3);
+  color: var(--text-primary);
+  border: 1px solid var(--arch-border);
+}
+
+.layout-download-btn:hover {
+  background: rgba(100, 116, 139, 0.5);
+  border-color: var(--text-secondary);
+  transform: translateY(-2px);
+}
+
+.layout-preview-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(46, 212, 191, 0.2);
+  border: 1px solid var(--arch-accent);
+  color: var(--arch-accent);
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  z-index: 10;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .layout-preview-card {
+    flex: 0 0 250px;
+  }
+  
+  .layout-preview-frame {
+    height: 180px;
+  }
+}
 </style>
 </head>
 <body>
@@ -885,7 +1147,22 @@ button:disabled:hover::after {
       <option>Loading projects...</option>
     </select>
     <p id="file-info"></p>
+    <button id="view-image-btn" class="hidden" disabled>VIEW IMAGE</button>
     <button id="generate-ai-dashboard-btn" disabled> AI DXF DASHBOARD EDITOR</button>
+  </div>
+
+  <!-- Image Modal Overlay -->
+  <div id="image-modal-overlay">
+    <img id="modal-image" src="" alt="Floor Plan Preview">
+  </div>
+
+  <!-- Existing DXF Layouts Preview (shown only if project has DXF files) -->
+  <div id="existing-layouts-container" class="card hidden">
+    <h3>Previously Generated Layouts</h3>
+    <p class="layout-subtitle">Click on any layout to open in canvas editor</p>
+    <div id="existing-layouts-carousel" class="layouts-carousel">
+      <!-- Existing DXF previews will be dynamically inserted here -->
+    </div>
   </div>
 
   <!-- Activity Logs Card -->
@@ -1059,6 +1336,11 @@ document.addEventListener("DOMContentLoaded", () => {
   // Primary side radio buttons
   const primaryLeftRadio = document.getElementById('primary-left');
   const primaryRightRadio = document.getElementById('primary-right');
+  
+  // Image viewer elements
+  const viewImageBtn = document.getElementById("view-image-btn");
+  const imageModalOverlay = document.getElementById("image-modal-overlay");
+  const modalImage = document.getElementById("modal-image");
 
   function logMessage(msg, type = "info") {
     const entry = document.createElement("div");
@@ -1075,6 +1357,18 @@ document.addEventListener("DOMContentLoaded", () => {
     aiLog.appendChild(entry);
     aiLog.scrollTop = aiLog.scrollHeight;
   }
+
+  // Image modal close handler (click anywhere on overlay to close)
+  imageModalOverlay.addEventListener('click', () => {
+    imageModalOverlay.classList.remove('active');
+    logMessage("Image viewer closed", "info");
+  });
+
+  // VIEW button click handler
+  viewImageBtn.addEventListener('click', () => {
+    imageModalOverlay.classList.add('active');
+    logMessage("Viewing floor plan image", "info");
+  });
 
   function showMainPage() {
     document.querySelector(".container").classList.remove("hidden");
@@ -1290,20 +1584,37 @@ document.addEventListener("DOMContentLoaded", () => {
       const images = currentProject.files.filter(f => ["png", "jpg", "jpeg"].includes(f.file_type));
       if (images.length > 0) {
         processableFileId = images[0].id;
-        // Show an inline preview above the filename when available
         const imgSrc = images[0].file_url || null;
-        const imgHtml = imgSrc ? `<img src="${imgSrc}" alt="Selected image" style="max-width:100%;height:auto;display:block;margin-bottom:8px;border-radius:8px;">` : '';
-        fileInfo.innerHTML = `${imgHtml}<span>Selected image: ${images[0].filename}</span>`;
+        
+        // Show filename
+        fileInfo.textContent = `Selected image: ${images[0].filename}`;
+        
+        // Store image URL for modal display
+        modalImage.src = imgSrc;
+        
+        // Show and enable VIEW button
+        viewImageBtn.classList.remove('hidden');
+        viewImageBtn.disabled = false;
+        
+        // Enable main button
+        generateAiDashboardBtn.disabled = false;
+        
         logMessage(`Ready to process project "${currentProject.name}"`, "success");
         
         // Show Primary Side selection modal
         showPrimarySideModal();
       } else {
         fileInfo.textContent = "Missing fixture or room measurement details.";
+        viewImageBtn.classList.add('hidden');
+        viewImageBtn.disabled = true;
         generateAiDashboardBtn.disabled = true;
         processableFileId = null;
         logMessage("Missing fixture or room measurement details.", "error");
       }
+      
+      // Load existing DXF layouts if available
+      loadExistingLayouts(currentProject);
+      
     } catch (error) {
       logMessage(`Error loading project data: ${error.message}`, "error");
       console.error("Error loading project:", error);
@@ -1322,6 +1633,93 @@ document.addEventListener("DOMContentLoaded", () => {
     if (primarySideModal) {
       primarySideModal.classList.add("hidden");
     }
+  }
+
+  // Function to load and display existing DXF layouts
+  function loadExistingLayouts(project) {
+    const existingLayoutsContainer = document.getElementById('existing-layouts-container');
+    const existingLayoutsCarousel = document.getElementById('existing-layouts-carousel');
+    
+    // Check if project has existing DXF files
+    const existingDxfFiles = project.existing_dxf_files || [];
+    
+    if (existingDxfFiles.length === 0) {
+      // Hide the container if no DXF files exist
+      existingLayoutsContainer.classList.add('hidden');
+      return;
+    }
+    
+    // Clear previous content
+    existingLayoutsCarousel.innerHTML = '';
+    
+    // Show the container
+    existingLayoutsContainer.classList.remove('hidden');
+    
+    logMessage(`Found ${existingDxfFiles.length} existing layout(s) for this project`, "info");
+    
+    // Create preview cards for each existing DXF file
+    existingDxfFiles.forEach((dxfFile, index) => {
+      const card = document.createElement('div');
+      card.className = 'layout-preview-card';
+      
+      // Format date
+      const createdDate = new Date(dxfFile.created_at);
+      const dateStr = createdDate.toLocaleDateString() + ' ' + createdDate.toLocaleTimeString();
+      
+      // Use Flask server for preview when running locally
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
+      const fullPath = window.location.origin + dxfFile.dxf_url;
+      const previewUrl = isLocal ? 
+        (flaskServerUrl + '/canvas-preview?autoload=' + encodeURIComponent(fullPath)) : 
+        `/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
+      
+      card.innerHTML = `
+        <div class="layout-preview-badge">Existing</div>
+        <div class="layout-preview-frame">
+          <iframe src="${previewUrl}" scrolling="no" title="Layout Preview ${index + 1}" loading="lazy"></iframe>
+        </div>
+        <div class="layout-preview-info">
+          <div class="layout-preview-name">${dxfFile.filename}</div>
+          <div class="layout-preview-date">${dateStr}</div>
+        </div>
+        <div class="layout-preview-actions">
+          <button class="layout-action-btn layout-design-btn" data-dxf-url="${dxfFile.dxf_url}" data-filename="${dxfFile.filename}">
+            🎨 Design
+          </button>
+          <button class="layout-action-btn layout-download-btn" data-dxf-url="${dxfFile.dxf_url}" data-filename="${dxfFile.filename}">
+            ⬇️ Download
+          </button>
+        </div>
+      `;
+      
+      // Add click handlers to buttons
+      const designBtn = card.querySelector('.layout-design-btn');
+      const downloadBtn = card.querySelector('.layout-download-btn');
+      
+      designBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        logMessage(`Opening layout in canvas editor: ${dxfFile.filename}`, "info");
+        openAiDashboard(dxfFile.dxf_url);
+      });
+      
+      downloadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        logMessage(`Downloading layout: ${dxfFile.filename}`, "info");
+        
+        // Create temporary link and trigger download
+        const link = document.createElement('a');
+        link.href = dxfFile.dxf_url;
+        link.download = dxfFile.filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        logMessage(`Download started: ${dxfFile.filename}`, "success");
+      });
+      
+      existingLayoutsCarousel.appendChild(card);
+    });
   }
 
   async function processFloorplan(mode) {
@@ -1512,6 +1910,7 @@ document.addEventListener("DOMContentLoaded", () => {
       currentProject = null;
       processableFileId = null;
       fileInfo.textContent = "";
+      viewImageBtn.classList.add('hidden');
       generateAiDashboardBtn.disabled = true;
       resultsContainer.classList.add("hidden");
     }
@@ -1528,6 +1927,12 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiAppUrl = isLocal ? (flaskServerUrl + '/canvas') : '/canvas';
     const fullPath = window.location.origin + dxfUrl;
     aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
+    
+    // Add project_id to URL if available
+    if (currentProject && currentProject.id) {
+      aiAppUrl += '&project_id=' + encodeURIComponent(currentProject.id);
+      console.log('📎 Passing project_id:', currentProject.id);
+    }
     
     console.log('🚀 Opening Flask canvas:', aiAppUrl);
     console.log('📄 DXF URL:', fullPath);
@@ -1687,6 +2092,29 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error('Error loading fixtures config:', error);
     }
   }
+
+  // Listen for messages from canvas window (for auto-refresh when DXF is saved)
+  window.addEventListener('message', function(event) {
+    // Security: Verify origin matches current origin
+    if (event.origin !== window.location.origin) {
+      return;
+    }
+    
+    // Check if it's a DXF save notification
+    if (event.data && event.data.type === 'dxf_saved') {
+      const projectId = event.data.projectId;
+      const fileData = event.data.fileData;
+      
+      console.log('📨 Received DXF save notification for project:', projectId);
+      logMessage(`✅ New DXF layout saved: ${fileData.filename}`, "success");
+      
+      // Refresh the project data if it's the currently selected project
+      if (currentProject && currentProject.id === projectId) {
+        console.log('🔄 Refreshing current project data...');
+        loadProjectData(projectId);
+      }
+    }
+  });
 
   // Initialize
   loadProjects();

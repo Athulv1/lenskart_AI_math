@@ -144,11 +144,19 @@
         let currentSessionId = null;
         let movementPrompts = [];  // Store all movement prompts
         let selectedFixtures = [];  // Track selected fixtures for AI rearrangement
+        let currentProjectId = null;  // Store project_id from URL parameter
 
         // Check for auto-load parameter on page load
         window.addEventListener('DOMContentLoaded', async function() {
             const urlParams = new URLSearchParams(window.location.search);
             const autoloadUrl = urlParams.get('autoload');
+            const projectId = urlParams.get('project_id');
+            
+            // Store project_id if provided
+            if (projectId) {
+                currentProjectId = projectId;
+                console.log('📎 Project ID captured:', currentProjectId);
+            }
             
             if (autoloadUrl) {
                 console.log('🔄 Auto-loading DXF file from:', autoloadUrl);
@@ -316,8 +324,9 @@
                 
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
+                const filename = document.getElementById('current-filename').textContent.replace('.dxf', '-MODIFIED.dxf');
                 a.href = url;
-                a.download = document.getElementById('current-filename').textContent.replace('.dxf', '-MODIFIED.dxf');
+                a.download = filename;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -325,11 +334,91 @@
 
                 hideLoading();
                 showStatus('✅ DXF file downloaded successfully!', 'success');
+                
+                // Save to Django project if project_id is available
+                if (currentProjectId) {
+                    console.log('💾 Saving DXF to Django project:', currentProjectId);
+                    await saveDXFToDjango(blob, filename);
+                } else {
+                    console.log('⚠️ No project_id available, skipping Django save');
+                }
 
             } catch (error) {
                 console.error('Download error:', error);
                 hideLoading();
                 showStatus('❌ Download failed: ' + error.message, 'error');
+            }
+        }
+        
+        async function saveDXFToDjango(blob, filename) {
+            try {
+                // Create FormData to send file to Django
+                const formData = new FormData();
+                formData.append('dxf_file', blob, filename);
+                
+                // Get Django server URL
+                // Extract Django URL from the DXF autoload parameter (it contains the full Django URL)
+                const urlParams = new URLSearchParams(window.location.search);
+                const autoloadUrl = urlParams.get('autoload');
+                let djangoBaseUrl = window.location.origin;
+                
+                // Parse Django base URL from autoload parameter
+                if (autoloadUrl) {
+                    try {
+                        const url = new URL(autoloadUrl);
+                        djangoBaseUrl = `${url.protocol}//${url.hostname}${url.port ? ':' + url.port : ''}`;
+                        console.log('🔍 Detected Django URL from autoload:', djangoBaseUrl);
+                    } catch (e) {
+                        console.warn('⚠️ Could not parse autoload URL, using window.location.origin');
+                    }
+                }
+                
+                const djangoUrl = djangoBaseUrl + `/demo/api/projects/${currentProjectId}/save-dxf/`;
+                
+                console.log('📤 Sending to Django:', djangoUrl);
+                console.log('📦 File size:', blob.size, 'bytes');
+                console.log('📝 Filename:', filename);
+                
+                const response = await fetch(djangoUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log('📡 Response status:', response.status, response.statusText);
+                
+                // Try to parse response as JSON
+                let data;
+                try {
+                    data = await response.json();
+                } catch (parseError) {
+                    console.error('❌ Failed to parse JSON response:', parseError);
+                    const textResponse = await response.text();
+                    console.error('Raw response:', textResponse.substring(0, 500));
+                    throw new Error(`Server returned non-JSON response (${response.status})`);
+                }
+                
+                if (data.success) {
+                    console.log('✅ DXF saved to Django project:', data.filename);
+                    showStatus('✅ DXF saved to project successfully!', 'success');
+                    
+                    // Notify parent window (demo.html) to refresh the preview carousel
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({ 
+                            type: 'dxf_saved', 
+                            projectId: currentProjectId,
+                            fileData: data
+                        }, '*');
+                        console.log('📨 Sent refresh message to parent window');
+                    }
+                } else {
+                    console.error('❌ Django save failed:', data.error || 'Unknown error');
+                    showStatus(`⚠️ Downloaded but failed to save: ${data.error || 'Unknown error'}`, 'warning');
+                }
+                
+            } catch (error) {
+                console.error('❌ Error saving to Django:', error);
+                console.error('Error details:', error.message);
+                showStatus(`⚠️ Downloaded but failed to save: ${error.message}`, 'warning');
             }
         }
 
@@ -549,8 +638,14 @@
                 if (data.updated_canvas_data && editor) {
                     console.log('🔄 Updating canvas with AI-generated layout...');
                     
-                    // Reload canvas with updated data (no visual effects)
+                    // Reload canvas with updated data
                     editor.loadCanvasData(data.updated_canvas_data);
+                    
+                    // Force a complete canvas refresh
+                    editor.render();
+                    
+                    // Trigger a resize event to ensure proper redraw
+                    window.dispatchEvent(new Event('resize'));
                     
                     // Clear selections and prompts since changes are applied
                     selectedFixtures = [];
@@ -612,9 +707,34 @@
             
             promptArea.value = promptText;
             
+            // Mark that sample text is present
+            promptArea.dataset.hasSampleText = 'true';
+            
             // Enable generate button
             document.getElementById('generate-btn').disabled = false;
         }
+        
+        // Clear sample text when user clicks into the prompt box
+        document.addEventListener('DOMContentLoaded', function() {
+            const promptArea = document.getElementById('movement-prompt');
+            
+            promptArea.addEventListener('focus', function() {
+                // Only clear sample text if it's still there
+                if (this.dataset.hasSampleText === 'true' && selectedFixtures.length > 0) {
+                    const fixtureList = selectedFixtures.map(f => f.name).join(', ');
+                    this.value = `Selected fixtures: ${fixtureList}\n\n`;
+                    this.dataset.hasSampleText = 'false';
+                    
+                    // Move cursor to end
+                    this.setSelectionRange(this.value.length, this.value.length);
+                }
+            });
+            
+            // Mark as modified when user types
+            promptArea.addEventListener('input', function() {
+                this.dataset.hasSampleText = 'false';
+            });
+        });
     </script>
 </body>
 </html>

@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 import json
 import os
+import uuid
 
 def demo_page(request):
     """Serve the AI Project Demo frontend"""
@@ -31,19 +32,33 @@ def demo_projects_api(request):
         projects_data = []
         for project in projects:
             files_data = []
-            for file in project.files.all():
-                files_data.append({
+            dxf_files = []  # Separate array for existing DXF files
+            
+            # Get files ordered by creation date (newest first)
+            for file in project.files.all().order_by('-created_at'):
+                file_info = {
                     'id': str(file.id),
                     'filename': file.file.name.split('/')[-1] if file.file else 'Unknown',
                     'file_type': file.file_type if hasattr(file, 'file_type') else 'unknown',
                     'created_at': file.created_at.isoformat(),
                     'file_url': (file.file.url if (hasattr(file, 'file') and hasattr(file.file, 'url')) else ("/media/" + file.file.name)) if file.file else None
-                })
+                }
+                files_data.append(file_info)
+                
+                # Collect existing DXF files separately for preview
+                if file.file_type == 'dxf':
+                    dxf_files.append({
+                        'id': str(file.id),
+                        'filename': file.file.name.split('/')[-1] if file.file else 'Unknown',
+                        'dxf_url': file_info['file_url'],
+                        'created_at': file.created_at.isoformat()
+                    })
             
             projects_data.append({
                 'id': str(project.id),
                 'name': project.name,
-                'files': files_data
+                'files': files_data,
+                'existing_dxf_files': dxf_files  # Add existing DXF files for frontend
             })
         
         logger.info(f"Demo API: Returning {len(projects_data)} projects")
@@ -186,3 +201,59 @@ def demo_process_api(request):
         return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def save_dxf_to_project(request, project_id):
+    """API endpoint to save a modified DXF file to a project"""
+    from django.core.files.base import ContentFile
+    from .models import Project, ProjectFile
+    from datetime import datetime
+    
+    try:
+        # Validate project exists
+        try:
+            uuid.UUID(project_id)
+            project = Project.objects.get(id=project_id)
+        except (ValueError, Project.DoesNotExist):
+            response = JsonResponse({'error': 'Invalid project ID', 'success': False}, status=404)
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
+        
+        # Check if file was uploaded
+        if 'dxf_file' not in request.FILES:
+            response = JsonResponse({'error': 'No DXF file provided', 'success': False}, status=400)
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
+        
+        dxf_file = request.FILES['dxf_file']
+        
+        # Validate file extension
+        if not dxf_file.name.lower().endswith('.dxf'):
+            response = JsonResponse({'error': 'File must be a DXF file', 'success': False}, status=400)
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'layout_modified_{timestamp}.dxf'
+        
+        # Create ProjectFile record
+        project_file = ProjectFile(project=project)
+        project_file.file.save(filename, dxf_file, save=True)
+        
+        response = JsonResponse({
+            'success': True,
+            'message': 'DXF file saved successfully',
+            'file_id': str(project_file.id),
+            'filename': filename,
+            'file_url': project_file.file.url,
+            'created_at': project_file.created_at.isoformat()
+        })
+        response['Access-Control-Allow-Origin'] = '*'
+        return response
+        
+    except Exception as e:
+        response = JsonResponse({'error': str(e), 'success': False}, status=500)
+        response['Access-Control-Allow-Origin'] = '*'
+        return response
