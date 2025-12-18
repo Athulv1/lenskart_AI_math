@@ -41,7 +41,52 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable static file caching in de
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
+# Session storage folder for multi-worker compatibility
+SESSION_STORAGE_FOLDER = 'session_storage'
+os.makedirs(SESSION_STORAGE_FOLDER, exist_ok=True)
+
+# Session storage helper functions
+def save_session(session_id, session_data):
+    """Save session data to disk for multi-worker compatibility"""
+    session_file = os.path.join(SESSION_STORAGE_FOLDER, f"{session_id}.json")
+    try:
+        # Convert data to JSON-serializable format
+        serializable_data = {
+            'original_dxf': session_data.get('original_dxf'),
+            'filename': session_data.get('filename'),
+            'json_data': session_data.get('json_data'),
+            'modifications': session_data.get('modifications', [])
+        }
+        with open(session_file, 'w') as f:
+            json.dump(serializable_data, f)
+        print(f"💾 Saved session {session_id} to disk")
+    except Exception as e:
+        print(f"⚠️ Failed to save session {session_id}: {e}")
+
+def load_session(session_id):
+    """Load session data from disk"""
+    session_file = os.path.join(SESSION_STORAGE_FOLDER, f"{session_id}.json")
+    try:
+        if os.path.exists(session_file):
+            with open(session_file, 'r') as f:
+                data = json.load(f)
+            print(f"📂 Loaded session {session_id} from disk")
+            return data
+        else:
+            print(f"❌ Session file not found: {session_file}")
+            return None
+    except Exception as e:
+        print(f"⚠️ Failed to load session {session_id}: {e}")
+        return None
+
+def session_exists(session_id):
+    """Check if session exists on disk"""
+    session_file = os.path.join(SESSION_STORAGE_FOLDER, f"{session_id}.json")
+    return os.path.exists(session_file)
+
 # Store session data (use Redis/DB in production)
+# NOTE: This in-memory storage is kept for backward compatibility
+# but file-based storage is used for multi-worker deployments
 session_storage = {}
 
 # Gemini AI configuration
@@ -113,13 +158,15 @@ def upload_from_url():
         print(f"🔄 Converting DXF to JSON...")
         json_data = dxf_to_json(upload_path)
         
-        # Store in session
-        session_storage[session_id] = {
+        # Store in session (both memory and disk for multi-worker compatibility)
+        session_data = {
             'original_dxf': upload_path,
             'filename': filename,
             'json_data': json_data,
             'modifications': []
         }
+        session_storage[session_id] = session_data
+        save_session(session_id, session_data)
         
         # Extract canvas data
         canvas_data = extract_canvas_data(json_data, upload_path)
@@ -184,13 +231,15 @@ def upload_dxf():
         print(f"   Blocks: {len(json_data.get('blocks', {}))} definitions")
         print(f"   Modelspace: {len(json_data.get('modelspace', []))} entities")
         
-        # Store in session
-        session_storage[session_id] = {
+        # Store in session (both memory and disk for multi-worker compatibility)
+        session_data = {
             'original_dxf': upload_path,
             'filename': filename,
             'json_data': json_data,
             'modifications': []
         }
+        session_storage[session_id] = session_data
+        save_session(session_id, session_data)
         
         # Extract canvas data (fixtures and blueprint) - pass DXF path for accurate sizing
         canvas_data = extract_canvas_data(json_data, upload_path)
@@ -834,8 +883,12 @@ def move_fixture():
         data = request.json
         session_id = data.get('session_id')
         
-        if session_id not in session_storage:
+        if not session_exists(session_id):
             return jsonify({'error': 'Invalid session'}), 400
+        
+        # Load session from disk if not in memory
+        if session_id not in session_storage:
+            session_storage[session_id] = load_session(session_id)
         
         fixture_name = data.get('fixture_name')
         start_pos = data.get('start_position')
@@ -903,6 +956,7 @@ def move_fixture():
         
         # Store modification
         session_storage[session_id]['modifications'].append(modification)
+        save_session(session_id, session_storage[session_id])
         
         # Update JSON data
         update_json_with_modification(session_id, modification)
@@ -957,8 +1011,12 @@ def rotate_fixture():
         data = request.json
         session_id = data.get('session_id')
         
-        if session_id not in session_storage:
+        if not session_exists(session_id):
             return jsonify({'error': 'Invalid session'}), 400
+        
+        # Load session from disk if not in memory
+        if session_id not in session_storage:
+            session_storage[session_id] = load_session(session_id)
         
         fixture_name = data.get('fixture_name')
         new_rotation = data.get('rotation', 0)
@@ -1024,8 +1082,12 @@ def generate_with_ai():
         data = request.json
         session_id = data.get('session_id')
         
-        if session_id not in session_storage:
+        if not session_exists(session_id):
             return jsonify({'error': 'Invalid session'}), 400
+        
+        # Load session from disk if not in memory
+        if session_id not in session_storage:
+            session_storage[session_id] = load_session(session_id)
         
         user_prompt = data.get('prompt', '').strip()
         
@@ -1514,6 +1576,7 @@ Generate ONLY valid JSON without any markdown formatting or explanations.
         # Store output path in session
         session_storage[session_id]['ai_output_path'] = output_path
         session_storage[session_id]['ai_modifications'] = modifications
+        save_session(session_id, session_storage[session_id])
         
         # Count operations
         operations_count = {
@@ -1915,9 +1978,6 @@ def apply_ai_modifications(session_id, modifications):
         print(f"   ⚠️  No changes made")
         return None
     
-    # Update the session JSON data with modifications
-    session_storage[session_id]['json_data'] = json_data
-    
     # Set R2018 + MM format (same as prompt-based model)
     doc.header['$INSUNITS'] = 4  # Millimeters
     doc.header['$MEASUREMENT'] = 1  # Metric
@@ -1930,6 +1990,14 @@ def apply_ai_modifications(session_id, modifications):
     # Save (preserves original DXF version and format)
     print(f"💾 Saving modified DXF...")
     doc.saveas(output_path)
+    
+    # CRITICAL: Reload JSON from the modified DXF to get updated fixture positions
+    # This allows subsequent AI requests to work with the new positions
+    print(f"🔄 Reloading JSON from modified DXF...")
+    updated_json_data = dxf_to_json(output_path)
+    session_storage[session_id]['json_data'] = updated_json_data
+    session_storage[session_id]['original_dxf'] = output_path  # Use modified file as new baseline
+    save_session(session_id, session_storage[session_id])
     
     print(f"✅ Generated: {output_filename}")
     return output_path
@@ -2067,9 +2135,13 @@ def download_dxf(session_id):
     Uses AI-generated file if available, otherwise uses JSON-based file
     """
     try:
-        if session_id not in session_storage:
+        if not session_exists(session_id):
             print(f"❌ Invalid session: {session_id}")
             return jsonify({'error': 'Invalid session ID'}), 404
+        
+        # Load session from disk if not in memory
+        if session_id not in session_storage:
+            session_storage[session_id] = load_session(session_id)
         
         session_data = session_storage[session_id]
         original_filename = session_data.get('filename', 'unknown.dxf')
@@ -2136,8 +2208,12 @@ def download_dxf(session_id):
 @app.route('/session/<session_id>')
 def get_session_info(session_id):
     """Get session information"""
-    if session_id not in session_storage:
+    if not session_exists(session_id):
         return jsonify({'error': 'Invalid session'}), 400
+    
+    # Load session from disk if not in memory
+    if session_id not in session_storage:
+        session_storage[session_id] = load_session(session_id)
     
     session_data = session_storage[session_id]
     
