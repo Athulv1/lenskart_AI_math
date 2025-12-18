@@ -1635,6 +1635,93 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Function to add newly generated layouts to carousel (at the beginning)
+  function addNewLayoutsToCarousel(newFiles) {
+    const existingLayoutsContainer = document.getElementById('existing-layouts-container');
+    const existingLayoutsCarousel = document.getElementById('existing-layouts-carousel');
+    
+    // Show container if hidden
+    existingLayoutsContainer.classList.remove('hidden');
+    
+    logMessage(`✅ Generated ${newFiles.length} new layout(s)!`, "success");
+    
+    // Insert new layouts at the beginning of carousel
+    newFiles.forEach((dxfFile, index) => {
+      const card = document.createElement('div');
+      card.className = 'layout-preview-card new-layout'; // Add 'new-layout' class for styling
+      
+      // Format date (use current timestamp for new files)
+      const createdDate = dxfFile.created_at ? new Date(dxfFile.created_at) : new Date();
+      const dateStr = createdDate.toLocaleDateString() + ' ' + createdDate.toLocaleTimeString();
+      
+      // Use Flask server for preview when running locally
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
+      const fullPath = window.location.origin + dxfFile.dxf_url;
+      const previewUrl = isLocal ? 
+        (flaskServerUrl + '/canvas-preview?autoload=' + encodeURIComponent(fullPath)) : 
+        `/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
+      
+      // Extract filename from URL if not provided
+      const filename = dxfFile.filename || dxfFile.dxf_url.split('/').pop();
+      
+      card.innerHTML = `
+        <div class="layout-preview-badge" style="background: rgba(16, 185, 129, 0.2); border-color: #10B981; color: #10B981;">New</div>
+        <div class="layout-preview-frame">
+          <iframe src="${previewUrl}" scrolling="no" title="Layout Preview ${index + 1}" loading="lazy"></iframe>
+        </div>
+        <div class="layout-preview-info">
+          <div class="layout-preview-name">${filename}</div>
+          <div class="layout-preview-date">${dateStr}</div>
+        </div>
+        <div class="layout-preview-actions">
+          <button class="layout-action-btn layout-design-btn" data-dxf-url="${dxfFile.dxf_url}" data-filename="${filename}">
+            🎨 Design
+          </button>
+          <button class="layout-action-btn layout-download-btn" data-dxf-url="${dxfFile.dxf_url}" data-filename="${filename}">
+            ⬇️ Download
+          </button>
+        </div>
+      `;
+      
+      // Add click handlers to buttons
+      const designBtn = card.querySelector('.layout-design-btn');
+      const downloadBtn = card.querySelector('.layout-download-btn');
+      
+      designBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        logMessage(`Opening new layout in canvas editor: ${filename}`, "info");
+        openAiDashboard(dxfFile.dxf_url);
+      });
+      
+      downloadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        logMessage(`Downloading new layout: ${filename}`, "info");
+        
+        // Create temporary link and trigger download
+        const link = document.createElement('a');
+        link.href = dxfFile.dxf_url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        logMessage(`Download started: ${filename}`, "success");
+      });
+      
+      // Insert at the beginning (prepend)
+      existingLayoutsCarousel.insertBefore(card, existingLayoutsCarousel.firstChild);
+    });
+    
+    // Auto-scroll to the beginning to show new layouts
+    existingLayoutsCarousel.scrollTo({
+      left: 0,
+      behavior: 'smooth'
+    });
+    
+    logMessage("🎨 New layouts ready! Click 'Design' to edit any layout.", "success");
+  }
+
   // Function to load and display existing DXF layouts
   function loadExistingLayouts(project) {
     const existingLayoutsContainer = document.getElementById('existing-layouts-container');
@@ -1947,6 +2034,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Function to show DXF selection modal
+  // COMMENTED OUT - Using carousel display instead
+  /*
   function showDxfSelectionModal(processedFiles) {
     const modal = document.getElementById('dxf-selection-modal');
     const optionsContainer = document.getElementById('dxf-options-container');
@@ -1996,15 +2085,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // Show modal
     modal.classList.remove('hidden');
   }
+  */
 
   // Close modal button
+  // COMMENTED OUT - Modal not in use, using carousel instead
+  /*
   document.getElementById('close-modal-btn').addEventListener('click', () => {
     document.getElementById('dxf-selection-modal').classList.add('hidden');
     generateAiDashboardBtn.disabled = false;
     generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
   });
+  */
 
   // Reopen selection modal button
+  // COMMENTED OUT - Modal not in use, using carousel instead
+  /*
   document.getElementById('reopen-selection-btn').addEventListener('click', () => {
     if (currentProcessedFiles.length > 0) {
       logMessage("🔄 Reopening layout selection...", "info");
@@ -2013,6 +2108,7 @@ document.addEventListener("DOMContentLoaded", () => {
       logMessage("⚠️ No layouts available. Please generate new layouts.", "warning");
     }
   });
+  */
 
   // Combined button: Generate DXF + Open AI Dashboard
   generateAiDashboardBtn.addEventListener("click", async () => {
@@ -2041,10 +2137,14 @@ document.addEventListener("DOMContentLoaded", () => {
       // Check if multiple files were generated (new format)
       if (data.multiple_files && data.processed_files && data.processed_files.length > 0) {
         logMessage(`✅ Generated ${data.processed_files.length} layout options!`, "success");
-        logMessage("🎨 Please select your preferred layout to continue...", "info");
+        logMessage("📦 Adding new layouts to preview carousel...", "info");
         
-        // Show selection modal
-        showDxfSelectionModal(data.processed_files);
+        // Add new layouts to carousel instead of modal
+        addNewLayoutsToCarousel(data.processed_files);
+        
+        // Re-enable button
+        generateAiDashboardBtn.disabled = false;
+        generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
         
       }
       // Fallback: Single file format (backward compatibility)
