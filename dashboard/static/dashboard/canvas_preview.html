@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Preview</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #FFFFFF;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        
+        #preview-canvas {
+            display: block;
+            width: 100%;
+            height: 100vh;
+            cursor: default;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #2DD4BF;
+            font-size: 14px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="preview-canvas"></canvas>
+    <div id="loading">Loading preview...</div>
+
+    <script>
+        const canvas = document.getElementById('preview-canvas');
+        const ctx = canvas.getContext('2d');
+        const loading = document.getElementById('loading');
+        
+        // Get autoload URL from query parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const autoloadUrl = urlParams.get('autoload');
+        
+        // Fixture images cache
+        const fixtureImages = new Map();
+        let imagesLoaded = false;
+        
+        // Set canvas size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Load fixture images (complete mapping matching main canvas)
+        function loadFixtureImages() {
+            const imageMapping = {
+                // TV Screens
+                '43': "43''.png", '49': "49''.png", '55': "55''.png", '65': "65''.png",
+                'SCREEN_43': "43''.png", 'SCREEN_49': "49''.png", 'SCREEN_55': "55''.png", 'SCREEN_65': "65''.png",
+                'LG_SCREEN': 'LG_screen.png',
+                
+                // Fixtures
+                'AR': 'AR.png', 'BLUE_ZERO': 'Blue_zero.png', 'EURO_CENTRE': 'Euro_centre.png',
+                'QMS_DESK': 'QMS_desk.png',
+                
+                // Tables
+                'DISCUSSION_TABLE_LARGE': 'Discussion_table_large.png',
+                'DISCUSSION_TABLE_MEDIUM': 'Discussion_table_medium.png',
+                'DISCUSSION_TABLE_SMALL': 'Discussion_table_small.png',
+                'DINING_TABLE_LARGE': 'Dining_Table_large.png',
+                'DINING_TABLE_MEDIUM': 'Dining_Table_medium.png',
+                'CORIAN_TABLE': 'Corian_table.png',
+                'QC_TABLE_LARGE': 'QC_Table_large.png', 'QC_TABLE_MEDIUM': 'QC_Table_medium.png',
+                'REPAIR_TABLE_LARGE': 'Repair_Table_large.png', 'REPAIR_TABLE_MEDIUM': 'Repair_Table_medium.png',
+                'TABLE': 'Table.png',
+                
+                // Clinics
+                'CLINIC_WITH_SINK': 'Clinic_with_sink.png', 
+                'CLINIC_WITH_SINK_DP': 'Clinic_with_sink.png',
+                'WITH_SINK': 'Clinic_with_sink.png',
+                'WITHOUT_SINK': 'without_sink_unit.png', 
+                'REGULAR_CLINIC': 'Regular_clinic.png',
+                'CLINIC_REGULAR': 'Regular_clinic.png',
+                'CLINIC_REGULAR_DP': 'Regular_clinic.png',
+                'ROC_CLINIC': 'ROC_clinic.png',
+                'ROC_CLINIC_DP': 'ROC_clinic.png',
+                
+                // POS/Screen fixtures
+                'WITH_SCREEN_LARGE': 'with_screen_large.png', 
+                'WITH_SCREEN_MEDIUM': 'with_screen_medium.png',
+                'WITH_SCREEN_SMALL': 'with_screen_small.png', 
+                'WITH_SCREEN': 'with_screen.png',
+                'WITHOUT_SCREEN': 'without_screen.png',
+                'POS_WITH_SCREEN_LARGE': 'with_screen_large.png',
+                'POS_WITH_SCREEN_MEDIUM': 'with_screen_medium.png',
+                'POS_WITH_SCREEN_SMALL': 'with_screen_small.png',
+                'POS_WITHOUT_SCREEN': 'without_screen.png',
+                'WITH_LENSOMETER_LARGE': 'with_Lensometer_large.png',
+                'WITH_LENSOMETER_MEDIUM': 'with_Lensometer_medium.png',
+                
+                // JJ Fixtures
+                'JJ_FIXTURE_LARGE': 'jj_fixture_large.png', 'JJ_FIXTURE_MEDIUM': 'jj_fixture_medium.png',
+                'JJ_FIXTURE_DIFFERENT_LARGE': 'jj_fixture_different_large.png',
+                'JJ_FIXTURE_DIFFERENT_MEDIUM': 'jj_fixture_different_medium.png',
+                'JJ_SUPER_HYBRID_LARGE': 'jj_super_hybrid_large.png',
+                'JJ_SUPER_HYBRID_MEDIUM': 'jj_super_hybrid_medium.png',
+                'JJ_SUPER_HYBRID_SMALL': 'jj_super_hybrid_small.png',
+                
+                // VC Fixtures
+                'VC_FIXTURE_LARGE': 'vc_fixture_large.png', 'VC_FIXTURE_MEDIUM': 'vc_fixture_medium.png',
+                
+                // Seating
+                'SOFA_LARGE': 'Sofa_large.png', 
+                'SOFA_MEDIUM': 'Sofa_medium.png', 
+                'SOFA': 'sofa.png',
+                'LOUNGE_SEAT': 'Lounge_seat.png', 
+                'LARGE_BENCH': 'large_bench.png',
+                'MEDIUM_BENCH': 'medium_bench.png', 
+                'CHAIR_UNIT': 'chair_unit.png',
+                'CLINIC_STOOL': 'clinic_stool.png', 
+                'STOOL': 'stool.png',
+                'POUF': 'stool.png',
+                
+                // Mirrors (multiple variations)
+                'MIRROR': 'mirror.png',
+                'MIRROR_UNIT': 'mirror.png',
+                'MIRROR_DIFFERENT': 'mirror_different.png',
+                'DIFFERENT_MIRROR': 'mirror_different.png',
+                
+                // Other Equipment
+                'LENSOMETER': 'Lensometer.png', 
+                'LENSBAR': 'Lensbar.png',
+                'PICK_UP_COUNTER': 'pick_up_counter.png', 
+                'PICK_UP_WINDOW': 'pickup window.png',
+                'PICKUP_COUNTER': 'pick_up_counter.png',
+                'PICKUP_WINDOW': 'pickup window.png',
+                'DOOR': 'Door.png',
+                'DOOR_LEFT': 'Door.png',
+                'DOOR_RIGHT': 'Door.png',
+                'SINK_UNIT': 'sink_unit.png',
+                'STAFF_RACK': 'staff_rack.png', 
+                'STORAGE_RACK': 'storage_rack.png',
+                'TOILET': 'toilet.png', 
+                'UPS_RACK': 'ups_rack.png',
+                'WATER_DISPENSER': 'water_dispenser.png',
+                'WINDOW_1_SECTION': 'window_1_section.png', 
+                'WINDOW_3_SECTION': 'window_3_section.png',
+                'EYE_MASSAGE_AREA': 'Eye_massage_area.png',
+                'EYE_MASSAGE_CHAIR': 'Eye_massage_area.png',
+                'KEYBOARD_DRAWER': 'Keyboard_drawer.png'
+            };
+            
+            const imagePath = '/static/dashboard/images/';
+            const totalImages = Object.keys(imageMapping).length;
+            let loadedCount = 0;
+            let failedCount = 0;
+            
+            return new Promise((resolve) => {
+                // Deduplicate image files (some fixtures share same image)
+                const uniqueImages = new Set(Object.values(imageMapping));
+                const loadedFiles = new Set();
+                
+                Object.entries(imageMapping).forEach(([key, filename]) => {
+                    const img = new Image();
+                    
+                    img.onload = () => {
+                        loadedCount++;
+                        if (!loadedFiles.has(filename)) {
+                            loadedFiles.add(filename);
+                        }
+                        if (loadedCount === totalImages) {
+                            imagesLoaded = true;
+                            console.log(`✅ Loaded ${loadedFiles.size}/${uniqueImages.size} unique images (${totalImages} mappings)`);
+                            resolve();
+                        }
+                    };
+                    
+                    img.onerror = () => {
+                        failedCount++;
+                        loadedCount++;
+                        console.warn(`⚠️ Failed to load: ${filename}`);
+                        if (loadedCount === totalImages) {
+                            imagesLoaded = true;
+                            console.log(`⚠️ Completed with ${failedCount} failures (${loadedFiles.size}/${uniqueImages.size} loaded)`);
+                            resolve();
+                        }
+                    };
+                    
+                    img.src = imagePath + filename;
+                    fixtureImages.set(key.toUpperCase(), img);
+                });
+            });
+        }
+        
+        // Get fixture image
+        function getFixtureImage(fixtureName) {
+            const name = fixtureName.toUpperCase();
+            const baseName = name.replace(/_\d+$/, ''); // Remove trailing _1, _2, etc.
+            
+            if (fixtureImages.has(baseName)) {
+                return fixtureImages.get(baseName);
+            }
+            
+            // Check for partial matches
+            let bestMatch = null;
+            let bestMatchLength = 0;
+            for (const [key, img] of fixtureImages.entries()) {
+                if (baseName.includes(key) && key.length > bestMatchLength) {
+                    bestMatch = img;
+                    bestMatchLength = key.length;
+                }
+            }
+            return bestMatch;
+        }
+        
+        // Load and render DXF
+        let canvasDataCache = null;
+        
+        async function loadPreview() {
+            if (!autoloadUrl) {
+                ctx.fillStyle = '#64748B';
+                ctx.font = '14px sans-serif';
+                ctx.fillText('No file specified', canvas.width / 2 - 50, canvas.height / 2);
+                return;
+            }
+            
+            try {
+                loading.style.display = 'block';
+                
+                // Start both operations in parallel
+                const imageLoadPromise = loadFixtureImages();
+                // Detect Flask server URL
+                const dxfFetchPromise = fetch('/api/dashboard/upload-from-url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: autoloadUrl })
+                }).then(res => res.json());
+                
+                // Wait for DXF data first, render blueprint immediately
+                const data = await dxfFetchPromise;
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                canvasDataCache = data.canvas_data;
+                
+                // Render blueprint immediately (without waiting for images)
+                renderCanvas(canvasDataCache, false);
+                
+                // Wait for images, then re-render with fixtures
+                await imageLoadPromise;
+                loading.style.display = 'none';
+                
+                // Final render with all images loaded
+                renderCanvas(canvasDataCache, true);
+                
+            } catch (error) {
+                console.error('Preview load error:', error);
+                loading.style.display = 'none';
+                ctx.fillStyle = '#EF4444';
+                ctx.font = '14px sans-serif';
+                ctx.fillText('Failed to load preview', canvas.width / 2 - 70, canvas.height / 2);
+            }
+        }
+        
+        function renderCanvas(canvasData, renderFixtures = true) {
+            const fixtures = canvasData.fixtures || [];
+            const blueprint = canvasData.blueprint || [];
+            const bounds = canvasData.bounds || {};
+            
+            // Calculate scale to fit canvas (same as main canvas)
+            const boundsWidth = bounds.width || 10000;
+            const boundsHeight = bounds.height || 10000;
+            const padding = 50;
+            
+            const scaleX = (canvas.width - padding * 2) / boundsWidth;
+            const scaleY = (canvas.height - padding * 2) / boundsHeight;
+            const scale = Math.min(scaleX, scaleY);
+            
+            // Center offset (DXF coordinates)
+            const dxfCenterX = (bounds.min_x || 0) + boundsWidth / 2;
+            const dxfCenterY = (bounds.min_y || 0) + boundsHeight / 2;
+            
+            // Canvas center
+            const canvasCenterX = canvas.width / 2;
+            const canvasCenterY = canvas.height / 2;
+            
+            // Calculate offset to center the DXF in canvas
+            const offsetX = canvasCenterX - dxfCenterX * scale;
+            const offsetY = canvasCenterY + dxfCenterY * scale; // Note: + because Y is flipped
+            
+            // Clear canvas
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply global transform (SAME AS MAIN CANVAS)
+            ctx.save();
+            ctx.translate(offsetX, offsetY);
+            ctx.scale(scale, -scale);  // Flip Y-axis like main canvas
+            
+            // Draw blueprint (walls, etc.) - now in DXF coordinates
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 2 / scale;  // Adjust line width for scale
+            
+            blueprint.forEach(entity => {
+                if (entity.type === 'LINE') {
+                    ctx.beginPath();
+                    ctx.moveTo(entity.data.start[0], entity.data.start[1]);
+                    ctx.lineTo(entity.data.end[0], entity.data.end[1]);
+                    ctx.stroke();
+                } else if (entity.type === 'LWPOLYLINE' || entity.type === 'POLYLINE') {
+                    if (entity.data.points && entity.data.points.length > 1) {
+                        ctx.beginPath();
+                        ctx.moveTo(entity.data.points[0][0], entity.data.points[0][1]);
+                        for (let i = 1; i < entity.data.points.length; i++) {
+                            ctx.lineTo(entity.data.points[i][0], entity.data.points[i][1]);
+                        }
+                        if (entity.data.closed) {
+                            ctx.closePath();
+                        }
+                        ctx.stroke();
+                    }
+                } else if (entity.type === 'CIRCLE') {
+                    ctx.beginPath();
+                    ctx.arc(entity.data.center[0], entity.data.center[1], entity.data.radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                } else if (entity.type === 'ARC') {
+                    ctx.beginPath();
+                    ctx.arc(entity.data.center[0], entity.data.center[1], entity.data.radius, 
+                            entity.data.start_angle * Math.PI / 180, 
+                            entity.data.end_angle * Math.PI / 180);
+                    ctx.stroke();
+                }
+            });
+            
+            // Draw fixtures with EXACT positioning matching main canvas
+            if (renderFixtures) {
+                fixtures.forEach(fixture => {
+                // Get DXF world coordinates (insertion point)
+                const insertX = fixture.position[0];
+                const insertY = fixture.position[1];
+                
+                // Get block bounding box offset from origin (in DXF block-local coordinates)
+                const blockMinX = fixture.block_min_x !== undefined ? fixture.block_min_x : 0;
+                const blockMinY = fixture.block_min_y !== undefined ? fixture.block_min_y : 0;
+                
+                // Get dimensions
+                const width = fixture.width;
+                const height = fixture.height;
+                
+                // Get scale and rotation
+                const scaleX = fixture.scale_x || 1;
+                const scaleY = fixture.scale_y || 1;
+                const rotation = fixture.rotation || 0;
+                
+                ctx.save();
+                
+                // Apply transformation matrix (EXACTLY like main canvas)
+                // Build local transform: rotation + scale + translation
+                const rad = rotation * Math.PI / 180;
+                const cos = Math.cos(rad);
+                const sin = Math.sin(rad);
+                
+                // Transform matrix that maps block-local coords to DXF world coords
+                const a = scaleX * cos;
+                const b = scaleX * sin;
+                const c = -scaleY * sin;
+                const d = scaleY * cos;
+                const e = insertX;
+                const f = insertY;
+                
+                ctx.transform(a, b, c, d, e, f);
+                
+                // Draw rectangle at block's bounding box position (in block-local coordinates)
+                const rectX = blockMinX;
+                const rectY = blockMinY;
+                const rectWidth = width;
+                const rectHeight = height;
+                
+                // Try to get PNG image for this fixture
+                const fixtureImage = getFixtureImage(fixture.name);
+                
+                if (fixtureImage && fixtureImage.complete) {
+                    // Draw PNG image (same as main canvas)
+                    ctx.save();
+                    
+                    // High-quality image rendering
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    
+                    // Draw image at block position with exact dimensions
+                    ctx.drawImage(fixtureImage, rectX, rectY, rectWidth, rectHeight);
+                    
+                    ctx.restore();
+                    
+                    // Draw border around image (matching main canvas)
+                    ctx.strokeStyle = '#6b7280';  // Gray border
+                    ctx.lineWidth = Math.max(1.5, 2 / scale);
+                    ctx.strokeRect(rectX, rectY, rectWidth, rectHeight);
+                } else {
+                    // Fallback: Draw colored rectangle (if image not found or failed)
+                    ctx.fillStyle = 'rgba(45, 212, 191, 0.25)';
+                    ctx.strokeStyle = '#2DD4BF';
+                    ctx.lineWidth = 1.5 / scale;
+                    ctx.fillRect(rectX, rectY, rectWidth, rectHeight);
+                    ctx.strokeRect(rectX, rectY, rectWidth, rectHeight);
+                }
+                
+                    ctx.restore();
+                });
+            }
+            
+            // Restore global transform
+            ctx.restore();
+        }
+        
+        // Load preview on page load
+        loadPreview();
+    </script>
+</body>
+</html>

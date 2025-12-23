@@ -65,3 +65,66 @@ typing_extensions==4.13.2
 uritemplate==4.2.0
 urllib3==2.4.0
 Werkzeug==3.1.3
+
+
+Werkzeug==3.1.3
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+itsdangerous==2.2.0
+click==8.3.0
+
+# DXF and File Handling
+ezdxf==1.4.2
+Pillow==11.2.1
+
+# Geometry and Spatial Processing
+shapely==2.1.1
+numpy==2.2.6
+
+# AI and ML
+google-generativeai==0.8.5
+google-api-core==2.28.1
+google-ai-generativelanguage==0.6.15
+google-auth==2.42.1
+google-auth-httplib2==0.2.1
+googleapis-common-protos==1.71.0
+grpcio==1.76.0
+proto-plus==1.26.1
+protobuf==5.29.5
+
+# Computer Vision
+opencv-python==4.11.0.86
+pytesseract==0.3.13
+
+# HTTP and Networking
+requests==2.32.3
+urllib3==2.4.0
+certifi==2025.4.26
+chardet==5.2.0
+charset-normalizer==3.4.2
+idna==3.10
+
+# Utilities
+python-dotenv==1.1.0
+tqdm==4.67.1
+six==1.17.0
+typing-extensions==4.13.2
+typing-inspection==0.4.0
+
+# Security and Cryptography (if needed)
+cryptography==46.0.1
+pyasn1==0.6.1
+pyasn1_modules==0.4.2
+rsa==4.9.1
+pycparser==2.23
+cffi==2.0.0
+
+packaging==25.0
+pyparsing==3.2.3
+reportlab==4.4.1
+python-multipart==0.0.20
+fonttools==4.58.2
+cachetools==6.2.1
+annotated-types==0.7.0
+pydantic==2.11.3
+pydantic_core==2.33.1

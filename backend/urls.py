@@ -3,20 +3,25 @@ from django.urls import path, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve
+from django.shortcuts import redirect
 from app.api import api as app1_api
 from app.demo_views import demo_page, demo_projects_api, demo_process_api, save_dxf_to_project
+from dashboard.api import dashboard_api
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    
     path('api/app1/', app1_api.urls),
-    path('demo/', demo_page, name='demo_page'),
-    path('demo/api/projects/', demo_projects_api, name='demo_projects_api'),
-    path('demo/api/process/', demo_process_api, name='demo_process_api'),
-    path('demo/api/projects/<str:project_id>/save-dxf/', save_dxf_to_project, name='save_dxf_to_project'),
     
-    # Serve media files (works in both DEBUG=True and DEBUG=False)
+    path('api/dashboard/', dashboard_api.urls),
+
+    path('', lambda r: redirect('/static/dashboard/index.html')),
+    path('canvas', lambda r: redirect('/static/dashboard/canvas.html')),
+    path('canvas-preview', lambda r: redirect('/static/dashboard/canvas_preview.html')),
+    path('dashboard/', lambda r: redirect('/static/dashboard/index.html')),
+
     re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
-    
-    # Serve static files (works in both DEBUG=True and DEBUG=False)
-    re_path(r'^static/(?P<path>.*)$', serve, {'document_root': settings.BASE_DIR / 'static'}),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

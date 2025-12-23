@@ -1131,7 +1131,7 @@ button:disabled:hover::after {
   <!-- Page Header -->
   <div class="page-header">
     <div class="logo-container">
-      <img src="/static/images/logo.png" alt="Lenskart Logo" class="dashboard-logo">
+      <img src="/static/dashboard/images/logo.png" class="dashboard-logo">
     </div>
     <p class="subtitle">Interior Design Automation Platform</p>
     <div class="ai-badge">
@@ -1271,7 +1271,7 @@ Consider proper spacing for walkways, strategic placement of high-value items, a
 </div>
 
 <!-- Load unified API configuration from root -->
-<script src="/static/js/config.js"></script>
+<script src="/static/dashboard/js/config.js"></script>
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
@@ -1476,7 +1476,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadProjects(query = '') {
     try {
       logMessage("Loading projects from backend...");
-      const url = '/api/dashboard/projects/' + (query ? `?q=${encodeURIComponent(query)}` : '');
+      const url = API_CONFIG.getEndpoint('projects') + (query ? `?q=${encodeURIComponent(query)}` : '');
       const response = await fetch(url);
       const data = await response.json();
       
@@ -1566,7 +1566,8 @@ document.addEventListener("DOMContentLoaded", () => {
       // If not found, refresh the project list from backend
       if (!project) {
         logMessage("Project not in cache, refreshing list...");
-        const response = await fetch('/api/dashboard/projects/');
+        const url = API_CONFIG.getEndpoint('projects');
+        const response = await fetch(url);
         const data = await response.json();
         projectDropdownData = data.projects || [];
         project = projectDropdownData.find(p => p.id === projectId);
@@ -1658,9 +1659,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
       const fullPath = window.location.origin + dxfFile.dxf_url;
-      const previewUrl = isLocal ? 
-        (flaskServerUrl + '/canvas-preview?autoload=' + encodeURIComponent(fullPath)) : 
-        `/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
+      const previewUrl = `/static/dashboard/canvas_preview.html?autoload=${encodeURIComponent(fullPath)}`;
       
       // Extract filename from URL if not provided
       const filename = dxfFile.filename || dxfFile.dxf_url.split('/').pop();
@@ -1757,9 +1756,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
       const fullPath = window.location.origin + dxfFile.dxf_url;
-      const previewUrl = isLocal ? 
-        (flaskServerUrl + '/canvas-preview?autoload=' + encodeURIComponent(fullPath)) : 
-        `/canvas-preview?autoload=${encodeURIComponent(fullPath)}`;
+      const previewUrl = `/static/dashboard/canvas_preview.html?autoload=${encodeURIComponent(fullPath)}`;
+
       
       card.innerHTML = `
         <div class="layout-preview-badge">Existing</div>
@@ -1823,7 +1821,7 @@ document.addEventListener("DOMContentLoaded", () => {
       button.textContent = "Processing...";
       logMessage(`Starting ${mode} flow processing...`);
 
-      const response = await fetch('/demo/api/process/', {
+      const response = await fetch(API_CONFIG.getEndpoint('process'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2005,33 +2003,32 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Function to open AI Dashboard with selected DXF
   function openAiDashboard(dxfUrl) {
-    logMessage("🔄 Step 2/2: Loading DXF to Flask App...", "info");
+    logMessage("🔄 Step 2/2: Opening Design Editor...", "info");
     generateAiDashboardBtn.textContent = "🚀 Opening Dashboard...";
     
-    // Use Flask server when running locally so previews/canvas come from Flask
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const flaskServerUrl = isLocal ? 'http://localhost:5000' : window.location.origin;
-    let aiAppUrl = isLocal ? (flaskServerUrl + '/canvas') : '/canvas';
+    let aiAppUrl = '/static/dashboard/canvas.html';
+    
     const fullPath = window.location.origin + dxfUrl;
+    
     aiAppUrl += '?autoload=' + encodeURIComponent(fullPath);
     
-    // Add project_id to URL if available
     if (currentProject && currentProject.id) {
       aiAppUrl += '&project_id=' + encodeURIComponent(currentProject.id);
       console.log('📎 Passing project_id:', currentProject.id);
     }
     
-    console.log('🚀 Opening Flask canvas:', aiAppUrl);
+    console.log('🚀 Opening Django Canvas:', aiAppUrl);
     console.log('📄 DXF URL:', fullPath);
     
-    // Open Flask AI Dashboard with autoload
     window.open(aiAppUrl, '_blank');
-    logMessage(`✅ AI Dashboard opened at ${aiAppUrl}`, "success");
-    logMessage("📎 DXF file will auto-load in canvas editor", "success");
+    
+    logMessage(`✅ Editor opened successfully`, "success");
+    logMessage("📎 DXF file will load automatically", "success");
     
     generateAiDashboardBtn.disabled = false;
     generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
-  }
+}
+
 
 
   // Combined button: Generate DXF + Open AI Dashboard
@@ -2047,42 +2044,40 @@ document.addEventListener("DOMContentLoaded", () => {
     generateAiDashboardBtn.textContent = "⏳ Generating DXF...";
     
     try {
-      const response = await fetch(`/demo/api/process/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          file_id: processableFileId,
-          mode: 'math' 
-        })
+      const response = await fetch(API_CONFIG.getEndpoint('process'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            file_id: processableFileId,
+            mode: 'math' 
+          })
       });
+
 
       const data = await response.json();
       
       // Check if multiple files were generated (new format)
-      if (data.multiple_files && data.processed_files && data.processed_files.length > 0) {
-        logMessage(`✅ Generated ${data.processed_files.length} layout options!`, "success");
-        logMessage("📦 Adding new layouts to preview carousel...", "info");
-        
-        // Add new layouts to carousel instead of modal
-        addNewLayoutsToCarousel(data.processed_files);
-        
-        // Re-enable button
-        generateAiDashboardBtn.disabled = false;
-        generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
-        
-      }
-      // Fallback: Single file format (backward compatibility)
-      else if (data.download_url) {
-        generatedDxfPath = data.download_url;
-        logMessage("✅ Successfully completed! Ready for AI enhancement", "success");
-        logMessage(`📄 Generated DXF file path: ${data.download_url}`, "info");
-        
-        openAiDashboard(data.download_url);
-        
+      if (data.success) {
+          logMessage("✅ Processing completed!", "success");
+          
+          // Case A: Multiple files were generated (Show in Carousel)
+          if (data.multiple_files && data.processed_files && data.processed_files.length > 0) {
+              logMessage(`📦 Found ${data.processed_files.length} layout options.`, "info");
+              addNewLayoutsToCarousel(data.processed_files);
+          } 
+          // Case B: Single file generated (Open Editor directly)
+          else if (data.download_url) {
+              logMessage("🎨 Opening editor...", "info");
+              openAiDashboard(data.download_url);
+          }
+          
+          // Re-enable button
+          generateAiDashboardBtn.disabled = false;
+          generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
       } else {
-        logMessage(`❌ DXF generation failed: ${data.error || 'Unknown error'}`, "error");
-        generateAiDashboardBtn.disabled = false;
-        generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
+          logMessage(`❌ Error: ${data.error}`, "error");
+          generateAiDashboardBtn.disabled = false;
+          generateAiDashboardBtn.textContent = "🚀 AI DXF DASHBOARD EDITOR";
       }
       
     } catch (error) {

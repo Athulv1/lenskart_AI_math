@@ -66,3 +66,4 @@ app/app.py
 app/get_points.py
 
 local_settings.py
+backup/
