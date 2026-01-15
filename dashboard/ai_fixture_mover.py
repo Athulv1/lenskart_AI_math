@@ -36,7 +36,8 @@ class AIFixtureMover:
         """Initialize with Gemini API key"""
         self.api_key = api_key
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-pro-preview-03-25')
+        # Use Gemini 2.0 Flash (latest stable model)
+        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
         self.dxf_file = None
         self.fixtures = []
         

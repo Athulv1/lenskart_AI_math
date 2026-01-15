@@ -2,6 +2,7 @@ import uuid
 import os
 import json
 import requests
+import logging
 from ninja import NinjaAPI, Schema, File
 from ninja.files import UploadedFile
 from django.http import FileResponse, JsonResponse
@@ -10,6 +11,7 @@ from . import utils
 from .ai_fixture_mover import AIFixtureMover
 from app.models import Project, ProjectFile
 
+logger = logging.getLogger(__name__)
 
 dashboard_api = NinjaAPI(urls_namespace="dashboard")
 
@@ -54,6 +56,22 @@ def upload_dxf(request, dxf_file: UploadedFile = File(...)):
             destination.write(chunk)
             
     json_data = utils.dxf_to_json(upload_path)
+    canvas_data = utils.extract_canvas_data(json_data, upload_path)
+    
+    # CRITICAL: Add boundary information to json_data for math model
+    # Boundaries are nested under 'bounds' in canvas_data
+    bounds = canvas_data.get('bounds', {})
+    json_data['room_min_x'] = bounds.get('room_min_x')
+    json_data['room_max_x'] = bounds.get('room_max_x')
+    json_data['room_min_y'] = bounds.get('room_min_y')
+    json_data['room_max_y'] = bounds.get('room_max_y')
+    json_data['min_x'] = bounds.get('min_x')
+    json_data['max_x'] = bounds.get('max_x')
+    json_data['min_y'] = bounds.get('min_y')
+    json_data['max_y'] = bounds.get('max_y')
+    
+    print(f"✅ Saved boundaries to session: room X=[{json_data['room_min_x']}, {json_data['room_max_x']}], Y=[{json_data['room_min_y']}, {json_data['room_max_y']}]")
+    
     session_data = {
         'original_dxf': upload_path,
         'filename': filename,
@@ -61,7 +79,6 @@ def upload_dxf(request, dxf_file: UploadedFile = File(...)):
         'modifications': []
     }
     utils.save_session(session_id, session_data)
-    canvas_data = utils.extract_canvas_data(json_data, upload_path)
     
     return {
         'success': True,
@@ -117,12 +134,59 @@ def rotate_fixture(request, data: RotateFixtureSchema):
 
 @dashboard_api.post("/generate_with_ai")
 def generate_with_ai(request, data: AiGenerateSchema):
-    result = utils.generate_with_ai_logic(data.session_id, data.prompt)
+    """
+    Enhanced endpoint with prompt classification and mathematical model integration.
+    Routes prompts to either direct AI or math model + AI based on complexity.
+    """
+    from .enhanced_ai_pipeline import EnhancedAIPipeline
     
-    if not result.get('success'):
-        return JsonResponse(result, status=400)
+    session_data = utils.load_session(data.session_id)
+    if not session_data:
+        return JsonResponse({"error": "Invalid session"}, status=404)
+    
+    # Initialize enhanced pipeline
+    GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+    if not GEMINI_API_KEY:
+        return JsonResponse({"error": "AI service not configured"}, status=500)
+    
+    try:
+        pipeline = EnhancedAIPipeline(GEMINI_API_KEY)
         
-    return result
+        # Process prompt through enhanced pipeline
+        result = pipeline.process_prompt(data.prompt, session_data)
+        
+        if not result.get('success'):
+            return JsonResponse(result, status=400)
+        
+        # Apply modifications to DXF
+        output_path = utils.apply_modifications_to_dxf(
+            session_data['original_dxf'],
+            result['fixtures'],
+            data.session_id
+        )
+        
+        # Update session
+        session_data['ai_output_path'] = output_path
+        session_data['modifications'] = session_data.get('modifications', [])
+        session_data['modifications'].append(result)
+        utils.save_session(data.session_id, session_data)
+        
+        return {
+            'success': True,
+            'operation_type': result.get('operation_type'),
+            'method': result.get('method'),
+            'fixtures_modified': len(result.get('fixtures', [])),
+            'classification': result.get('classification', {}),
+            'warnings': result.get('warnings', []),
+            'download_url': f'/api/dashboard/download/{data.session_id}'
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in generate_with_ai: {e}", exc_info=True)
+        return JsonResponse({
+            "success": False,
+            "error": str(e)
+        }, status=500)
 
 @dashboard_api.get("/download/{session_id}")
 def download_dxf(request, session_id: str):

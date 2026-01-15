@@ -1151,6 +1151,10 @@ def generate_with_ai_logic(session_id, user_prompt):
         # Load session
         session_data = load_session(session_id)
         
+        # Ensure session is in memory for apply_ai_modifications
+        if session_id not in session_storage:
+            session_storage[session_id] = session_data
+        
         # Initialize Gemini
         GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
         genai.configure(api_key=GEMINI_API_KEY)
@@ -1223,3 +1227,134 @@ def generate_with_ai_logic(session_id, user_prompt):
         import traceback
         traceback.print_exc()
         return {'success': False, 'error': str(e)}
+
+
+def apply_modifications_to_dxf(dxf_path, fixtures, session_id):
+    """
+    Apply fixture modifications to DXF file for enhanced AI pipeline.
+    
+    Args:
+        dxf_path: Path to original DXF file
+        fixtures: List of fixture modifications from AI/math model
+        session_id: Session identifier
+        
+    Returns:
+        Path to modified DXF file
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Load the DXF file
+        logger.info(f"Loading DXF file: {dxf_path}")
+        print(f"\n📂 Loading DXF file: {dxf_path}")
+        doc = ezdxf.readfile(dxf_path)
+        msp = doc.modelspace()
+        
+        # DEBUG: List all INSERT entities to understand what's available
+        all_inserts = [e for e in msp if e.dxftype() == 'INSERT']
+        logger.info(f"Found {len(all_inserts)} INSERT entities in DXF")
+        print(f"📊 Found {len(all_inserts)} INSERT entities in DXF")
+        
+        # Get unique block names for debugging
+        unique_blocks = sorted(set(e.dxf.name for e in all_inserts))
+        logger.info(f"Unique block names in DXF: {unique_blocks}")
+        print(f"📋 ALL block names in DXF ({len(unique_blocks)} unique):")
+        for i, name in enumerate(unique_blocks):
+            print(f"   {i+1:2d}. {name}")
+        
+        # Show what we're trying to modify
+        print(f"\n🎯 Attempting to modify {len(fixtures)} fixtures:")
+        for f in fixtures:
+            print(f"   - {f.get('block_name')} -> {f.get('new_position')}")
+        
+        changes_made = 0
+        
+        for fixture in fixtures:
+            block_name = fixture.get('block_name')
+            new_position = fixture.get('new_position')
+            rotation = fixture.get('rotation', 0.0)
+            action = fixture.get('action', 'move')
+            
+            if not block_name:
+                continue
+            
+            logger.info(f"Processing {action} for {block_name} at position {new_position}")
+            
+            if action == 'remove' or action == 'delete':
+                # Remove fixture from modelspace
+                entities_to_delete = []
+                for entity in msp:
+                    if entity.dxftype() == 'INSERT' and entity.dxf.name == block_name:
+                        entities_to_delete.append(entity)
+                
+                for entity in entities_to_delete:
+                    msp.delete_entity(entity)
+                    changes_made += 1
+                    logger.info(f"Deleted fixture: {block_name}")
+                    
+            elif new_position and len(new_position) >= 2:
+                # Move/update fixture position
+                original_position = fixture.get('original_position')
+                
+                print(f"\n🔍 Searching for {block_name}:")
+                print(f"   Original pos: {original_position}")
+                print(f"   Target pos: {new_position}")
+                
+                # Find and update the fixture (case-insensitive matching)
+                fixture_found = False
+                block_name_upper = block_name.upper()
+                candidates_found = []
+                
+                for entity in msp:
+                    if entity.dxftype() == 'INSERT':
+                        entity_name_upper = entity.dxf.name.upper()
+                        
+                        # Match block names (case-insensitive)
+                        if entity_name_upper == block_name_upper:
+                            pos = entity.dxf.insert
+                            candidates_found.append((entity.dxf.name, [pos.x, pos.y]))
+                            
+                            # If original position specified, match it
+                            if original_position:
+                                dist = abs(pos.x - original_position[0]) + abs(pos.y - original_position[1])
+                                print(f"   Found candidate at [{pos.x:.1f}, {pos.y:.1f}], distance from original: {dist:.1f}mm")
+                                
+                                if abs(pos.x - original_position[0]) < 1.0 and abs(pos.y - original_position[1]) < 1.0:
+                                    entity.dxf.insert = (new_position[0], new_position[1], pos.z)
+                                    if rotation != 0:
+                                        entity.dxf.rotation = rotation
+                                    changes_made += 1
+                                    fixture_found = True
+                                    print(f"   ✅ Moved {entity.dxf.name} from {[pos.x, pos.y]} to {new_position}")
+                                    break
+                            else:
+                                # Move first instance found (no original position check)
+                                old_pos = [pos.x, pos.y]
+                                entity.dxf.insert = (new_position[0], new_position[1], pos.z)
+                                if rotation != 0:
+                                    entity.dxf.rotation = rotation
+                                changes_made += 1
+                                fixture_found = True
+                                print(f"   ✅ Moved {entity.dxf.name} from {old_pos} to {new_position}")
+                                break
+                
+                if not fixture_found:
+                    logger.warning(f"Fixture not found: {block_name}")
+                    print(f"   ❌ Could not match fixture: {block_name}")
+                    if candidates_found:
+                        print(f"   📍 Candidates found: {candidates_found}")
+        
+        # Save modified DXF
+        output_filename = f"{session_id}_modified.dxf"
+        output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+        doc.saveas(output_path)
+        
+        logger.info(f"Saved modified DXF to: {output_path} ({changes_made} changes)")
+        print(f"\n💾 Saved modified DXF: {output_path} ({changes_made} changes made)")
+        
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"Error applying modifications to DXF: {e}", exc_info=True)
+        return None
