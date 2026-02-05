@@ -20,6 +20,13 @@ from django.http import FileResponse
 from django.conf import settings
 
 from .models import Project, ProjectFile, SiteMedia
+from .plan_extractors import (
+    save_all_plans_to_json,
+    get_plans_output_path,
+    write_plans_json,
+    transform_layout_json,
+    EURO_STRATEGIES
+)
 from .schema import ProjectDetailSchema, ErrorSchema, ProjectFileSchema, ProjectUpdateSchema
 from django.db import transaction
 
@@ -862,6 +869,82 @@ def process_floorplan(request, file_id: uuid.UUID):
                     continue
                 
                 logger.info(f"Processing generated file: {source_dxf_path}")
+                
+                # --- JSON PLANS EXPORT ---
+                try:
+                    # Extract clinic plans from doc's cached results
+                    clinic_results = getattr(doc, 'clinic_placement_results', {})
+                    
+                    # Include ALL ranked layouts (placed and unplaced) for future use
+                    all_ranked = clinic_results.get('all_ranked_plans', [])
+                    top_10 = clinic_results.get('top_10_ranked_plans', [])
+                    
+                    clinic_plans = {
+                        "total_clinics_required": doc.display_calcs.get('clinics', 0),
+                        "ranked_layouts": top_10 if top_10 else all_ranked,
+                        "all_ranked_plans": all_ranked,  # ALL plans for future use
+                        "remaining_fixtures_queue": list(clinic_results.get('remaining_clinics_queue', []))
+                    }
+                    
+                    # Get euro plans from doc's cached euro_placement_blueprint
+                    euro_blueprint = getattr(doc, 'euro_placement_blueprint', None)
+                    if euro_blueprint:
+                        euro_plans = euro_blueprint
+                        logger.info(f"✅ Found euro_placement_blueprint with {len(euro_blueprint.get('all_options', {}))} patterns")
+                    else:
+                        # Fallback to empty if not cached
+                        logger.warning("⚠️ No euro_placement_blueprint found on doc - using empty defaults")
+                        euro_plans = {
+                            "required_count": doc.display_calcs.get('floor_fixtures', 0),
+                            "all_options": {},
+                            "best_pattern_name": "None"
+                        }
+                    
+                    # Add the ACTUALLY PLACED pattern info for accurate JSON
+                    actually_placed = getattr(doc, 'actually_placed_euro_pattern', None)
+                    if actually_placed:
+                        euro_plans["actually_placed_pattern"] = actually_placed
+                        logger.info(f"✅ Actually placed pattern: {actually_placed.get('pattern_name', 'unknown')}")
+                    
+                    # Generate JSON output path (same dir as DXF)
+                    json_output_path = get_plans_output_path(source_dxf_path)
+                    
+                    # Save all plans to JSON (flat format first)
+                    plans_result = save_all_plans_to_json(
+                        clinic_plans=clinic_plans,
+                        euro_plans=euro_plans,
+                        output_path=json_output_path,
+                        floorplan_id=str(project.id),
+                        metadata={
+                            "proto_value": str(doc.display_calcs.get('proto_value', '')),
+                            "total_area_sqft": floor_area if 'floor_area' in dir() else 0,
+                            "doc_index": i,
+                            "source_dxf": source_dxf_path
+                        },
+                        required_euro_count=doc.display_calcs.get('floor_fixtures', 6)
+                    )
+                    
+                    if plans_result.get('_saved_to'):
+                        logger.info(f"✅ Saved flat plans JSON to: {plans_result['_saved_to']}")
+                        
+                        # Transform to hierarchical clinic-centric format
+                        try:
+                            hierarchical = transform_layout_json(plans_result)
+                            
+                            # Overwrite with hierarchical format
+                            with open(json_output_path, 'w', encoding='utf-8') as f:
+                                import json as json_module
+                                json_module.dump(hierarchical, f, indent=2, default=str, ensure_ascii=False)
+                            
+                            logger.info(f"✅ Transformed to hierarchical format: {json_output_path}")
+                        except Exception as transform_e:
+                            logger.error(f"Failed to transform to hierarchical format: {transform_e}")
+                    else:
+                        logger.warning(f"⚠️ Failed to save plans JSON: {plans_result.get('_save_error', 'Unknown error')}")
+                        
+                except Exception as json_e:
+                    logger.error(f"Failed to generate plans JSON for {source_dxf_path}: {json_e}")
+                # --- END JSON PLANS EXPORT ---
                 
                 try:
                     # Open the generated DXF file and save it as a new ProjectFile

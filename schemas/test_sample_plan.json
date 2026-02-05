@@ -1,0 +1,327 @@
+{
+    "floorplan_id": "88c9e30d-b1b1-4b5e-8fe1-f54b04a74396",
+    "timestamp": "2026-01-27T12:30:00+05:30",
+    "metadata": {
+        "proto_value": "16L",
+        "total_area_sqft": 1850.5,
+        "back_room_location": "left",
+        "room_max_y": 14250.0,
+        "room_min_y": 0.0
+    },
+    "clinic_plans": {
+        "total_clinics_required": 3,
+        "ranked_layouts": [
+            {
+                "Rank": 1,
+                "Placed": false,
+                "score": 1847.50,
+                "fixtures": [
+                    "ROC_clinic",
+                    "Clinic_with_sink",
+                    "Clinic_regular"
+                ],
+                "combo": [
+                    "H",
+                    "V",
+                    "V"
+                ],
+                "gaps": [
+                    -100.0,
+                    800.0,
+                    0.0
+                ],
+                "coordinates": [
+                    {
+                        "name": "ROC_clinic",
+                        "target_center": [
+                            8450.25,
+                            12875.50
+                        ],
+                        "mirror_scale": [
+                            1.0,
+                            1.0
+                        ],
+                        "bottom_y": 10523.75,
+                        "zone_id": "Zone_2"
+                    },
+                    {
+                        "name": "Clinic_with_sink",
+                        "target_center": [
+                            6820.00,
+                            12875.50
+                        ],
+                        "mirror_scale": [
+                            1.0,
+                            -1.0
+                        ],
+                        "bottom_y": 10875.25,
+                        "zone_id": "Zone_2"
+                    },
+                    {
+                        "name": "Clinic_regular",
+                        "target_center": [
+                            4275.75,
+                            12875.50
+                        ],
+                        "mirror_scale": [
+                            1.0,
+                            1.0
+                        ],
+                        "bottom_y": 10650.00,
+                        "zone_id": "Zone_2"
+                    }
+                ],
+                "_debug_zone": "Zone_2",
+                "_debug_depth_score": 2347.50,
+                "_debug_penalty": 0.0
+            },
+            {
+                "Rank": 2,
+                "Placed": false,
+                "score": 2150.00,
+                "fixtures": [
+                    "ROC_clinic",
+                    "Clinic_with_sink"
+                ],
+                "combo": [
+                    "H",
+                    "H"
+                ],
+                "gaps": [
+                    -100.0,
+                    0.0
+                ],
+                "coordinates": [
+                    {
+                        "name": "ROC_clinic",
+                        "target_center": [
+                            7500.00,
+                            12900.00
+                        ],
+                        "mirror_scale": [
+                            1.0,
+                            1.0
+                        ],
+                        "bottom_y": 10800.00,
+                        "zone_id": "Zone_1"
+                    },
+                    {
+                        "name": "Clinic_with_sink",
+                        "target_center": [
+                            5200.00,
+                            12900.00
+                        ],
+                        "mirror_scale": [
+                            1.0,
+                            1.0
+                        ],
+                        "bottom_y": 10800.00,
+                        "zone_id": "Zone_1"
+                    }
+                ],
+                "_debug_zone": "Zone_1",
+                "_debug_depth_score": 2650.00,
+                "_debug_penalty": 1500.0
+            }
+        ],
+        "remaining_fixtures_queue": [
+            "Clinic_regular"
+        ]
+    },
+    "euro_plans": {
+        "required_count": 6,
+        "zone_bounds": {
+            "min_x": 1350.0,
+            "min_y": 2850.0,
+            "max_x": 10650.0,
+            "max_y": 9450.0
+        },
+        "best_pattern_name": "column_wise_even_cols",
+        "all_options": {
+            "row_wise_even_rows": {
+                "count": 6,
+                "rank": 2,
+                "placed": false,
+                "placements": {
+                    "count_1": {
+                        "coordinates": [
+                            1350.0,
+                            2850.0
+                        ]
+                    },
+                    "count_2": {
+                        "coordinates": [
+                            2390.0,
+                            2850.0
+                        ]
+                    },
+                    "count_3": {
+                        "coordinates": [
+                            3430.0,
+                            2850.0
+                        ]
+                    },
+                    "count_4": {
+                        "coordinates": [
+                            1350.0,
+                            5200.0
+                        ]
+                    },
+                    "count_5": {
+                        "coordinates": [
+                            2390.0,
+                            5200.0
+                        ]
+                    },
+                    "count_6": {
+                        "coordinates": [
+                            3430.0,
+                            5200.0
+                        ]
+                    }
+                }
+            },
+            "row_wise_odd_rows": {
+                "count": 5,
+                "rank": 3,
+                "placed": false,
+                "placements": {
+                    "count_1": {
+                        "coordinates": [
+                            1350.0,
+                            4025.0
+                        ]
+                    },
+                    "count_2": {
+                        "coordinates": [
+                            2390.0,
+                            4025.0
+                        ]
+                    },
+                    "count_3": {
+                        "coordinates": [
+                            3430.0,
+                            4025.0
+                        ]
+                    },
+                    "count_4": {
+                        "coordinates": [
+                            1350.0,
+                            6375.0
+                        ]
+                    },
+                    "count_5": {
+                        "coordinates": [
+                            2390.0,
+                            6375.0
+                        ]
+                    }
+                }
+            },
+            "column_wise_even_cols": {
+                "count": 8,
+                "rank": 1,
+                "placed": false,
+                "placements": {
+                    "count_1": {
+                        "coordinates": [
+                            1350.0,
+                            2850.0
+                        ]
+                    },
+                    "count_2": {
+                        "coordinates": [
+                            1350.0,
+                            3890.0
+                        ]
+                    },
+                    "count_3": {
+                        "coordinates": [
+                            1350.0,
+                            4930.0
+                        ]
+                    },
+                    "count_4": {
+                        "coordinates": [
+                            3700.0,
+                            2850.0
+                        ]
+                    },
+                    "count_5": {
+                        "coordinates": [
+                            3700.0,
+                            3890.0
+                        ]
+                    },
+                    "count_6": {
+                        "coordinates": [
+                            3700.0,
+                            4930.0
+                        ]
+                    },
+                    "count_7": {
+                        "coordinates": [
+                            6050.0,
+                            2850.0
+                        ]
+                    },
+                    "count_8": {
+                        "coordinates": [
+                            6050.0,
+                            3890.0
+                        ]
+                    }
+                }
+            },
+            "column_wise_odd_cols": {
+                "count": 7,
+                "rank": 4,
+                "placed": false,
+                "placements": {
+                    "count_1": {
+                        "coordinates": [
+                            2525.0,
+                            2850.0
+                        ]
+                    },
+                    "count_2": {
+                        "coordinates": [
+                            2525.0,
+                            3890.0
+                        ]
+                    },
+                    "count_3": {
+                        "coordinates": [
+                            2525.0,
+                            4930.0
+                        ]
+                    },
+                    "count_4": {
+                        "coordinates": [
+                            4875.0,
+                            2850.0
+                        ]
+                    },
+                    "count_5": {
+                        "coordinates": [
+                            4875.0,
+                            3890.0
+                        ]
+                    },
+                    "count_6": {
+                        "coordinates": [
+                            4875.0,
+                            4930.0
+                        ]
+                    },
+                    "count_7": {
+                        "coordinates": [
+                            7225.0,
+                            2850.0
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}

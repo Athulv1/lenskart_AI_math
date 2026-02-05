@@ -1,0 +1,103 @@
+{
+  "floorplan_id": "demo-store-001",
+  "timestamp": "2026-01-28T17:31:40.863736",
+  "metadata": {
+    "area_sqm": 45,
+    "demo": true
+  },
+  "clinic_plans": {
+    "total_clinics_required": 2,
+    "ranked_layouts": [
+      {
+        "Rank": 1,
+        "Placed": true,
+        "score": 1500.0,
+        "fixtures": [
+          "ROC_clinic",
+          "Clinic_regular"
+        ]
+      }
+    ]
+  },
+  "euro_plans_by_strategy": {
+    "strategy_1": {
+      "success": true,
+      "plan": {
+        "strategy_num": 1,
+        "strategy_name": "basic_qms",
+        "rotation": 90.0,
+        "description": "Basic QMS-anchored placement with dynamic gaps",
+        "chosen_pattern_name": "column_wise_even_cols",
+        "max_capacity": 5,
+        "placed_count": 4,
+        "overflow": 0,
+        "parameters": {
+          "GAP_ABOVE_QMS": 800.0,
+          "max_fixtures_per_row": 3
+        },
+        "placements": []
+      }
+    },
+    "strategy_2": {
+      "success": true,
+      "plan": {
+        "strategy_num": 2,
+        "strategy_name": "lane_strategy",
+        "rotation": 90.0,
+        "description": "Lane persistence strategy - maintains X alignment",
+        "chosen_pattern_name": "column_wise_even_cols",
+        "max_capacity": 5,
+        "placed_count": 4,
+        "overflow": 0,
+        "parameters": {
+          "GAP_ABOVE_QMS": 800.0,
+          "max_fixtures_per_row": 3
+        },
+        "placements": []
+      }
+    },
+    "strategy_3": {
+      "success": true,
+      "plan": {
+        "strategy_num": 3,
+        "strategy_name": "v1_og_rotated",
+        "rotation": 90.0,
+        "description": "Advanced lane strategy with row-size-triggered re-centering",
+        "chosen_pattern_name": "column_wise_even_cols",
+        "max_capacity": 5,
+        "placed_count": 4,
+        "overflow": 0,
+        "parameters": {
+          "GAP_ABOVE_QMS": 50.0,
+          "max_fixtures_per_row": 3
+        },
+        "placements": []
+      }
+    },
+    "strategy_4": {
+      "success": true,
+      "plan": {
+        "strategy_num": 4,
+        "strategy_name": "v2_og_non_rotated",
+        "rotation": 0.0,
+        "description": "Zero rotation with fixed 5mm horizontal gap",
+        "chosen_pattern_name": "column_wise_even_cols",
+        "max_capacity": 5,
+        "placed_count": 4,
+        "overflow": 0,
+        "parameters": {
+          "GAP_ABOVE_QMS": 800.0,
+          "horizontal_gap": 5.0,
+          "vertical_row_spacing": 1200.0,
+          "max_fixtures_per_row": 5
+        },
+        "placements": []
+      }
+    }
+  },
+  "summary": {
+    "total_clinic_layouts": 1,
+    "euro_strategies_generated": 4,
+    "required_euro_count": 4
+  }
+}

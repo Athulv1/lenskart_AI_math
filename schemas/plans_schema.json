@@ -1,0 +1,309 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://lenskart.com/schemas/plans_schema.json",
+  "title": "Lenskart Floor Plan Schema",
+  "description": "Schema for clinic and euro centre placement plans in the Lenskart AI floor plan generator",
+  "type": "object",
+  "required": ["floorplan_id", "timestamp", "metadata", "clinic_plans", "euro_plans"],
+  
+  "properties": {
+    
+    "floorplan_id": {
+      "type": "string",
+      "description": "Unique identifier for this floorplan session (UUID format)",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "examples": ["88c9e30d-b1b1-4b5e-8fe1-f54b04a74396"]
+    },
+    
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the plan was generated",
+      "examples": ["2026-01-27T12:30:00+05:30"]
+    },
+    
+    "metadata": {
+      "type": "object",
+      "description": "Floorplan metadata and configuration",
+      "required": ["proto_value", "total_area_sqft", "back_room_location"],
+      "properties": {
+        "proto_value": {
+          "type": "string",
+          "description": "Store prototype/revenue tier (e.g., '16L' = 16 Lakhs)",
+          "pattern": "^[0-9]+L$",
+          "examples": ["8L", "12L", "16L", "20L"]
+        },
+        "total_area_sqft": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total floor area in square feet"
+        },
+        "back_room_location": {
+          "type": ["string", "null"],
+          "enum": ["left", "right", "middle", null],
+          "description": "Detected location of back corner room"
+        },
+        "room_max_y": {
+          "type": "number",
+          "description": "Maximum Y-coordinate of the floor plan (mm)"
+        },
+        "room_min_y": {
+          "type": "number",
+          "description": "Minimum Y-coordinate of the floor plan (mm)"
+        }
+      }
+    },
+    
+    "clinic_plans": {
+      "type": "object",
+      "description": "All ranked clinic placement plans",
+      "required": ["total_clinics_required", "ranked_layouts", "remaining_fixtures_queue"],
+      "properties": {
+        
+        "total_clinics_required": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of clinics to place based on proto value"
+        },
+        
+        "ranked_layouts": {
+          "type": "array",
+          "description": "Array of all valid clinic layouts, sorted by score (ascending)",
+          "items": {
+            "$ref": "#/definitions/clinic_layout"
+          }
+        },
+        
+        "remaining_fixtures_queue": {
+          "type": "array",
+          "description": "Fixtures that couldn't be placed by the best plan",
+          "items": {
+            "type": "string",
+            "description": "Fixture name"
+          }
+        }
+      }
+    },
+    
+    "euro_plans": {
+      "type": "object",
+      "description": "Euro centre placement analysis and plans",
+      "required": ["required_count", "zone_bounds", "best_pattern_name", "all_options"],
+      "properties": {
+        
+        "required_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total Euro centres required (floor_fixtures + overflow from wall)"
+        },
+        
+        "zone_bounds": {
+          "type": "object",
+          "description": "Bounding box of the euro placement zone",
+          "properties": {
+            "min_x": { "type": "number" },
+            "min_y": { "type": "number" },
+            "max_x": { "type": "number" },
+            "max_y": { "type": "number" }
+          }
+        },
+        
+        "best_pattern_name": {
+          "type": "string",
+          "enum": [
+            "row_wise_even_rows",
+            "row_wise_odd_rows",
+            "column_wise_even_cols",
+            "column_wise_odd_cols",
+            "None"
+          ],
+          "description": "Name of the highest-capacity pattern"
+        },
+        
+        "all_options": {
+          "type": "object",
+          "description": "All four placement patterns with their analysis",
+          "patternProperties": {
+            "^(row_wise_even_rows|row_wise_odd_rows|column_wise_even_cols|column_wise_odd_cols)$": {
+              "$ref": "#/definitions/euro_pattern"
+            }
+          }
+        }
+      }
+    }
+  },
+  
+  "definitions": {
+    
+    "clinic_layout": {
+      "type": "object",
+      "description": "A single clinic placement layout/plan",
+      "required": ["Rank", "Placed", "score", "fixtures", "combo", "coordinates"],
+      "properties": {
+        
+        "Rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Priority ranking (1 = best score)"
+        },
+        
+        "Placed": {
+          "type": "boolean",
+          "description": "Whether this plan has been executed",
+          "default": false
+        },
+        
+        "score": {
+          "type": "number",
+          "description": "Layout score (lower = better). Formula: depth + penalty - H_BONUS"
+        },
+        
+        "fixtures": {
+          "type": "array",
+          "description": "Ordered list of clinic fixture names",
+          "items": {
+            "type": "string",
+            "enum": ["ROC_clinic", "Clinic_with_sink", "Clinic_regular"]
+          },
+          "minItems": 1
+        },
+        
+        "combo": {
+          "type": "array",
+          "description": "Orientation for each fixture ('H' = Horizontal, 'V' = Vertical)",
+          "items": {
+            "type": "string",
+            "enum": ["H", "V"]
+          },
+          "minItems": 1
+        },
+        
+        "gaps": {
+          "type": "array",
+          "description": "Gap distances between fixtures (mm). V-V odd pairs get 800mm, others get -100mm",
+          "items": {
+            "type": "number"
+          }
+        },
+        
+        "coordinates": {
+          "type": "array",
+          "description": "Placement coordinates for each fixture",
+          "items": {
+            "$ref": "#/definitions/clinic_coordinate"
+          }
+        },
+        
+        "_debug_zone": {
+          "type": "string",
+          "description": "Zone ID where clinics are placed (e.g., 'Zone_1', 'Zone_2')"
+        },
+        
+        "_debug_depth_score": {
+          "type": "number",
+          "description": "Raw depth score before penalty/bonus"
+        },
+        
+        "_debug_penalty": {
+          "type": "number",
+          "description": "Penalty for unplaced clinics (1500 per clinic)"
+        }
+      }
+    },
+    
+    "clinic_coordinate": {
+      "type": "object",
+      "description": "Placement data for a single clinic fixture",
+      "required": ["name", "target_center", "mirror_scale", "zone_id"],
+      "properties": {
+        
+        "name": {
+          "type": "string",
+          "description": "Clinic fixture name",
+          "enum": ["ROC_clinic", "Clinic_with_sink", "Clinic_regular"]
+        },
+        
+        "target_center": {
+          "type": "array",
+          "description": "[x, y] placement coordinate in mm",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        
+        "mirror_scale": {
+          "type": "array",
+          "description": "[xscale, yscale] for mirroring transformation",
+          "items": { 
+            "type": "number",
+            "enum": [-1.0, 1.0]
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        
+        "bottom_y": {
+          "type": "number",
+          "description": "Bottom Y-coordinate of placed fixture (mm) - used for scoring"
+        },
+        
+        "zone_id": {
+          "type": "string",
+          "pattern": "^Zone_[0-9]+$",
+          "description": "Zone identifier (e.g., 'Zone_1')"
+        }
+      }
+    },
+    
+    "euro_pattern": {
+      "type": "object",
+      "description": "A single Euro centre placement pattern",
+      "required": ["count", "rank", "placed", "placements"],
+      "properties": {
+        
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total Euro centres that can fit in this pattern"
+        },
+        
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Pattern rank (1 = highest capacity)"
+        },
+        
+        "placed": {
+          "type": "boolean",
+          "description": "Whether this pattern has been executed",
+          "default": false
+        },
+        
+        "placements": {
+          "type": "object",
+          "description": "Coordinate map keyed by count_N",
+          "patternProperties": {
+            "^count_[0-9]+$": {
+              "$ref": "#/definitions/euro_coordinate"
+            }
+          }
+        }
+      }
+    },
+    
+    "euro_coordinate": {
+      "type": "object",
+      "description": "Placement data for a single Euro centre",
+      "required": ["coordinates"],
+      "properties": {
+        "coordinates": {
+          "type": "array",
+          "description": "[x, y] placement coordinate in mm (bottom-left corner of cell)",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    }
+  }
+}

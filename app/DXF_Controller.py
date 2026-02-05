@@ -11703,6 +11703,14 @@ class DXF_Controller:
             placement_blueprint = self.analyze_placement_patterns(doc)
             
             placement_blueprint = json.loads(json.dumps(placement_blueprint.get('all_options', {})))
+            
+            # Cache euro placement data for JSON export
+            doc.euro_placement_blueprint = {
+                "all_options": placement_blueprint,
+                "best_pattern_name": list(placement_blueprint.keys())[0] if placement_blueprint else "None",
+                "required_count": doc.display_calcs.get('floor_fixtures', 0)
+            }
+            
             # print("\n--- Analyzed Placement Patterns ---")
             # print(json.dumps(placement_blueprint, indent=1))
             
@@ -11778,17 +11786,32 @@ class DXF_Controller:
         
             if len(available_patterns) > 0:
                 # We have patterns. The original 'doc' will be replaced by clones.
+                
+                # Define mapping from pattern_name to strategy_num
+                # This aligns with the EURO_STRATEGIES configuration in plan_extractors.py
+                PATTERN_TO_STRATEGY = {
+                    "column_wise_even_cols": 1,  # Strategy 1: basic_qms
+                    "column_wise_odd_cols": 2,   # Strategy 2: lane_strategy
+                    "row_wise_even_rows": 3,     # Strategy 3: v1_og_rotated
+                    "row_wise_odd_rows": 4       # Strategy 4: v2_og_non_rotated
+                }
 
                 # Get the top 2 patterns
                 for i, pattern_data_tuple in enumerate(available_patterns[:2]):
                     # Extract pattern name and data from the tuple
                     chosen_pattern_name, chosen_pattern_data = list(pattern_data_tuple.items())[0]
+                    
+                    # Determine the strategy_num based on the pattern name
+                    strategy_num = PATTERN_TO_STRATEGY.get(chosen_pattern_name, 1)
 
                     # 1. Create a NEW clone from the original doc
                     # We give it a temporary index; we'll fix it later.
                     new_doc_clone = doc.clone(ind=doc.ind * 10 + i) 
+                    
+                    # Copy euro placement blueprint to clone for JSON export
+                    new_doc_clone.euro_placement_blueprint = doc.euro_placement_blueprint
 
-                    print(f"  -> Creating new plan (Doc {new_doc_clone.ind}) using pattern: '{chosen_pattern_name}'")
+                    print(f"  -> Creating new plan (Doc {new_doc_clone.ind}) using pattern: '{chosen_pattern_name}' (Strategy {strategy_num})")
 
                     # 2. Run arrangement logic ON THE CLONE
                     final_plan_details = self.arranging_analyzed_function(new_doc_clone, chosen_pattern_name, chosen_pattern_data)
@@ -11798,8 +11821,17 @@ class DXF_Controller:
 
                     # 4. Place fixtures ON THE CLONE
                     self.place_by_plan_euro(new_doc_clone, final_plan_details)
+                    
+                    # 5. Store the ACTUALLY PLACED pattern for accurate JSON export
+                    # CRITICAL: Now includes strategy_num for correct placed flag comparison
+                    new_doc_clone.actually_placed_euro_pattern = {
+                        "pattern_name": chosen_pattern_name,
+                        "strategy_num": strategy_num,  # Now stores the strategy number
+                        "placements": final_plan_details.get('placements', {}),
+                        "overflow": final_plan_details.get('overflow_display', 0)
+                    }
 
-                    # 5. Add the fully populated CLONE to our NEW list
+                    # 6. Add the fully populated CLONE to our NEW list
                     final_documents_list.append(new_doc_clone)
 
             else:

@@ -1,0 +1,269 @@
+{
+    "strategy_name": "v2_og_non_rotated",
+    "method": "place_central_fixtures_from_qms_v2_og",
+    "rotation_degrees": 0.0,
+    "parameters": {
+        "GAP_ABOVE_QMS": 800.0,
+        "FINAL_VISUAL_GAP": 1050.0,
+        "horizontal_gap": 5.0,
+        "vertical_row_spacing": 1200.0,
+        "walking_space_margin": "max(300.0, local_width * 0.70)",
+        "max_fixtures_per_row": 5
+    },
+    "zone": {
+        "start_y": 3300.0,
+        "end_y": 9125.0,
+        "description": "From QMS top + 800mm to Standing Tables bottom - 1050mm - fixture.height"
+    },
+    "lane_changes": [
+        {
+            "lane_id": 1,
+            "lane_start_x": 2300.0,
+            "lane_fixture_count": 4,
+            "established_at_row": 0,
+            "reason": "initial_lane"
+        },
+        {
+            "lane_id": 2,
+            "lane_start_x": 2800.0,
+            "lane_fixture_count": 3,
+            "established_at_row": 2,
+            "reason": "row_size_changed"
+        }
+    ],
+    "placements": [
+        {
+            "index": 0,
+            "fixture_name": "Euro_centre",
+            "center": [
+                2820.0,
+                3887.5
+            ],
+            "corner": [
+                2300.0,
+                3300.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 0,
+            "position_in_row": 0,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 1,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3865.0,
+                3887.5
+            ],
+            "corner": [
+                3345.0,
+                3300.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 0,
+            "position_in_row": 1,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 2,
+            "fixture_name": "Euro_centre",
+            "center": [
+                4910.0,
+                3887.5
+            ],
+            "corner": [
+                4390.0,
+                3300.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 0,
+            "position_in_row": 2,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 3,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5955.0,
+                3887.5
+            ],
+            "corner": [
+                5435.0,
+                3300.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 0,
+            "position_in_row": 3,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 4,
+            "fixture_name": "Euro_centre",
+            "center": [
+                2820.0,
+                6262.5
+            ],
+            "corner": [
+                2300.0,
+                5675.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 1,
+            "position_in_row": 0,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 5,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3865.0,
+                6262.5
+            ],
+            "corner": [
+                3345.0,
+                5675.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 1,
+            "position_in_row": 1,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 6,
+            "fixture_name": "Euro_centre",
+            "center": [
+                4910.0,
+                6262.5
+            ],
+            "corner": [
+                4390.0,
+                5675.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 1,
+            "position_in_row": 2,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 7,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5955.0,
+                6262.5
+            ],
+            "corner": [
+                5435.0,
+                5675.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 1,
+            "position_in_row": 3,
+            "lane_id": 1,
+            "lane_fixture_count": 4
+        },
+        {
+            "index": 8,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3320.0,
+                8637.5
+            ],
+            "corner": [
+                2800.0,
+                8050.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 2,
+            "position_in_row": 0,
+            "lane_id": 2,
+            "lane_fixture_count": 3,
+            "_note": "Row size changed from 4 to 3"
+        },
+        {
+            "index": 9,
+            "fixture_name": "Euro_centre",
+            "center": [
+                4365.0,
+                8637.5
+            ],
+            "corner": [
+                3845.0,
+                8050.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 2,
+            "position_in_row": 1,
+            "lane_id": 2,
+            "lane_fixture_count": 3
+        },
+        {
+            "index": 10,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5410.0,
+                8637.5
+            ],
+            "corner": [
+                4890.0,
+                8050.0
+            ],
+            "width": 1040.0,
+            "height": 1175.0,
+            "rotation": 0.0,
+            "row_index": 2,
+            "position_in_row": 2,
+            "lane_id": 2,
+            "lane_fixture_count": 3
+        }
+    ],
+    "summary": {
+        "total_placed": 11,
+        "capacity": 15,
+        "overflow": 4,
+        "rows_placed": 3,
+        "lane_changes": 1,
+        "row_size_changes": 1,
+        "fixtures_per_row": [
+            4,
+            4,
+            3
+        ]
+    },
+    "_metadata": {
+        "created_for": "Testing v2_og_non_rotated coordinate extraction",
+        "key_differences": [
+            "0° rotation (no rotation)",
+            "Fixed horizontal_gap = 5.0mm",
+            "Fixed vertical_row_spacing = 1200mm",
+            "Max 5 fixtures per row (vs 3 for rotated)",
+            "Uses original fixture dimensions (width=1040, height=1175)"
+        ]
+    }
+}

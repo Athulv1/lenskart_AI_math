@@ -1,0 +1,181 @@
+{
+    "strategy_name": "lane_strategy",
+    "method": "place_central_fixtures_from_qms_lane_strategy",
+    "rotation_degrees": 90.0,
+    "parameters": {
+        "GAP_ABOVE_QMS": 800.0,
+        "FINAL_VISUAL_GAP": 1050.0,
+        "walking_space_margin": "max(300.0, local_width * 0.50)",
+        "max_fixtures_per_row": 3
+    },
+    "zone": {
+        "start_y": 3300.0,
+        "end_y": 9910.0,
+        "description": "From QMS top + 800mm to Standing Tables bottom - 1050mm - fixture_height"
+    },
+    "lane_positions": [
+        {
+            "lane_id": 1,
+            "lane_start_x": 2800.0,
+            "established_at_row": 0,
+            "reason": "initial_lane"
+        },
+        {
+            "lane_id": 2,
+            "lane_start_x": 3100.0,
+            "established_at_row": 4,
+            "reason": "blockage_detected"
+        }
+    ],
+    "placements": [
+        {
+            "index": 0,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3387.5,
+                3820.0
+            ],
+            "corner": [
+                2800.0,
+                3300.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "original_width": 1040.0,
+            "original_height": 1175.0,
+            "rotation": 90.0,
+            "row_index": 0,
+            "position_in_row": 0,
+            "lane_id": 1
+        },
+        {
+            "index": 1,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5562.5,
+                3820.0
+            ],
+            "corner": [
+                3975.0,
+                3300.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "original_width": 1040.0,
+            "original_height": 1175.0,
+            "rotation": 90.0,
+            "row_index": 0,
+            "position_in_row": 1,
+            "lane_id": 1
+        },
+        {
+            "index": 2,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3387.5,
+                6060.0
+            ],
+            "corner": [
+                2800.0,
+                5540.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "original_width": 1040.0,
+            "original_height": 1175.0,
+            "rotation": 90.0,
+            "row_index": 1,
+            "position_in_row": 0,
+            "lane_id": 1
+        },
+        {
+            "index": 3,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5562.5,
+                6060.0
+            ],
+            "corner": [
+                3975.0,
+                5540.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "original_width": 1040.0,
+            "original_height": 1175.0,
+            "rotation": 90.0,
+            "row_index": 1,
+            "position_in_row": 1,
+            "lane_id": 1
+        },
+        {
+            "index": 4,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3687.5,
+                8300.0
+            ],
+            "corner": [
+                3100.0,
+                7780.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "original_width": 1040.0,
+            "original_height": 1175.0,
+            "rotation": 90.0,
+            "row_index": 4,
+            "position_in_row": 0,
+            "lane_id": 2,
+            "_note": "New lane after blockage"
+        },
+        {
+            "index": 5,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5862.5,
+                8300.0
+            ],
+            "corner": [
+                4275.0,
+                7780.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "original_width": 1040.0,
+            "original_height": 1175.0,
+            "rotation": 90.0,
+            "row_index": 4,
+            "position_in_row": 1,
+            "lane_id": 2
+        }
+    ],
+    "summary": {
+        "total_placed": 6,
+        "capacity": 12,
+        "overflow": 6,
+        "rows_placed": 3,
+        "lane_changes": 1,
+        "fixtures_per_row": [
+            2,
+            2,
+            0,
+            0,
+            2
+        ]
+    },
+    "_metadata": {
+        "created_for": "Testing lane_strategy coordinate extraction",
+        "fixture_dimensions": {
+            "Euro_centre": {
+                "width": 1040.0,
+                "height": 1175.0
+            }
+        },
+        "dynamic_gaps": {
+            "1_fixture": 0.0,
+            "2_fixtures": 1000.0,
+            "3_fixtures": 1200.0
+        }
+    }
+}

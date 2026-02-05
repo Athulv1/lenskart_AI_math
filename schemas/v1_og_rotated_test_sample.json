@@ -1,0 +1,213 @@
+{
+    "strategy_name": "v1_og_rotated",
+    "method": "place_central_fixtures_from_qms_v1_og",
+    "rotation_degrees": 90.0,
+    "parameters": {
+        "GAP_ABOVE_QMS": 50.0,
+        "FINAL_VISUAL_GAP": 1050.0,
+        "walking_space_margin": "max(300.0, local_width * 0.50)",
+        "max_fixtures_per_row": 3
+    },
+    "zone": {
+        "start_y": 2550.0,
+        "end_y": 9910.0,
+        "description": "From QMS top + 50mm to Standing Tables bottom - 1050mm - fixture_height"
+    },
+    "lane_changes": [
+        {
+            "lane_id": 1,
+            "lane_start_x": 2500.0,
+            "lane_fixture_count": 3,
+            "established_at_row": 0,
+            "reason": "initial_lane"
+        },
+        {
+            "lane_id": 2,
+            "lane_start_x": 3100.0,
+            "lane_fixture_count": 2,
+            "established_at_row": 3,
+            "reason": "row_size_changed"
+        },
+        {
+            "lane_id": 3,
+            "lane_start_x": 3300.0,
+            "lane_fixture_count": 2,
+            "established_at_row": 5,
+            "reason": "blockage_detected"
+        }
+    ],
+    "placements": [
+        {
+            "index": 0,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3087.5,
+                3070.0
+            ],
+            "corner": [
+                2500.0,
+                2550.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 0,
+            "position_in_row": 0,
+            "lane_id": 1,
+            "lane_fixture_count": 3
+        },
+        {
+            "index": 1,
+            "fixture_name": "Euro_centre",
+            "center": [
+                4487.5,
+                3070.0
+            ],
+            "corner": [
+                3900.0,
+                2550.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 0,
+            "position_in_row": 1,
+            "lane_id": 1,
+            "lane_fixture_count": 3
+        },
+        {
+            "index": 2,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5887.5,
+                3070.0
+            ],
+            "corner": [
+                5300.0,
+                2550.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 0,
+            "position_in_row": 2,
+            "lane_id": 1,
+            "lane_fixture_count": 3
+        },
+        {
+            "index": 3,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3087.5,
+                5310.0
+            ],
+            "corner": [
+                2500.0,
+                4790.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 1,
+            "position_in_row": 0,
+            "lane_id": 1,
+            "lane_fixture_count": 3
+        },
+        {
+            "index": 4,
+            "fixture_name": "Euro_centre",
+            "center": [
+                4487.5,
+                5310.0
+            ],
+            "corner": [
+                3900.0,
+                4790.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 1,
+            "position_in_row": 1,
+            "lane_id": 1,
+            "lane_fixture_count": 3
+        },
+        {
+            "index": 5,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5887.5,
+                5310.0
+            ],
+            "corner": [
+                5300.0,
+                4790.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 1,
+            "position_in_row": 2,
+            "lane_id": 1,
+            "lane_fixture_count": 3
+        },
+        {
+            "index": 6,
+            "fixture_name": "Euro_centre",
+            "center": [
+                3687.5,
+                7550.0
+            ],
+            "corner": [
+                3100.0,
+                7030.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 3,
+            "position_in_row": 0,
+            "lane_id": 2,
+            "lane_fixture_count": 2,
+            "_note": "Row size changed from 3 to 2"
+        },
+        {
+            "index": 7,
+            "fixture_name": "Euro_centre",
+            "center": [
+                5862.5,
+                7550.0
+            ],
+            "corner": [
+                4275.0,
+                7030.0
+            ],
+            "rotated_width": 1175.0,
+            "rotated_height": 1040.0,
+            "rotation": 90.0,
+            "row_index": 3,
+            "position_in_row": 1,
+            "lane_id": 2,
+            "lane_fixture_count": 2
+        }
+    ],
+    "summary": {
+        "total_placed": 8,
+        "capacity": 12,
+        "overflow": 4,
+        "rows_placed": 4,
+        "lane_changes": 2,
+        "row_size_changes": 1,
+        "blockage_events": 0,
+        "fixtures_per_row": [
+            3,
+            3,
+            0,
+            2
+        ]
+    },
+    "_metadata": {
+        "created_for": "Testing v1_og_rotated coordinate extraction",
+        "key_difference": "Re-centers when row size changes, not just on blockages"
+    }
+}
